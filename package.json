@@ -1,0 +1,28 @@
+{
+  "name": "griffony",
+  "version": "1.0.0",
+  "description": "build tools for griffony",
+  "main": "",
+  "type": "module",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "deploy": "node deploy.js",
+    "makemaps": "node --no-deprecation makemaps.js",
+    "watch": "node watcher.js",
+    "browser-sync": "browser-sync start --no-open --server --files=\"*.html, *.wasm, *.wasm.js, assets/**/*\"",
+    "start": "concurrently --kill-others \"npm -s run watch\" \"npm -s run browser-sync\""
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "browser-sync": "^3.0.2",
+    "chokidar": "^3.6.0",
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.4.5",
+    "glob": "^10.4.1",
+    "spritesmith": "^3.4.1",
+    "ssh2-sftp-client": "^10.0.3"
+  }
+}

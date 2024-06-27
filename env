@@ -1,0 +1,5 @@
+#fill in and rename to .env to make it work
+SFTP_HOST=
+SFTP_PORT=
+SFTP_USERNAME=
+SFTP_PASSWORD=

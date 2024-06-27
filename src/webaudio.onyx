@@ -1,0 +1,16 @@
+package webaudio
+
+use runtime
+#if runtime.runtime != .Js {
+    #error "'webaudio' package can only be used with the 'js' runtime."
+}
+
+#js #file "./webaudio.js"
+use core.js
+
+MediaElement :: #type js.Value
+
+#foreign "__webaudio" {
+	init        				:: () -> js.Value ---
+    createMediaElementSource 	:: (mediaElement: MediaElement) -> js.Value ---
+}

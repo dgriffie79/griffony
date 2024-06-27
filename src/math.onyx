@@ -1,0 +1,506 @@
+use runtime.platform
+
+use core {*}
+
+#inject math.tan :: (x: f32) -> f32 {
+    return math.sin(x) / math.cos(x)
+}
+
+#inject f32.EPSILON :: cast(f32) 1.1920929e-7 
+
+vec3 :: struct {
+	x: f32
+	y: f32
+	z: f32
+}
+
+#operator + (a: vec3, b: vec3) -> vec3 {
+	c : vec3
+	c.x = a.x + b.x
+	c.y = a.y + b.y
+	c.z = a.z + b.z
+
+	return c
+}
+
+#operator += (a: &vec3, b: vec3) { 
+	a.x += b.x
+	a.y += b.y
+	a.z += b.z
+}
+
+#operator - (a: vec3, b: vec3) -> vec3 {
+	c : vec3
+	c.x = a.x - b.x
+	c.y = a.y - b.y
+	c.z = a.z - b.z
+
+	return c
+}
+
+#operator -= (a: &vec3, b: vec3) { 
+	a.x -= b.x
+	a.y -= b.y
+	a.z -= b.z
+}
+
+#operator * (a: vec3, b: vec3) -> vec3 {
+	c : vec3
+	c.x = a.x * b.x
+	c.y = a.y * b.y
+	c.z = a.z * b.z
+
+	return c
+}
+
+#operator * (a: vec3, b: f32) -> vec3 {
+	c : vec3
+	c.x = a.x * b
+	c.y = a.y * b
+	c.z = a.z * b
+
+	return c
+}
+
+#operator * (a: f32, b: vec3) -> vec3 {
+	c : vec3
+	c.x = a * b.x
+	c.y = a * b.y
+	c.z = a * b.z
+
+	return c
+}
+
+#operator *= (a: &vec3, b: f32) { 
+	a.x *= b
+	a.y *= b
+	a.z *= b
+}
+
+#operator / (a: f32, b: vec3) -> vec3 {
+	c : vec3
+	c.x = a / b.x
+	c.y = a / b.y
+	c.z = a / b.z
+
+	return c
+}
+
+#operator / (a: vec3, b: f32) -> vec3 {
+	c : vec3
+	c.x = a.x / b
+	c.y = a.y / b
+	c.z = a.z / b
+
+	return c
+}
+
+vec3.normalize :: (v: vec3) -> vec3 {
+	result : vec3 = v
+
+	length := math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+
+	if length > 0 {
+		result /= length
+	}
+
+	return result
+}
+
+vec3.cross :: (a: vec3, b: vec3) -> vec3 {
+	c : vec3
+	c.x = a.y * b.z - a.z * b.y
+	c.y = a.z * b.x - a.x * b.z
+	c.z = a.x * b.y - a.y * b.x
+
+	return c
+}
+
+vec3.length :: (v: vec3) -> f32 {
+	return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+}
+
+vec3.sign :: (v: vec3) -> vec3 {
+	c : vec3
+	c.x = math.sign(v.x)
+	c.y = math.sign(v.y)
+	c.z = math.sign(v.z)
+
+	return c
+}
+
+vec3.abs :: (v: vec3) -> vec3 {
+	c : vec3
+	c.x = math.abs(v.x)
+	c.y = math.abs(v.y)
+	c.z = math.abs(v.z)
+
+	return c
+}
+
+vec3.ceil :: (v: vec3) -> vec3 {
+	c : vec3
+	c.x = math.ceil(v.x)
+	c.y = math.ceil(v.y)
+	c.z = math.ceil(v.z)
+
+	return c
+}
+
+vec3.max :: (v: vec3, a: f32) -> vec3 {
+	c : vec3
+	c.x = math.max(v.x, a)
+	c.y = math.max(v.y, a)
+	c.z = math.max(v.z, a)
+
+	return c
+}
+
+vec3.floor :: (v: vec3) -> vec3 {
+	c : vec3
+	c.x = math.floor(v.x)
+	c.y = math.floor(v.y)
+	c.z = math.floor(v.z)
+
+	return c
+}
+
+mat4 :: #distinct [16]f32
+
+#operator [] (a: mat4, i: u32) -> f32 {
+	return cast([16]f32, a)[i]
+}
+#operator []= (a: mat4, i: u32, v: f32) { 
+	cast([16]f32, a)[i] = v 
+}
+
+#operator &[] (a: &mat4, i: u32) -> &f32 {
+	return &cast([16]f32, a)[i]
+}
+
+#operator + (a: mat4, b: f32) -> mat4 {
+	return cast(mat4, cast([16]f32, a) + b)
+}
+
+#operator += (a: &mat4, b: f32) { 
+	*cast(&[16]f32, a) += b
+}
+
+#operator + (a: mat4, b: mat4) -> mat4 {
+	return cast(mat4, cast([16]f32, a) + cast([16]f32, b))
+}
+
+#operator += (a: &mat4, b: mat4) {
+	*cast(&[16]f32, a) += cast([16]f32,b)
+}
+
+#operator - (a: mat4, b: f32) -> mat4 {
+	return cast(mat4, cast([16]f32, a) - b)
+}
+
+#operator -= (a: &mat4, b: f32) { 
+	*cast(&[16]f32, a) -= b
+}
+
+#operator - (a: mat4, b: mat4) -> mat4 {
+	return cast(mat4, cast([16]f32, a) - cast([16]f32, b))
+}
+
+#operator -= (a: &mat4, b: mat4) {
+	*cast(&[16]f32, a) -= cast([16]f32,b)
+}
+
+#operator * (a: mat4, b: f32) -> mat4 {
+	return cast(mat4, cast([16]f32, a) * b)
+}
+
+#operator * (a: mat4, b: [4]f32) -> [4]f32 {
+	result : [4]f32
+
+	result[0] = a[0] * b[0] + a[4] * b[1] + a[8] * b[2] + a[12] * b[3]
+	result[1] = a[1] * b[0] + a[5] * b[1] + a[9] * b[2] + a[13] * b[3]
+	result[2] = a[2] * b[0] + a[6] * b[1] + a[10] * b[2] + a[14] * b[3]
+	result[3] = a[3] * b[0] + a[7] * b[1] + a[11] * b[2] + a[15] * b[3]
+	
+	return result
+}
+
+#operator *= (a: &mat4, b: f32) { 
+	*cast(&[16]f32, a) *= b
+}
+
+#operator * (a: mat4, b: mat4) -> mat4 {
+    result : [16]f32
+    for i in 0..4 {
+        for j in 0..4 {
+            for k in 0..4 {
+                result[i + 4 * j] += a[i + 4 * k] * b[k + 4 * j]
+            }
+        }
+    }
+
+    return ~~ result
+}
+
+
+mat4.mul :: (a: mat4, b: mat4) -> mat4 {
+	result : [16]f32
+	for i in 0..4 {
+		for j in 0..4 {
+			for k in 0..4 {
+				result[i + 4 * j] += a[i + 4 * k] * b[k + 4 * j]
+			}
+		}
+	}
+
+    return ~~ result
+}
+mat4.identity :: () -> mat4 {
+	result : [16]f32
+
+	result[0] = 1.0
+	result[5] = 1.0
+	result[10] = 1.0
+	result[15] = 1.0
+
+	return ~~ result
+}
+
+mat4.perspective :: (fov: f32, aspect: f32, near: f32, far: f32) -> mat4 {
+    result : [16]f32
+    
+    f := 1.0 / math.tan(fov / 2.0)
+
+    result[0] = f / aspect
+    result[5] = f
+    result[10] = (far + near) / (near - far)
+    result[11] = -1.0
+    result[14] = (2.0 * far * near) / (near - far)
+
+    return ~~ result
+}
+
+mat4.translation :: (x: f32, y: f32, z: f32) -> mat4 {
+	result : [16]f32
+
+    result[0] = 1.0
+    result[5] = 1.0
+    result[10] = 1.0
+    result[12] = x
+    result[13] = y
+    result[14] = z
+    result[15] = 1.0
+
+    return ~~ result
+}
+
+mat4.scale :: (x: f32, y: f32, z: f32) -> mat4 {
+	result : [16]f32
+
+	result[0] = x
+	result[5] = y
+	result[10] = z
+	result[15] = 1.0
+
+	return ~~ result
+}
+
+quat :: struct {
+	w: f32
+	x: f32
+	y: f32
+	z: f32
+}
+
+#operator * (a: quat, b: f32) -> quat {
+	c : quat
+
+	c.w = a.w * b
+	c.x = a.x * b
+	c.y = a.y * b
+	c.z = a.z * b
+
+	return c
+}
+
+#operator * (a: quat, b: quat) -> quat {
+	c : quat
+
+	c.w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+	c.x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y
+	c.y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x
+	c.z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w
+
+	return c
+}
+
+#operator *(a: quat, b: vec3) -> vec3 {
+	qv := vec3.{a.x, a.y, a.z}
+	t := 2.0 * qv->cross(b)
+
+	return b + a.w * t + qv->cross(t)
+}
+
+quat.forward :: (q: &quat) -> vec3 {
+	v : vec3
+
+	v.x = 2.0 * (q.x * q.z - q.w * q.y)
+	v.y = 2.0 * (q.y * q.z + q.w * q.x)
+	v.z = 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
+
+	return v * -1.0
+}
+
+quat.right :: (q: &quat) -> vec3 {
+	v : vec3
+
+	v.x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+	v.y = 2.0 * (q.x * q.y - q.w * q.z)
+	v.z = 2.0 * (q.x * q.z + q.w * q.y)
+
+	return v
+}
+
+quat.up :: (q: &quat) -> vec3 {
+	v : vec3
+
+	v.x = 2.0 * (q.x * q.y + q.w * q.z)
+	v.y = 1.0 - 2.0 * (q.x * q.x + q.z * q.z)
+	v.z = 2.0 * (q.y * q.z - q.w * q.x)
+
+	return v
+}
+
+quat.basisx :: (q: &quat) -> vec3 {
+	v : vec3
+
+	v.x = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+	v.y = 2.0 * (q.x * q.y - q.w * q.z)
+	v.z = 2.0 * (q.x * q.z + q.w * q.y)
+
+	return v
+}
+
+quat.basisy :: (q: &quat) -> vec3 {
+	v : vec3
+
+	v.x = 2.0 * (q.x * q.y + q.w * q.z)
+	v.y = 1.0 - 2.0 * (q.x * q.x + q.z * q.z)
+	v.z = 2.0 * (q.y * q.z - q.w * q.x)
+
+	return v
+}
+
+quat.basisz :: (q: &quat) -> vec3 {
+	v : vec3
+
+	v.x = 2.0 * (q.x * q.z - q.w * q.y)
+	v.y = 2.0 * (q.y * q.z + q.w * q.x)
+	v.z = 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
+
+	return v
+}
+
+quat.normalize :: (q: &quat) -> quat {
+	result : quat
+	
+	n := 1 / math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z)
+
+	result.w = q.w * n
+	result.x = q.x * n
+	result.y = q.y * n
+	result.z = q.z * n
+
+	return result
+}
+
+
+quat.fromeuler :: (x: f32, y: f32, z: f32) -> quat {
+	q : quat
+
+	c1 := math.cos(x / 2.0)
+	c2 := math.cos(y / 2.0)
+	c3 := math.cos(z / 2.0)
+	s1 := math.sin(x / 2.0)
+	s2 := math.sin(y / 2.0)
+	s3 := math.sin(z / 2.0)
+
+	q.w = c1 * c2 * c3 + s1 * s2 * s3
+    q.x = s1 * c2 * c3 - c1 * s2 * s3
+    q.y = c1 * s2 * c3 + s1 * c2 * s3
+    q.z = c1 * c2 * s3 - s1 * s2 * c3
+
+	return q
+}
+
+
+quat.rotatevec3 :: (q: &quat, v: vec3) -> vec3 {
+    result : vec3
+    
+    q_conj := quat.{q.w, -q.x, -q.y, -q.z}
+
+    i : quat
+	i.w = q.w*v.x - q.x*v.y - q.y*v.z
+	i.x = q.w*v.y + q.x*v.x - q.z*v.z
+	i.y = q.w*v.z + q.y*v.x + q.z*v.y
+	i.z = q.x*v.z - q.y*v.y + q.z*v.x
+
+	r : quat
+	r.w = i.w*q_conj.w - i.x*q_conj.x - i.y*q_conj.y - i.z*q_conj.z
+	r.x = i.w*q_conj.x + i.x*q_conj.w + i.y*q_conj.z - i.z*q_conj.y
+	r.y = i.w*q_conj.y - i.x*q_conj.z + i.y*q_conj.w + i.z*q_conj.x
+	r.z = i.w*q_conj.z + i.x*q_conj.y - i.y*q_conj.x + i.z*q_conj.w
+
+	return vec3.{r.x, r.y, r.z}
+}
+
+
+quat.fromaxisangle :: (axis: vec3, angle: f32) -> quat {
+	q: quat
+
+	s := math.sin(angle / 2.0)
+
+	q.w = math.cos(angle / 2.0)
+	q.x = axis.x * s
+	q.y = axis.y * s
+	q.z = axis.z * s
+
+	return q
+}
+
+quat.tomat4 :: (q: quat) -> mat4 {
+	result : [16]f32
+
+	xx := q.x * q.x
+	yy := q.y * q.y
+	zz := q.z * q.z
+	xy := q.x * q.y
+	xz := q.x * q.z
+	yz := q.y * q.z
+	wx := q.w * q.x
+	wy := q.w * q.y
+	wz := q.w * q.z
+
+	result[0] = 1.0 - 2.0 * (yy + zz)
+	result[1] = 2.0 * (xy + wz)
+	result[2] = 2.0 * (xz - wy)
+	result[3] = 0.0
+
+	result[4] = 2.0 * (xy - wz)
+	result[5] = 1.0 - 2.0 * (xx + zz)
+	result[6] = 2.0 * (yz + wx)
+	result[7] = 0.0
+
+	result[8] = 2.0 * (xz + wy)
+	result[9] = 2.0 * (yz - wx)
+	result[10] = 1.0 - 2.0 * (xx + yy)
+	result[11] = 0.0
+
+	result[12] = 0.0
+	result[13] = 0.0
+	result[14] = 0.0
+	result[15] = 1.0
+
+	return ~~ result
+}
+

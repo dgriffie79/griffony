@@ -1,0 +1,18 @@
+music :: enum {
+    Intro
+    Endgame
+    Intermission
+    Devil
+}
+
+musicfiles := str.[
+    "assets/music/theme.ogg"
+    "assets/music/hide.ogg"
+    "assets/music/night.ogg"
+    "assets/music/night2.ogg"
+    "assets/music/return.ogg"
+    "assets/music/return2.ogg"
+    "assets/music/day.ogg"
+    "assets/music/day2.ogg"
+    "assets/music/downtown.ogg"
+]

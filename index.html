@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GRIFFONY</title>
+    <script src="out.wasm.js"></script>
+    <script>
+        Onyx.load("out.wasm").then(function (module) {
+            module.start()
+        })
+    </script>
+    <style>
+        html,
+        body,
+        canvas {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .menu {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            position: fixed;
+            left: 0px;
+            top: 0px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .control,
+        .menu-button {
+            box-sizing: border-box;
+            width: 25%;
+            border: 5px solid rgb(52, 51, 51);
+            border-radius: 5px;
+            margin: 2px;
+            background-color: rgb(38, 30, 13);
+            color: white;
+            font-size: 2em;
+            font-family: "silver";
+            border-width: 5px;
+
+        }
+
+        .menu-button {
+            position: relative;
+        }
+
+        .menu-button::after {
+            content: "";
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background-color: transparent;
+            transition: background-color 0.3s ease;
+        }
+
+        .menu-button:hover::after {
+            background-color: rgba(216, 206, 176, 0.5);
+        }
+
+        .control {
+            position: relative;
+            width: 25%;
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .control label,
+        .control input {
+            display: inline-block;
+        }
+
+        .control input {
+            transform: scale(2);
+            margin-left: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="main-menu" class="menu" style="display: none;">
+        <button id="main-menu-reset" class="menu-button">Reset</button>
+        <button id="main-menu-stop" class="menu-button">Stop</button>
+        <div class="control" id="invert-mouse-control">
+            <label for="invert-mouse" id="invert-mouse-label">Invert:</label>
+            <input type="checkbox" id="invert-mouse">
+        </div>
+    </div>
+</body>
+
+</html>

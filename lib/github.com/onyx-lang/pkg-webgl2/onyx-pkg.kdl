@@ -1,0 +1,21 @@
+package {
+    name "webgl2" 
+    author "Brendan Hansen" 
+    url "https://github.com/onyx-lang/pkg-webgl2" 
+    description "A binding library for WebGL2" 
+    version "0.0.6" 
+}
+
+config {
+    dependency_source_path "./lib" 
+    dependency_binary_path "./bin" 
+}
+
+build {
+    example {
+        runtime "js" 
+        target "example/example.wasm" 
+        source "example/example.onyx" 
+    }
+}
+

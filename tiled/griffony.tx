@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<template>
+ <tileset firstgid="1" source="Objects.tsj"/>
+ <object type="Monster" gid="1" width="32" height="32">
+  <properties>
+   <property name="Type" type="int" propertytype="MonsterType" value="0"/>
+  </properties>
+ </object>
+</template>

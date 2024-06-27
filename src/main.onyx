@@ -1,0 +1,1105 @@
+use runtime.platform
+use core {*}
+use core.encoding.osad
+use core.encoding.base64
+use webgl2 {*}
+
+lasttime: u64
+gamepaused: bool
+timelabel: js.Value
+
+audio_element: js.Value
+
+VERTEX_SOURCE :: #file_contents "src/vert.glsl"
+FRAG_SOURCE :: #file_contents "src/frag.glsl"
+FRAG_TEXTURED_SOURCE :: #file_contents "src/fragterrain.glsl"
+
+modelshader: shader
+terrainshader: shader
+tilearray: GLTexture
+
+viewport: [2]f32
+campos := vec3.{0, 0, 0}
+camorientation := quat.{1.0, 0.0, 0.0, 0.0}
+
+playerindex : i32
+
+terrain: terraindata
+
+keystates : Map(str, bool)
+mousex: f32
+mousey: f32
+mousemovex: f32
+mousemovey: f32
+lastmousex: f32
+lastmousey: f32
+
+pointerlocked: bool
+showingmenu: bool
+mouseinvert := true
+playmode: bool
+needsrespawn := true
+onground := false
+
+gamestate :: struct {
+    playerpos : vec3
+    playerorientation : quat
+    showingmenu: bool
+    mouseinvert: bool
+    playmode: bool
+}
+
+entitytype :: enum {
+    none
+    player
+    spawnpoint
+    imp
+    mancubus
+}
+
+entity :: struct {
+    type: entitytype
+    pos: vec3
+    vel: vec3  
+    orientation: quat
+    frame: i32
+    frametime: f32
+    model: &voxelmodel
+    height: f32
+    radius: f32
+    gravity : bool
+}
+
+entity.onground :: (e: &entity) -> bool {
+    r := .85 * e.radius
+    if terrain->getvoxelf32(e.pos.x, e.pos.y - f32.EPSILON, e.pos.z) != -1 {
+        return true
+    } elseif terrain->getvoxelf32(e.pos.x + r, e.pos.y - f32.EPSILON, e.pos.z) != -1 {
+        return true
+    } elseif terrain->getvoxelf32(e.pos.x - r, e.pos.y -  f32.EPSILON, e.pos.z) != -1 {
+        return true
+    } elseif terrain->getvoxelf32(e.pos.x, e.pos.y -  f32.EPSILON, e.pos.z + r) != -1 {
+        return true
+    } elseif terrain->getvoxelf32(e.pos.x, e.pos.y -  f32.EPSILON, e.pos.z - r) != -1 {
+        return true
+    }
+    return false
+}
+
+entities : [..] entity
+
+playmusic :: (music: music) {
+    if audio_element->type() == .Undefined {
+        doc := js.Global->get("document")
+        audio_element = doc->call("createElement", "audio")
+        audio_element->leak()
+        logf(.Info, "Created audio element {}", audio_element->type())
+    } 
+
+    audio_element->set("src", musicfiles[music])
+    audio_element->call("play")
+}
+
+stopmusic :: () {
+    if audio_element->type() != .Undefined {
+        audio_element->call("pause")
+    }
+}
+
+reset :: () {
+    player := &entities[playerindex]
+    player.pos = vec3.{0, 0, 0}
+    player.vel = vec3.{0, 0, 0}
+    player.orientation = quat.{1.0, 0.0, 0.0, 0.0}
+    player.gravity = true
+    needsrespawn = true   
+}
+
+setupbuttons :: () {
+    doc := js.Global->get("document")
+ 
+    menu := doc->call("getElementById", "main-menu")
+    if showingmenu {
+        menu->set("style", "")
+    }
+
+    reset := doc->call("getElementById", "main-menu-reset")
+    reset->call("addEventListener", "click", js.func((this, args) => {
+        reset()
+        args[0]->call("stopPropagation")
+        return js.Undefined   
+    }))
+
+    menu_stop_button := doc->call("getElementById", "main-menu-stop")
+    menu_stop_button->call("addEventListener", "click", js.func((this, args) => {
+        stopmusic()
+        args[0]->call("stopPropagation")
+        return js.Undefined   
+    }))
+
+
+    invert_mouse_control := doc->call("getElementById", "invert-mouse-control")
+    invert_mouse_control->call("addEventListener", "click", js.func((this, args) => {
+        doc := js.Global->get("document")
+        mouseinvert = !mouseinvert
+        invert_mouse_button := doc->call("getElementById", "invert-mouse")
+        invert_mouse_button->set("checked", mouseinvert)
+        args[0]->call("stopPropagation")
+        return js.Undefined   
+    }))
+
+    invert_mouse_label := doc->call("getElementById", "invert-mouse-label")
+    invert_mouse_label->call("addEventListener", "click", js.func((this, args) => {
+        args[0]->call("preventDefault")
+        return js.Undefined   
+    }))
+
+    invert_mouse_button := doc->call("getElementById", "invert-mouse")
+    invert_mouse_button->set("checked", mouseinvert)
+    invert_mouse_button->call("addEventListener", "click", js.func((this, args) => {
+        mouseinvert = !mouseinvert
+        args[0]->call("stopPropagation")
+        return js.Undefined   
+    }))
+
+    doc->call("addEventListener", "keydown", js.func((this, args) => {
+        event := args[0]
+        key := event->get("key")->as_str() ?? ""
+        if key != "" {
+            keystates[key] = true
+        }
+        return js.Undefined
+    }))
+
+    doc->call("addEventListener", "keyup", js.func((this, args) => {
+        event := args[0]
+        key := event->get("key")->as_str() ?? ""
+        if key != "" {
+            keystates[key] = false
+        }
+        return js.Undefined
+    }))
+
+    doc->call("addEventListener", "mousemove", js.func((this, args) => {
+        event := args[0]
+        if pointerlocked {
+            mousemovex = ~~ (event->get("movementX")->as_float() ?? 0.0)
+            mousemovey = ~~ (event->get("movementY")->as_float() ?? 0.0)
+        } else {
+            mousex = ~~ (event->get("clientX")->as_float()?? 0.0)
+            mousey = ~~ (event->get("clientY")->as_float()?? 0.0)
+        }
+        return js.Undefined
+    }))
+
+    doc->call("addEventListener", "pointerlockchange", js.func((this, args) => {
+        if this->get("pointerLockElement")->type() == .Null {
+            pointerlocked = false
+        } else {
+            pointerlocked = true
+        }
+        return js.Undefined
+    }))
+
+    doc->call("addEventListener", "click", js.func((this, args) => {
+        if !pointerlocked {
+            this->get("documentElement")->call("requestPointerLock")
+        }
+        if showingmenu {
+            this->call("getElementById", "main-menu")->get("style")->set("display", "none")
+            showingmenu = false
+        } 
+        return js.Undefined
+    }))
+
+    doc->call("addEventListener", "visibilitychange", js.func((this, args) => {
+        lasttime = platform.__time() - lasttime
+        return js.Undefined
+    }))
+
+    js.Global->get("window")->call("addEventListener", "resize", js.func((this, args) => {
+        width := js.Global->get("innerWidth")->as_int() ?? cast(i32) viewport[0]
+        height := js.Global->get("innerHeight")->as_int() ?? cast(i32) viewport[1]
+        canvas := js.Global->get("document")->call("getElementById", "canvas")
+        canvas->set("width", width)
+        canvas->set("height", height)
+        viewport = .[~~ width, ~~ height]
+        glViewport(0, 0, width, height)
+        return js.Undefined
+    }))
+}
+
+shader :: struct {
+    program: GLProgram
+    vertex: GLShader
+    fragment: GLShader
+    viewportloc: GLUniformLocation
+    voxelsloc: GLUniformLocation
+    tilesloc: GLUniformLocation
+    paletteloc: GLUniformLocation
+    mvploc: GLUniformLocation
+}
+
+shader.createprogram :: (s: &shader, fragsrc: []u8, vertsrc: []u8) {
+    s.vertex   = compile_shader(GL_VERTEX_SHADER, vertsrc)->expect("Failed to compile vertex shader")
+    s.fragment = compile_shader(GL_FRAGMENT_SHADER, fragsrc)->expect("Failed to compile fragment shader")
+
+    s.program = glCreateProgram()
+    glAttachShader(s.program, s.vertex)
+    glAttachShader(s.program, s.fragment)
+    glLinkProgram(s.program)
+
+    if glGetProgramParameter(s.program, GL_LINK_STATUS) == 0 {
+        logf(.Error, "Failed to link program.")
+        js.Global->get("console")->call("log", glGetProgramInfoLog(s.program))
+    }
+
+    s.viewportloc = glGetUniformLocation(s.program, "viewport")
+    s.mvploc = glGetUniformLocation(s.program, "mvp")
+    s.voxelsloc = glGetUniformLocation(s.program, "voxels")
+    s.tilesloc = glGetUniformLocation(s.program, "tiles")
+    s.paletteloc = glGetUniformLocation(s.program, "palette")
+}
+
+voxelmodel :: struct {
+    url: str
+    loaded: bool
+    x: i32
+    y: i32
+    z: i32
+    voxels: []u8
+    palette: []u8
+    texture: GLTexture
+}
+
+models := .[
+    voxelmodel.{ url = "assets/models/trooa.vox" },
+    voxelmodel.{ url = "assets/models/troob.vox" },
+    voxelmodel.{ url = "assets/models/trooc.vox" },
+    voxelmodel.{ url = "assets/models/trood.vox" },
+    voxelmodel.{ url = "assets/models/trooe.vox" },
+    voxelmodel.{ url = "assets/models/troof.vox" },
+    voxelmodel.{ url = "assets/models/troog.vox" },
+    voxelmodel.{ url = "assets/models/fatta.vox" },
+    voxelmodel.{ url = "assets/models/fattb.vox" },
+    voxelmodel.{ url = "assets/models/fattc.vox" },
+    voxelmodel.{ url = "assets/models/fattd.vox" },
+    voxelmodel.{ url = "assets/models/fatte.vox" },
+    voxelmodel.{ url = "assets/models/fattf.vox" },
+    voxelmodel.{ url = "assets/models/fattg.vox" },
+]
+
+frame :: struct {
+    model: i32
+    duration: f32
+    next: i32
+}
+
+frames := frame.[
+    frame.{ model = 0, duration = 1.0/10.0, next = 1 },
+    frame.{ model = 1, duration = 1.0/10.0, next = 2 },
+    frame.{ model = 2, duration = 1.0/10.0, next = 3 },
+    frame.{ model = 3, duration = 1.0/10.0, next = 1 },
+    frame.{ model = 4, duration = 1.0/10.0, next = 5 },
+    frame.{ model = 5, duration = 1.0/10.0, next = 6 },
+    frame.{ model = 6, duration = 1.0/10.0, next = 4 },
+    frame.{ model = 7, duration = 1.0/10.0, next = 8 },
+    frame.{ model = 8, duration = 1.0/10.0, next = 9 },
+    frame.{ model = 9, duration = 1.0/10.0, next = 10 },
+    frame.{ model = 10, duration = 1.0/10.0, next = 11 },
+    frame.{ model = 11, duration = 1.0/10.0, next = 12 },
+    frame.{ model = 12, duration = 1.0/10.0, next = 7 },
+    frame.{ model = 13, duration = 1.0/10.0, next = 13 },
+]
+
+voxelmodel.loadtexture :: (v: &voxelmodel) {
+    v.texture = glCreateTexture()
+    
+    glBindTexture(GL_TEXTURE_3D, v.texture)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R8UI, v.z, v.y, v.x, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, v.voxels) 
+}
+
+voxelmodel.load :: (vm: &voxelmodel) {
+    js.Global
+    ->call("fetch", vm.url)
+    ->call("then", js.func((_, args) => {
+        return args[0]->call("arrayBuffer")
+    }))
+    ->call("then", js.func(([vm], _, args)  => {
+        bytes := js.Global->get("Uint8Array")->new(args[0])
+        len := bytes->length()
+
+        data := Slice.make(u8, len, context.temp_allocator)
+        bytes->copy_to_onyx(data)
+
+        vm.x = *(cast(&i32) &data[0])
+        vm.y = *(cast(&i32) &data[4])
+        vm.z = *(cast(&i32) &data[8])
+
+        vm.voxels = Slice.copy(data[12 .. 12 + vm.x * vm.y * vm.z])
+        
+        vm.palette = Slice.copy(data[12 + vm.voxels.length .. 12 + vm.voxels.length + 256 * 3])
+
+        for i in 0..vm.palette.length {
+            vm.palette[i] = vm.palette[i] << 2
+        }
+        logf(.Info, "{}", vm.url)
+        logf(.Info, "Size: {}x{}x{}", vm.x, vm.y, vm.z)
+
+        vm->loadtexture()
+        vm.loaded = true
+        return js.Undefined
+    }))
+}
+
+loadtilesheet :: () {
+    tilearray = glCreateTexture()
+    glBindTexture(GL_TEXTURE_2D_ARRAY, tilearray)
+
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT)
+
+    img := js.Global->get("Image")->new()
+    img->set("src", "assets/tiles.png")
+    img->set("onload", js.func((this, args) => {
+        img := this
+        w := img->get("width")->as_int() ?? 32
+        h := img->get("height")->as_int() ?? 32
+        n := h / 32;
+
+        glBindTexture(GL_TEXTURE_2D_ARRAY, tilearray)
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, w, 32, n, 0, GL_RGBA, GL_UNSIGNED_BYTE, img)
+        
+        return js.Undefined
+    }))    
+}
+
+loadtiles :: (tiles: []str) {
+    tilearray = glCreateTexture()
+    glBindTexture(GL_TEXTURE_2D_ARRAY, tilearray)
+
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT)
+
+    width := 16
+    height := 16
+    depth := tiles.count;
+
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, GL_RGBA8, 32, 32, depth)
+
+    for i in 0..tiles.count {
+        img := js.Global->get("Image")->new()
+        img->set("src", tiles[i])
+        img->leak()
+        img->set("onload", js.func(([i], this, args) => {
+            img := this
+            w := img->get("width")->as_int() ?? 32
+            h := img->get("height")->as_int() ?? 32
+
+            if w != 32 || h != 32 {
+                canvas:= js.Global->get("document")->call("createElement", "canvas")
+                canvas->set("width", cast(i32) 32)
+                canvas->set("height", cast(i32) 32)
+                ctx := canvas->call("getContext", "2d")
+                ctx->call("drawImage", img, 0, 0, w, h, 0, 0, 16, 16)
+                ctx->call("drawImage", img, 0, 0, w, h, 16, 0, 16, 16)
+                ctx->call("drawImage", img, 0, 0, w, h, 0, 16, 16, 16)
+                ctx->call("drawImage", img, 0, 0, w, h, 16, 16, 16, 16)
+                glBindTexture(GL_TEXTURE_2D_ARRAY, tilearray)
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, 32, 32, 1, GL_RGBA, GL_UNSIGNED_BYTE, canvas)
+                return js.Undefined
+            } else {
+                glBindTexture(GL_TEXTURE_2D_ARRAY, tilearray)
+                glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, i, w, h, 1, GL_RGBA, GL_UNSIGNED_BYTE, img)
+                return js.Undefined
+            }
+        }))
+    }
+
+}
+
+terraindata :: struct {
+    url: str
+    loaded: bool
+    x: i32
+    y: i32
+    z: i32
+    voxels: []i16
+    texture: GLTexture
+}
+
+terraindata.getvoxelf32 :: (t: &terraindata, x: f32, y: f32, z: f32) -> i16 {
+    tx :i32 = ~~ math.floor(x)
+    ty :i32 = ~~ math.floor(y)
+    tz :i32 = ~~ math.floor(z)
+
+    if tx < 0 || ty < 0 || tz < 0 || tx >= t.x || ty >= t.y || tz >= t.z {
+        return -1
+    }
+    return t.voxels[cast(i32) (tx + ty * t.x + tz * t.x * t.y)]
+}
+
+terraindata.getvoxeli32 :: (x, y, z: i32) -> i16 {
+    if x < 0 || y < 0 || z < 0 || x >= terrain.x || y >= terrain.y || z >= terrain.z {
+        return -1
+    }
+    return terrain.voxels[x + y * terrain.x + z * terrain.x * terrain.y]
+}
+
+terraindata.getvoxel :: #match {
+    terraindata.getvoxelf32,
+    terraindata.getvoxeli32
+}
+
+terraindata.loadtexture :: (t: &terraindata) {
+    t.texture = glCreateTexture()
+    
+    glBindTexture(GL_TEXTURE_3D, t.texture)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RG8UI, t.x, t.y, t.z, 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, to_byte_array(t.voxels))    
+}
+
+terraindata.load :: (t: &terraindata) {
+    js.Global
+    ->call("fetch", t.url)
+    ->call("then", js.func((_, args) => {
+        return args[0]->call("arrayBuffer")
+    }))
+    ->call("then", js.func(([t], _, args) => {
+        bytes := js.Global->get("Uint8Array")->new(args[0])
+        len := bytes->length()
+        data := Slice.make(i16, len/2, context.temp_allocator)
+        bytes->copy_to_onyx(to_byte_array(data))
+        
+        t.x = ~~ data[0]
+        t.y = ~~ data[1]
+        t.z = ~~ data[2]
+        
+        logf(.Info, "Terrain size: {}x{}x{}", t.x, t.y, t.z)
+        data = data[3..data.count]
+        t.voxels = data[0 .. t.x * t.y * t.z]
+        data = data[t.x * t.y * t.z .. data.count]
+
+        while data.count >= 4 {
+            e := entities->alloc_one()
+            e.type = ~~ data[0]
+            e.orientation.w = 1.0
+            e.pos = vec3.{ .5 + cast(f32) cast(i32) data[1], 1.0, .5 + cast(f32) cast(i32) data[2] }
+            e.orientation = quat.fromeuler(0, math.PI * (cast(f32) cast(i32) data[3]) / 360.0 , 0)
+
+            switch e.type {
+                case .spawnpoint {
+                    e.pos.y = 2
+                }
+                case .imp {
+                    e.gravity = true
+                    e.radius = .25
+                    e.frame = 0
+                    e.model = &models[0]
+                }
+                case .mancubus {
+                    e.gravity = true
+                    e.radius = .5
+                    e.frame = 7
+                    e.model = &models[7]
+                }
+            }
+
+            data = data[4..data.count]
+        }
+
+        t->loadtexture()
+        t.loaded = true
+        return js.Undefined
+    }))
+}
+
+insidemap :: (pos: vec3) -> bool {
+    return pos.x >= 0 && pos.y >= 0 && pos.z >= 0 && pos.x < ~~ terrain.x && pos.y < ~~ terrain.y && pos.z < ~~ terrain.z
+}
+
+rayhit :: struct {
+    pos: vec3
+    dist: f32
+}
+
+raymapentry :: (origin: vec3, dir: vec3) -> ? vec3 {
+    x, y, z : f32
+
+    if dir.x == 0 && dir.y == 0 && dir.z == 0 {
+        return .None
+    }
+
+    if dir.x < 0 {
+        x = ~~ terrain.x
+    } else {
+        x = 0
+    }
+
+    if dir.y < 0 {
+        y = ~~ terrain.y
+    } else {
+        y = 0
+    }
+
+    if dir.z < 0 {
+        z = ~~ terrain.z
+    } else {
+        z = 0
+    }
+
+    if dir.x != 0 {
+        t := (x - origin.x) / dir.x
+        y := origin.y + t * dir.y
+        z := origin.z + t * dir.z
+        if insidemap(vec3.{x, y, z}) {
+            return vec3.{x, y, z}
+        }
+    }
+
+    if dir.y != 0 {
+        t := (y - origin.y) / dir.y
+        x := origin.x + t * dir.x
+        z := origin.z + t * dir.z
+        if insidemap(vec3.{x, y, z}) {
+            return vec3.{x, y, z}
+        }
+    }
+
+    if dir.z != 0 {
+        t := (z - origin.z) / dir.z
+        x := origin.x + t * dir.x
+        y := origin.y + t * dir.y
+        if insidemap(vec3.{x, y, z}) {
+            return vec3.{x, y, z}
+        }
+    }
+
+    return .None
+}
+
+raycast :: (origin: vec3, dir: vec3, maxdist: f32) -> ? rayhit {
+    dist : f32 = 0.0
+    
+    o := origin
+
+    if !insidemap(o) {
+        o = raymapentry(o, dir)?
+        dist = (o - origin)->length()
+    }
+
+    step := dir->sign()
+    pos := o->floor()
+    tdelta := 1.0 / dir->abs()
+    tmax := (pos + step->max(0) - o)->abs() * tdelta
+
+    while dist < maxdist {
+        if terrain->getvoxel(pos.x, pos.y, pos.z) != -1 {
+            //logf(.Info, "Hit at {} {} {} d: {}", pos.x, pos.y, pos.z, dist)
+            return rayhit.{ pos, dist }
+        }
+
+        if tmax.x < tmax.y {
+            if tmax.x < tmax.z {
+                pos.x += step.x
+                dist = tmax.x
+                tmax.x += tdelta.x
+            } else {
+                pos.z += step.z
+                dist = tmax.z
+                tmax.z += tdelta.z
+            }
+        } else {
+            if tmax.y < tmax.z {
+                pos.y += step.y
+                dist = tmax.y
+                tmax.y += tdelta.y
+            } else {
+                pos.z += step.z
+                dist = tmax.z
+                tmax.z += tdelta.z
+            }
+        }
+        if !insidemap(pos) {
+            return .None
+        }
+    }
+    return .None
+}
+
+main :: () {
+    logf(.Info, "Initializing")
+    keystates = Map.make(str, bool)
+
+    js.setup_default_pool()
+
+    player := entities->alloc_one()
+    player.type = .player
+    player.gravity = true
+    player.height = .5
+    player.radius = .25
+    playerindex = 0
+
+    loadstate()
+    setupbuttons()
+
+    use glContext := create_context()
+    glInit(glContext)
+
+    terrainshader->createprogram(FRAG_TEXTURED_SOURCE, VERTEX_SOURCE)
+    modelshader->createprogram(FRAG_SOURCE, VERTEX_SOURCE)
+
+    loadtilesheet()
+    terrain.url = "assets/maps/start.bin"
+    terrain->load()
+
+    for &model in models {
+        model->load()
+    }
+
+    logf(.Info, "Viewport: {}", viewport)
+
+    js.Global->set("ONYX", js.Onyx)
+    js.Global->call("requestAnimationFrame", loop)
+}
+
+create_context :: () -> js.Value {
+    doc := js.Global->get("document")
+    canvas := doc->call("createElement", "canvas")
+    canvas->set("width", js.Global->get("innerWidth"))
+    canvas->set("height", js.Global->get("innerHeight"))
+    canvas->set("id", "canvas")
+
+    viewport = .[~~ canvas->get("width")->as_float()?, ~~ canvas->get("height")->as_float()?]
+
+	timelabel = doc->call("createElement", "div")
+	timelabel->set("style", "position: fixed; left: 0px; top: 0px; color: white")
+	timelabel->set("textContent", "Hello!")
+	timelabel->leak()
+
+    doc->get("body")->call("append", canvas)
+	doc->get("body")->call("append", timelabel)
+
+    attr := js.Value.new_object()
+    attr->set("antialias", false)
+    attr->set("failIfMajorPerformanceCaveat", true)
+
+    glContext := canvas->call("getContext", "webgl2", attr)
+    return glContext
+}
+
+create_shader :: (fragsrc: []u8, vertsrc: []u8) -> ? GLProgram {
+    vertexshader   := compile_shader(GL_VERTEX_SHADER, vertsrc)?
+    fragmentshader := compile_shader(GL_FRAGMENT_SHADER, fragsrc)?
+
+    program := glCreateProgram()
+    glAttachShader(program, vertexshader)
+    glAttachShader(program, fragmentshader)
+    glLinkProgram(program)
+
+    if glGetProgramParameter(program, GL_LINK_STATUS) == 0 {
+        logf(.Error, "Failed to link program.")
+        js.Global->get("console")->call("log", glGetProgramInfoLog(program))
+        return .None
+    }
+
+    return program
+}
+
+compile_shader :: (type: GLenum, source: str) -> ? GLShader {
+    shader := glCreateShader(type)
+
+    glShaderSource(shader, source)
+    glCompileShader(shader)
+
+    if glGetShaderParameter(shader, GL_COMPILE_STATUS) == 0 {
+        logf(.Error, "Failed to compile shader.")
+        logf(.Error, "Shader source: {}", glGetShaderInfoLog(shader)->as_str())
+        return .None
+    }
+
+    return shader
+}
+
+loadstate :: () {
+    s: = js.Global->get("localStorage")->get("state")->as_str() ?? ""
+    if s == "" {
+        return
+    }
+    s = base64.decode(s, context.temp_allocator)
+    result := osad.deserialize(gamestate, s, context.temp_allocator)
+    switch result {
+        case .Some as state {
+            player := &entities[playerindex]
+            player.pos = state.playerpos
+            player.orientation = state.playerorientation
+            showingmenu = state.showingmenu
+            mouseinvert = state.mouseinvert
+            playmode = state.playmode
+            needsrespawn = false
+        }
+        
+        case .None {
+            logf(.Error, "Failed to deserialize gamestate")
+        }
+    }
+}
+
+savestate :: () {
+    player := &entities[playerindex]
+    state := gamestate.{
+        playerpos = player.pos
+        playerorientation = player.orientation
+        showingmenu = showingmenu
+        mouseinvert = mouseinvert
+        playmode = playmode
+    }
+
+    writer, stream := io.string_builder(context.temp_allocator);
+
+    if !osad.serialize(state, &writer) {
+        logf(.Error, "Failed to serialize gamestate")
+    } 
+    writer->flush();
+
+    s := base64.encode(stream.data, context.temp_allocator);    
+    js.Global->get("localStorage")->set("state", s)
+
+}
+
+processinput :: (elapsed: i64) {
+    if keystates["`"] == true {
+        showingmenu = !showingmenu
+        menu := js.Global->get("document")->call("getElementById", "main-menu")
+        if showingmenu {
+            menu->set("style", "")
+            if pointerlocked {
+                js.Global->get("document")->call("exitPointerLock")
+            }
+        } else {
+            menu->set("style", "display: none")
+            if !pointerlocked {
+                js.Global->get("document")->get("documentElement")->call("requestPointerLock")
+            }
+        }
+        keystates["`"] = false
+    }
+
+    if keystates["p"] == true {
+        playmode = !playmode
+        keystates["p"] = false
+    }
+
+    if keystates["r"] == true {
+        reset()
+        keystates["r"] = false
+    }
+
+    if keystates["0"] == true {
+        stopmusic()
+        keystates["0"] = false
+    } elseif keystates["1"] == true {
+        playmusic(.Intro)
+        keystates["1"] = false
+    } elseif keystates["2"] == true {
+        playmusic(.Endgame)
+        keystates["2"] = false
+    } elseif keystates["3"] == true {
+        playmusic(.Intermission)
+        keystates["3"] = false
+    } elseif keystates["4"] == true {
+        playmusic(.Devil)
+        keystates["4"] = false
+    }
+
+    player := &entities[playerindex]
+
+    fwd := player.orientation->basisz() * -1
+    right := player.orientation->basisx()
+    up := player.orientation->basisy()
+
+    speed :f32 = 10.0
+
+    if playmode {
+        fwd.y = 0;
+        fwd = fwd->normalize()
+        right.y = 0;
+        right = right->normalize()
+    } else {
+        player.vel.y = 0
+    }
+
+    player.vel.x = 0
+    player.vel.z = 0
+
+    if keystates["w"] == true {
+        player.vel += fwd * speed
+    } 
+    if keystates["s"] == true {
+        player.vel -= fwd * speed
+    }
+    if keystates["a"] == true {
+        player.vel -= right * speed
+    }
+    if keystates["d"] == true {
+        player.vel += right * speed
+    }
+    if !playmode && keystates["q"] == true {
+        player.vel -= up * speed
+    }
+    if !playmode && keystates["e"] == true {
+        player.vel += up * speed
+    }
+    if keystates[" "] == true {
+        if player.gravity && playmode && player->onground() {
+            player.vel.y += 5
+        }
+        keystates[" "] = false
+    }
+
+    dx := mousex - lastmousex
+    dy := mousey - lastmousey
+    lastmousex = mousex
+    lastmousey = mousey
+
+    if pointerlocked {
+        dx = mousemovex
+        dy = mousemovey
+        
+        if mouseinvert {
+            dy = -dy
+        }
+    
+        mousemovex = 0
+        mousemovey = 0
+
+        ryaw := quat.fromaxisangle(vec3.{0, 1, 0}, dx * .001)
+        rpitch := quat.fromaxisangle(vec3.{1, 0, 0}, dy * .001)
+
+        player.orientation = rpitch * player.orientation * ryaw
+    } 
+
+    speed = speed * .05
+    if keystates["ArrowLeft"] == true {
+        q := quat.fromaxisangle(vec3.{0, 1, 0}, -speed)
+        player.orientation = player.orientation * q
+    }
+    if keystates["ArrowRight"] == true {
+        q := quat.fromaxisangle(vec3.{0, 1, 0}, speed)
+        player.orientation = player.orientation * q
+    }
+    if keystates["ArrowUp"] == true {
+        q := quat.fromaxisangle(vec3.{1, 0, 0}, speed)
+        player.orientation = q * player.orientation 
+    }
+    if keystates["ArrowDown"] == true {
+        q := quat.fromaxisangle(vec3.{1, 0, 0}, -speed)
+        player.orientation = q * player.orientation 
+    }
+}
+
+drawterrain :: (pv: mat4) {
+    glUseProgram(terrainshader.program)
+    glUniform2f(terrainshader.viewportloc, viewport[0], viewport[1])
+    s := mat4.scale(1, 1, 1)
+    q := quat.fromeuler(-math.PI / 2, 0, 0)
+    r := q->tomat4()
+    r = mat4.identity()
+    m := r * s
+
+    mvp := pv * m
+
+    glUniformMatrix4(terrainshader.mvploc, false, ~~ mvp)
+    glActiveTexture(GL_TEXTURE0)
+    glBindTexture(GL_TEXTURE_3D, terrain.texture)
+    glUniform1i(terrainshader.voxelsloc, 0)
+    glActiveTexture(GL_TEXTURE1)
+    glBindTexture(GL_TEXTURE_2D_ARRAY, tilearray)
+    glUniform1i(terrainshader.tilesloc, 1)
+    glDrawArrays(GL_TRIANGLES, 0, 6 * 2 * (terrain.z + terrain.y + terrain.x))
+}
+
+drawmodels :: (pv: mat4) {
+    glUseProgram(modelshader.program)
+    glUniform2f(modelshader.viewportloc, viewport[0], viewport[1])
+
+    lastmodel : &voxelmodel = null
+
+    for i in 0..entities.count {
+        if entities[i].model == null {
+            continue
+        }
+        model := entities[i].model
+        if !model.loaded {
+            continue
+        }
+
+        m := mat4.translation(- cast(f32) model.z, -.5 * cast(f32) model.y, -.5 * cast(f32) model.x)
+        s := mat4.scale(1.0/96.0, 1.0/96.0, 1.0/96.0)
+        m = s * m
+        q := quat.fromeuler(-math.PI/2, 0, -math.PI/2)
+        r := q->tomat4()
+        m = r * m
+        q = quat.fromeuler(0, -math.PI/2, 0)
+        r = q->tomat4()
+        m = r * m
+        t := mat4.translation(entities[i].pos.x, entities[i].pos.y, entities[i].pos.z)
+        m = t * m
+
+        mvp := pv * m
+
+        glUniformMatrix4(modelshader.mvploc, false, ~~ mvp)
+
+        if model != lastmodel {
+            glActiveTexture(GL_TEXTURE0)
+            glBindTexture(GL_TEXTURE_3D, model.texture)
+            glUniform1i(modelshader.voxelsloc, 0)
+            glUniform1uiv(modelshader.paletteloc, to_void_array(model.palette))
+            lastmodel = model
+        }
+
+        glDrawArrays(GL_TRIANGLES, 0, 6 * 2 * (model.z + model.y +model.x))
+    }
+}
+
+loop :: (_: js.Value, args: [] js.Value) -> js.Value {
+    defer js.release_pooled_objects()
+    elapsed := platform.__time() - lasttime
+    lasttime = platform.__time()
+
+    savestate()
+
+    if !terrain.loaded {
+        js.Global->call("requestAnimationFrame", loop)
+        return js.Undefined
+    }
+    for &m in models {
+        if !m.loaded {
+            js.Global->call("requestAnimationFrame", loop)
+            return js.Undefined
+        }
+    }
+
+    processinput(elapsed)
+
+	timelabel->set("textContent",
+		tprintf("{} {}", campos, camorientation))
+
+    player := &entities[playerindex]
+
+    for &e in entities {
+
+        if e.type == .spawnpoint && needsrespawn {
+            player.pos = e.pos
+            player.orientation = e.orientation
+            needsrespawn = false
+        }
+
+        if e.gravity && (e.type != .player || playmode) {
+            if !e->onground() {
+                e.vel.y -= 10 * (cast(f32) elapsed) / 1000.0
+            }
+        }
+
+        if e.vel->length() > 100 {
+            e.vel = e.vel->normalize() * math.min(e.vel->length(), 100)
+        }
+
+        e.pos += e.vel * (cast(f32) elapsed / 1000.0)
+
+        if e.type != .player || playmode {
+            
+            for &ee in entities {
+                if ee.type == .imp || ee.type == .mancubus {
+                    d := ee.pos - e.pos
+                    if d->length() < e.radius + ee.radius {
+                        pushback := (e.radius + ee.radius) - d->length()
+                        e.pos -= d->normalize() * pushback
+                        if e.radius >= ee.radius {
+                            ee.pos += d->normalize() * pushback
+                        } 
+                    }
+                }
+            }
+
+            if terrain->getvoxelf32(e.pos.x + e.radius, e.pos.y + e.height / 2, e.pos.z) != -1 {
+                e.pos.x = math.floor(e.pos.x + e.radius) - e.radius
+            }
+            if terrain->getvoxelf32(e.pos.x - e.radius, e.pos.y + e.height / 2, e.pos.z) != -1 {
+                e.pos.x = math.ceil(e.pos.x - e.radius) + e.radius
+            }
+            if terrain->getvoxelf32(e.pos.x, e.pos.y + e.height / 2, e.pos.z + e.radius) != -1 {
+                e.pos.z = math.floor(e.pos.z + e.radius) - e.radius
+            }
+            if terrain->getvoxelf32(e.pos.x, e.pos.y + e.height / 2, e.pos.z - e.radius) != -1 {
+                e.pos.z = math.ceil(e.pos.z - e.radius) + e.radius
+            }
+            if terrain->getvoxelf32(e.pos.x, e.pos.y + e.height, e.pos.z) != -1 {
+                e.pos.y = math.floor(e.pos.y + e.height) - e.height
+                e.vel.y = 0
+            }
+            if terrain->getvoxelf32(e.pos.x, e.pos.y, e.pos.z) != -1 {
+                e.pos.y = math.ceil(e.pos.y)
+                e.vel.y = 0
+            }
+        } 
+
+        if e.model != null {
+            e.frametime += cast(f32)elapsed / 1000.0
+            while e.frametime > frames[e.frame].duration {
+                e.frametime -= frames[e.frame].duration
+                e.frame = frames[e.frame].next
+                e.model = &models[frames[e.frame].model]
+            }
+        }
+
+        if e.type == .player {
+            campos = player.pos
+            campos.y += .8 * player.height
+            camorientation = player.orientation
+        }
+    }
+
+    glClearColor(0.1, 0.1, 0.1, 1)
+    glClear(GL_COLOR_BUFFER_BIT)
+    glClear(GL_DEPTH_BUFFER_BIT)
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
+
+    t := mat4.translation(-campos.x, -campos.y, -campos.z)
+    r : = camorientation->tomat4()
+    v := r * t
+
+    p := mat4.perspective(math.PI / 3, viewport[0] / viewport[1], .01, 1000.0)
+    pv := p * v
+
+    drawterrain(pv)
+    drawmodels(pv)
+
+    js.Global->call("requestAnimationFrame", loop)
+    alloc.clear_temp_allocator()
+    return js.Undefined
+}
+
+to_void_array :: macro (x: [] $T) -> [] void {
+    return .{ ~~ x.data, (sizeof T) * x.count / 4 };
+}
+
+to_byte_array :: macro (x: [] $T) -> [] u8 {
+    return .{ ~~ x.data, (sizeof T) * x.count };
+}
