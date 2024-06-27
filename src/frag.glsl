@@ -12,9 +12,6 @@ in vec3 xyz;
 out vec4 color;
 
 void main() {
-	//uint c = texture(voxels, xyz).r;
-
-
 	uint c = texture(voxels, vec3(xyz.x, 1.0 - xyz.y, xyz.z)).r;
 	
 

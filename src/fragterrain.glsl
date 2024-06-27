@@ -16,7 +16,6 @@ out vec4 color;
 
 void main() {
 	uvec2 voxeldata = texture(voxels, xyz).rg;
-	//uvec2 voxeldata = texture(voxels, vec3(xyz.xy, 1.0 - xyz.z)).rg;
 	int c = int(voxeldata.g) * 256 + int(voxeldata.r);
 
 	if (c > 32627) {
