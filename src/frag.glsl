@@ -14,7 +14,6 @@ out vec4 color;
 void main() {
 	uint c = texture(voxels, vec3(xyz.x, 1.0 - xyz.y, xyz.z)).r;
 	
-
 	if (c == 255u) {
 		discard;
 	}

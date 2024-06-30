@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>GRIFFONY</title>
     <script src="out.wasm.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <script>
         Onyx.load("out.wasm").then(function (module) {
             module.start()
@@ -22,82 +23,143 @@
             overflow: hidden;
         }
 
-        .menu {
+        form {
             display: flex;
             flex-direction: column;
-            justify-content: center;
-            align-items: center;
             position: fixed;
-            left: 0px;
-            top: 0px;
-            width: 100%;
-            height: 100%;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2em;
+            color: white;
         }
 
-        .control,
-        .menu-button {
-            box-sizing: border-box;
-            width: 25%;
-            border: 5px solid rgb(52, 51, 51);
+        fieldset {
+            background-color: rgb(38, 30, 13);
+            border: 2px solid rgb(255, 255, 255);
             border-radius: 5px;
-            margin: 2px;
+            user-select: none;
+        }
+
+        form label,
+        form input,
+        form button,
+        td,
+        th {
+            font-size: .75em;
+        }
+
+        form label {
+            user-select: none;
+            margin-right: 8px;
+        }
+
+        form input[type="checkbox"],
+        form input[type="radio"] {
+            transform: scale(2) translateY(-15%);
+            margin-right: 12px;
+            margin-left: 4px;
+        }
+
+        form input[type="text"] {
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        form button {
+            position: relative;
+            padding: 8px;
+            border: 2px solid rgb(255, 255, 255);
+            border-radius: 5px;
             background-color: rgb(38, 30, 13);
             color: white;
-            font-size: 2em;
             font-family: "silver";
-            border-width: 5px;
-
+            text-align: "left";
         }
 
-        .menu-button {
-            position: relative;
-        }
-
-        .menu-button::after {
+        form button::after {
             content: "";
             position: absolute;
-            top: 0;
-            right: 0;
-            bottom: 0;
-            left: 0;
+            inset: 0;
             background-color: transparent;
             transition: background-color 0.3s ease;
         }
 
-        .menu-button:hover::after {
+        form button:hover::after {
             background-color: rgba(216, 206, 176, 0.5);
-        }
-
-        .control {
-            position: relative;
-            width: 25%;
-            display: flex;
-            flex-direction: row;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .control label,
-        .control input {
-            display: inline-block;
-        }
-
-        .control input {
-            transform: scale(2);
-            margin-left: 20px;
         }
     </style>
 </head>
+<html>
 
 <body>
-    <div id="main-menu" class="menu" style="display: none;">
-        <button id="main-menu-reset" class="menu-button">Reset</button>
-        <button id="main-menu-stop" class="menu-button">Stop</button>
-        <div class="control" id="invert-mouse-control">
-            <label for="invert-mouse" id="invert-mouse-label">Invert:</label>
-            <input type="checkbox" id="invert-mouse">
-        </div>
-    </div>
+    <form id="main-menu" style="display: none;">
+        <fieldset>
+            <legend>Server</legend>
+            <div>
+                <label>
+                    <input type="radio" name="server" id = "join" value="join" checked>Join
+                </label>
+                <label>
+                    <input type="radio" name="server" id = "host" value="host">Host
+                </label>
+            </div>
+            <div>
+                <label for="hostid">Game ID</label>
+                <input type="text" autocomplete="off" name="hostid" id="hostid" value="some-id-here">
+            </div>
+            <div>
+                <button type="button">Launch</button>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend>Mouse</legend>
+            <div>
+                <label for="invert">
+                    <input type="checkbox" name="Invert" id="invert" checked>Invert
+                </label>
+            </div>
+        </fieldset>
+        <fieldset>
+            <legend>Keybindings</legend>
+            <div>
+                <label for="forward">Forward</label>
+                <input type="text" autocomplete="off" name="forward" id="forward" value="w">
+            </div>
+            <div>
+                <label for="back">Back</label>
+                <input type="text" autocomplete="off" name="back" id="back" value="s">
+            </div>
+            <div>
+                <label for="left">Left</label>
+                <input type="text" autocomplete="off" name="left" id="left" value="a">
+            </div>
+            <div>
+                <label for="right">Right</label>
+                <input type="text" autocomplete="off" name="right" id="right" value="d">
+            </div>
+            <div>
+                <label for="up">Up</label>
+                <input type="text" autocomplete="off" name="up" id="up" value="e">
+            </div>
+            <div>
+                <label for="down">Down</label>
+                <input type="text" autocomplete="off" name="down" id="down" value="e">
+            </div>
+            <div>
+                <label for="jump">Jump</label>
+                <input type="text" autocomplete="off" name="jump" id="jump" value="space">
+            </div>
+            <div>
+                <label for="respawn">Respawn</label>
+                <input type="text" autocomplete="off" name="respawn" id="respawn" value="r">
+            </div>
+            <div>
+                <label for="playmode">Playmode</label>
+                <input type="text" autocomplete="off" name="playmode" id="playmode" value="p">
+            </div>
+        </fieldset>
+    </form>
 </body>
 
 </html>

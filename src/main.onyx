@@ -26,7 +26,20 @@ playerindex : i32
 
 terrain: terraindata
 
-keystates : Map(str, bool)
+settings := .{
+    mouseinvert = true,
+    forward = "w",
+    back = "s",
+    left = "a",
+    right = "d",
+    up = "e",
+    down = "q",
+    jump = " ",
+    respawn = "r",
+    playmode = "p",    
+}
+
+keystates : Set(str)
 mousex: f32
 mousey: f32
 mousemovex: f32
@@ -36,7 +49,7 @@ lastmousey: f32
 
 pointerlocked: bool
 showingmenu: bool
-mouseinvert := true
+textentry: bool
 playmode: bool
 needsrespawn := true
 onground := false
@@ -117,56 +130,96 @@ reset :: () {
 
 setupbuttons :: () {
     doc := js.Global->get("document")
- 
+    
+    loadsettings()
+    doc->call("getElementById", "forward")->set("value", settings.forward)
+    doc->call("getElementById", "back")->set("value", settings.back)
+    doc->call("getElementById", "left")->set("value", settings.left)
+    doc->call("getElementById", "right")->set("value", settings.right)
+    doc->call("getElementById", "up")->set("value", settings.up)
+    doc->call("getElementById", "down")->set("value", settings.down)
+    doc->call("getElementById", "jump")->set("value", settings.jump)
+    doc->call("getElementById", "respawn")->set("value", settings.respawn)
+    doc->call("getElementById", "playmode")->set("value", settings.playmode)
+    doc->call("getElementById", "invert")->set("checked", settings.mouseinvert)
+
     menu := doc->call("getElementById", "main-menu")
+
+    menu->call("addEventListener", "click", js.func((this, args) => {
+        args[0]->call("stopPropagation")
+        return js.Undefined
+    }))
+
+    menu->call("addEventListener", "keyup", js.func((this, args) => {
+        args[0]->call("stopPropagation")
+        return js.Undefined
+    }))
+
+    menu->call("addEventListener", "keydown", js.func((this, args) => {
+        args[0]->call("stopPropagation")
+        return js.Undefined
+    }))
+
+    menu->call("addEventListener", "change", js.func((this, args) => {
+        target := args[0]->get("target")
+        id := target->get("id")->as_str_temp()->or_return(js.Undefined)
+
+        setkeybind :: macro (keybind: str) {
+            value := target->get("value")->as_str()->or_return(js.Undefined)
+            if keybind {
+                keybind->free()
+            }
+            keybind = value
+        }
+
+        switch id {
+            case "invert" {
+                checked := target->get("checked")->as_bool()->or_return(js.Undefined)
+                settings.mouseinvert = checked
+            }
+            case "forward" {
+                setkeybind(settings.forward)
+            }
+            case "back" {
+                setkeybind(settings.back)
+            }
+            case "left" {
+                setkeybind(settings.left)
+            }
+            case "right" {
+                setkeybind(settings.right)
+            }
+            case "up" {
+                setkeybind(settings.up)
+            }
+            case "down" {
+                setkeybind(settings.down)
+            }
+            case "jump" {
+                setkeybind(settings.jump)
+            }
+            case "respawn" {
+                setkeybind(settings.respawn)
+            }
+            case "playmode" {
+                setkeybind(settings.playmode)
+            }
+        }
+
+        savesettings()
+        args[0]->call("stopPropagation")
+        return js.Undefined
+    }))
+
     if showingmenu {
         menu->set("style", "")
     }
-
-    reset := doc->call("getElementById", "main-menu-reset")
-    reset->call("addEventListener", "click", js.func((this, args) => {
-        reset()
-        args[0]->call("stopPropagation")
-        return js.Undefined   
-    }))
-
-    menu_stop_button := doc->call("getElementById", "main-menu-stop")
-    menu_stop_button->call("addEventListener", "click", js.func((this, args) => {
-        stopmusic()
-        args[0]->call("stopPropagation")
-        return js.Undefined   
-    }))
-
-
-    invert_mouse_control := doc->call("getElementById", "invert-mouse-control")
-    invert_mouse_control->call("addEventListener", "click", js.func((this, args) => {
-        doc := js.Global->get("document")
-        mouseinvert = !mouseinvert
-        invert_mouse_button := doc->call("getElementById", "invert-mouse")
-        invert_mouse_button->set("checked", mouseinvert)
-        args[0]->call("stopPropagation")
-        return js.Undefined   
-    }))
-
-    invert_mouse_label := doc->call("getElementById", "invert-mouse-label")
-    invert_mouse_label->call("addEventListener", "click", js.func((this, args) => {
-        args[0]->call("preventDefault")
-        return js.Undefined   
-    }))
-
-    invert_mouse_button := doc->call("getElementById", "invert-mouse")
-    invert_mouse_button->set("checked", mouseinvert)
-    invert_mouse_button->call("addEventListener", "click", js.func((this, args) => {
-        mouseinvert = !mouseinvert
-        args[0]->call("stopPropagation")
-        return js.Undefined   
-    }))
 
     doc->call("addEventListener", "keydown", js.func((this, args) => {
         event := args[0]
         key := event->get("key")->as_str() ?? ""
         if key != "" {
-            keystates[key] = true
+            keystates->insert(key)  
         }
         return js.Undefined
     }))
@@ -174,9 +227,11 @@ setupbuttons :: () {
     doc->call("addEventListener", "keyup", js.func((this, args) => {
         event := args[0]
         key := event->get("key")->as_str() ?? ""
+
         if key != "" {
-            keystates[key] = false
+            keystates->remove(key)
         }
+        key->free()
         return js.Undefined
     }))
 
@@ -214,6 +269,11 @@ setupbuttons :: () {
 
     doc->call("addEventListener", "visibilitychange", js.func((this, args) => {
         lasttime = platform.__time() - lasttime
+        return js.Undefined
+    }))
+
+    doc->call("addEventListener", "contextmenu", js.func((this, args) => {
+        args[0]->call("preventDefault")
         return js.Undefined
     }))
 
@@ -644,7 +704,7 @@ raycast :: (origin: vec3, dir: vec3, maxdist: f32) -> ? rayhit {
 
 main :: () {
     logf(.Info, "Initializing")
-    keystates = Map.make(str, bool)
+    keystates = Set.make(str)
 
     js.setup_default_pool()
 
@@ -656,6 +716,7 @@ main :: () {
     playerindex = 0
 
     loadstate()
+    loadsettings()
     setupbuttons()
 
     use glContext := create_context()
@@ -736,6 +797,36 @@ compile_shader :: (type: GLenum, source: str) -> ? GLShader {
     return shader
 }
 
+loadsettings :: () {
+    s := js.Global->get("localStorage")->get("settings")->as_str() ?? ""
+    if s == "" {
+        return
+    }
+    s = base64.decode(s, context.temp_allocator)
+    result := osad.deserialize(typeof(settings), s, context.temp_allocator)
+    switch result {
+        case .Some as _ {
+            settings = _
+        }
+        
+        case .None {
+            logf(.Error, "Failed to deserialize settings")
+        }
+    }
+}
+
+savesettings :: () {
+    writer, stream := io.string_builder(context.temp_allocator);
+
+    if !osad.serialize(settings, &writer) {
+        logf(.Error, "Failed to serialize settings")
+    }
+    writer->flush();
+
+    s := base64.encode(stream.data, context.temp_allocator);
+    js.Global->get("localStorage")->set("settings", s)
+}
+
 loadstate :: () {
     s: = js.Global->get("localStorage")->get("state")->as_str() ?? ""
     if s == "" {
@@ -749,7 +840,6 @@ loadstate :: () {
             player.pos = state.playerpos
             player.orientation = state.playerorientation
             showingmenu = state.showingmenu
-            mouseinvert = state.mouseinvert
             playmode = state.playmode
             needsrespawn = false
         }
@@ -766,7 +856,6 @@ savestate :: () {
         playerpos = player.pos
         playerorientation = player.orientation
         showingmenu = showingmenu
-        mouseinvert = mouseinvert
         playmode = playmode
     }
 
@@ -783,7 +872,7 @@ savestate :: () {
 }
 
 processinput :: (elapsed: i64) {
-    if keystates["`"] == true {
+    if keystates->has("`") {
         showingmenu = !showingmenu
         menu := js.Global->get("document")->call("getElementById", "main-menu")
         if showingmenu {
@@ -797,35 +886,35 @@ processinput :: (elapsed: i64) {
                 js.Global->get("document")->get("documentElement")->call("requestPointerLock")
             }
         }
-        keystates["`"] = false
+        keystates->remove("`")
     }
 
-    if keystates["p"] == true {
+    if keystates->has(settings.playmode) {
         playmode = !playmode
-        keystates["p"] = false
+        keystates->remove(settings.playmode)
     }
 
-    if keystates["r"] == true {
+    if keystates->has(settings.respawn) {
         reset()
-        keystates["r"] = false
+        keystates->remove(settings.respawn)
     }
 
-    if keystates["0"] == true {
+    if keystates->has("0") {
         stopmusic()
-        keystates["0"] = false
-    } elseif keystates["1"] == true {
+        keystates->remove("0")
+    } elseif keystates->has("1") {
         playmusic(.Intro)
-        keystates["1"] = false
-    } elseif keystates["2"] == true {
+        keystates->remove("1")
+    } elseif keystates->has("2") {
         playmusic(.Endgame)
-        keystates["2"] = false
-    } elseif keystates["3"] == true {
+        keystates->remove("2")
+    } elseif keystates->has("3") {
         playmusic(.Intermission)
-        keystates["3"] = false
-    } elseif keystates["4"] == true {
+        keystates->remove("3")
+    } elseif keystates->has("4") {
         playmusic(.Devil)
-        keystates["4"] = false
-    }
+        keystates->remove("4")
+    } 
 
     player := &entities[playerindex]
 
@@ -847,29 +936,29 @@ processinput :: (elapsed: i64) {
     player.vel.x = 0
     player.vel.z = 0
 
-    if keystates["w"] == true {
+    if keystates->has(settings.forward) {
         player.vel += fwd * speed
-    } 
-    if keystates["s"] == true {
+    }
+    if keystates->has(settings.back) {
         player.vel -= fwd * speed
     }
-    if keystates["a"] == true {
+    if keystates->has(settings.left) {
         player.vel -= right * speed
     }
-    if keystates["d"] == true {
+    if keystates->has(settings.right) {
         player.vel += right * speed
     }
-    if !playmode && keystates["q"] == true {
-        player.vel -= up * speed
-    }
-    if !playmode && keystates["e"] == true {
+    if !playmode && keystates->has(settings.up) {
         player.vel += up * speed
     }
-    if keystates[" "] == true {
+    if !playmode && keystates->has(settings.down) {
+        player.vel -= up * speed
+    }
+    if keystates->has(settings.jump) {
         if player.gravity && playmode && player->onground() {
             player.vel.y += 5
         }
-        keystates[" "] = false
+        keystates->remove(settings.jump)
     }
 
     dx := mousex - lastmousex
@@ -881,7 +970,7 @@ processinput :: (elapsed: i64) {
         dx = mousemovex
         dy = mousemovey
         
-        if mouseinvert {
+        if settings.mouseinvert {
             dy = -dy
         }
     
@@ -895,22 +984,6 @@ processinput :: (elapsed: i64) {
     } 
 
     speed = speed * .05
-    if keystates["ArrowLeft"] == true {
-        q := quat.fromaxisangle(vec3.{0, 1, 0}, -speed)
-        player.orientation = player.orientation * q
-    }
-    if keystates["ArrowRight"] == true {
-        q := quat.fromaxisangle(vec3.{0, 1, 0}, speed)
-        player.orientation = player.orientation * q
-    }
-    if keystates["ArrowUp"] == true {
-        q := quat.fromaxisangle(vec3.{1, 0, 0}, speed)
-        player.orientation = q * player.orientation 
-    }
-    if keystates["ArrowDown"] == true {
-        q := quat.fromaxisangle(vec3.{1, 0, 0}, -speed)
-        player.orientation = q * player.orientation 
-    }
 }
 
 drawterrain :: (pv: mat4) {
@@ -997,8 +1070,7 @@ loop :: (_: js.Value, args: [] js.Value) -> js.Value {
 
     processinput(elapsed)
 
-	timelabel->set("textContent",
-		tprintf("{} {}", campos, camorientation))
+	timelabel->set("textContent", tprintf("{} {}", campos, camorientation))
 
     player := &entities[playerindex]
 
@@ -1029,9 +1101,9 @@ loop :: (_: js.Value, args: [] js.Value) -> js.Value {
                     d := ee.pos - e.pos
                     if d->length() < e.radius + ee.radius {
                         pushback := (e.radius + ee.radius) - d->length()
-                        e.pos -= d->normalize() * pushback
+                        e.pos -= (d + e.vel)->normalize() * pushback
                         if e.radius >= ee.radius {
-                            ee.pos += d->normalize() * pushback
+                            ee.pos += (d + e.vel)->normalize() * pushback
                         } 
                     }
                 }
@@ -1094,6 +1166,14 @@ loop :: (_: js.Value, args: [] js.Value) -> js.Value {
     js.Global->call("requestAnimationFrame", loop)
     alloc.clear_temp_allocator()
     return js.Undefined
+}
+
+js.Value.as_str_temp :: (v: js.Value) -> ? str {
+    a := context.allocator
+    defer context.allocator = a
+    context.allocator = context.temp_allocator
+
+    return v->as_str()
 }
 
 to_void_array :: macro (x: [] $T) -> [] void {
