@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GRIFFONY</title>
+    <script type="module" src="src/main.js"></script>
+    <style>
+        html,
+        body,
+        canvas {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        form {
+            background-color: rgb(38, 30, 13);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2em;
+            color: white;
+        }
+
+        fieldset {
+            margin-bottom: 1rem;
+            background-color: rgb(38, 30, 13);
+            border: 2px solid rgb(255, 255, 255);
+            border-radius: 5px;
+            user-select: none;
+        }
+
+        form label,
+        form input,
+        form button,
+        td,
+        th {
+            font-size: .75em;
+        }
+
+        form label {
+            user-select: none;
+            margin-right: 8px;
+        }
+
+        form input[type="checkbox"],
+        form input[type="radio"] {
+            transform: scale(2) translateY(-15%);
+            margin-right: 12px;
+            margin-left: 4px;
+        }
+
+        form input[type="text"] {
+            display: block;
+            margin-bottom: 12px;
+        }
+
+        form button {
+            position: relative;
+            padding: 8px;
+            border: 2px solid rgb(255, 255, 255);
+            border-radius: 5px;
+            background-color: rgb(38, 30, 13);
+            color: white;
+            font-family: "silver";
+            text-align: "left";
+        }
+
+        form button::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background-color: transparent;
+            transition: background-color 0.3s ease;
+        }
+
+        form button:hover::after {
+            background-color: rgba(216, 206, 176, 0.5);
+        }
+
+        .keybind-row {
+            display: grid;
+            grid-template-columns: 50% 50%;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .bind-button {
+            width: 100%;
+            text-align: center;
+            padding: 4px 8px;
+        }
+
+        .bind-button.listening {
+            background-color: rgb(88, 80, 63);
+        }
+    </style>
+</head>
+<html>
+
+<body>
+    <div id="main-menu" hidden>
+        <form>
+            <fieldset>
+                <legend>Server</legend>
+                <div>
+                    <label>
+                        <input type="radio" name="server" id="join" value="join" checked>Join
+                    </label>
+                    <label>
+                        <input type="radio" name="server" id="host" value="host">Host
+                    </label>
+                </div>
+                <div>
+                    <label for="hostid">Host ID</label>
+                    <input type="text" autocomplete="off" name="hostid" id="hostid" value="some-id-here">
+                </div>
+                <div>
+                    <button type="button" id="start">Start</button>
+                </div>
+            </fieldset>
+            <fieldset>
+                <legend>Mouse</legend>
+                <div>
+                    <label for="invert-mouse">
+                        <input type="checkbox" name="invert" id="invert-mouse" checked>Invert
+                    </label>
+                </div>
+            </fieldset>
+            <fieldset>
+                <legend>Keybindings</legend>
+                <div class="keybind-row">
+                    <label for="forward">Forward</label>
+                    <button type="button" id="forward" class="bind-button">W</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="backward">Back</label>
+                    <button type="button" id="backward" class="bind-button">S</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="left">Left</label>
+                    <button type="button" id="left" class="bind-button">A</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="right">Right</label>
+                    <button type="button" id="right" class="bind-button">D</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="up">Up</label>
+                    <button type="button" id="up" class="bind-button">E</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="down">Down</label>
+                    <button type="button" id="down" class="bind-button">Q</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="jump">Jump</label>
+                    <button type="button" id="jump" class="bind-button">Space</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="respawn">Respawn</label>
+                    <button type="button" id="respawn" class="bind-button">R</button>
+                </div>
+                <div class="keybind-row">
+                    <label for="godMode">God Mode</label>
+                    <button type="button" id="godMode" class="bind-button">P</button>
+                </div>
+            </fieldset>
+        </form>
+    </div>
+</body>
+
+</html>

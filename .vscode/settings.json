@@ -1,0 +1,8 @@
+{
+	"files.associations": {
+		"*.tsj": "json",
+		"*.tmj": "json",
+		"*.glsl.js": "glsl"
+	},
+	"js/ts.implicitProjectConfig.checkJs": true
+}

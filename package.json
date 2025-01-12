@@ -1,0 +1,23 @@
+{
+  "name": "griffony",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src/**/*.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "globals": "^15.14.0",
+    "sharp": "^0.33.5",
+    "vite": "^6.0.6"
+  },
+  "dependencies": {
+    "gl-matrix": "^3.4.3"
+  }
+}

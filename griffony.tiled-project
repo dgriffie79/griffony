@@ -1,0 +1,46 @@
+{
+    "automappingRulesFile": "",
+    "commands": [
+    ],
+    "extensionsPath": "extensions",
+    "folders": [
+        "public/maps",
+        "public/tilesets"
+    ],
+    "properties": [
+    ],
+    "propertyTypes": [
+        {
+            "color": "#ffa0a0a4",
+            "drawFill": true,
+            "id": 8,
+            "members": [
+            ],
+            "name": "monster",
+            "type": "class",
+            "useAs": [
+                "object",
+                "tile",
+                "project"
+            ]
+        },
+        {
+            "color": "#ffa0a0a4",
+            "drawFill": false,
+            "id": 10,
+            "members": [
+                {
+                    "name": "player_start_dir",
+                    "type": "int",
+                    "value": 0
+                }
+            ],
+            "name": "player_spawn",
+            "type": "class",
+            "useAs": [
+                "object",
+                "tile"
+            ]
+        }
+    ]
+}
