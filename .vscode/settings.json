@@ -4,5 +4,11 @@
 		"*.tmj": "json",
 		"*.glsl.js": "glsl"
 	},
-	"js/ts.implicitProjectConfig.checkJs": true
+	"js/ts.implicitProjectConfig.checkJs": true,
+	"javascript.validate.enable": true,
+	"javascript.suggest.jsdoc.generateReturns": true,
+	"javascript.suggest.completeJSDocs": true,
+	"eslint.enable": false,
+	"eslint.useESLintClass": true,
+	"eslint.useFlatConfig": true,
 }

@@ -383,7 +383,7 @@
                         {
                          "name":"model_id",
                          "type":"string",
-                         "value":"wall"
+                         "value":"maze"
                         }],
                  "rotation":0,
                  "type":"Decoration",
@@ -400,7 +400,7 @@
                         {
                          "name":"model_id",
                          "type":"string",
-                         "value":"wall"
+                         "value":"maze"
                         }],
                  "rotation":0,
                  "type":"Decoration",

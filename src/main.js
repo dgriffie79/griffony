@@ -1,26 +1,27 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
 
 import V_SRC from './shaders/V.glsl.js'
-import MODEL_F_SRC from './shaders/model_F.glsl.js'
-//import MODEL_F_SRC from './shaders/model_F.glsl?raw'
+//import MODEL_F_SRC from './shaders/model_F.glsl.js'
+// @ts-ignore
+import MODEL_F_SRC from './shaders/model_F.glsl?raw'
 import TERRAIN_F_SRC from './shaders/terrain_F.glsl.js'
 
 /**@type {WebGL2RenderingContext} */
-let gl = null
+let gl
 
 let lastTime = 0
 
 /** @type {HTMLDivElement} */
-let timeLabel = null
+let timeLabel
 
 /** @type {Shader} */
-let modelShader = null
+let modelShader
 
 /** @type {Shader} */
-let terrainShader = null
+let terrainShader
 
 /** @type {Tileset} */
-let tileset = null
+let tileset
 
 let viewport = [0, 0]
 let cameraPosition = vec3.create()
@@ -54,13 +55,13 @@ let godMode = true
 const entities = []
 
 /** @type {Entity} */
-let player = null
+let player
 
 /** @type { {[key: string]: Model}} */
 const models = {}
 
 /** @type {Level} */
-let level = null
+let level
 
 /** @enum {number} */
 const EntityType = Object.freeze({
@@ -85,7 +86,7 @@ class Entity {
 		this.radius = 0.5
 		this.gravity = true
 		/** @type {Model} */
-		this.model = null
+		this.model
 		this.scale = vec3.fromValues(1, 1, 1)
 		this.animationFrame = 0
 	}
@@ -125,7 +126,7 @@ class Entity {
 	/**
 	 * @param {Level} terrain
 	 * @returns {boolean}
-	 * */
+	 */
 	onGround(terrain) {
 		const r = .85 * this.radius
 		if (terrain.getVoxel(this.pos[0], this.pos[1], this.pos[2] - Number.EPSILON)) {
@@ -148,6 +149,10 @@ class Entity {
 }
 
 class Shader {
+	/**
+	 * @param {string} vertexSource
+	 * @param {string} fragmentSource
+	 * */
 	constructor(vertexSource, fragmentSource) {
 		this.program = null
 		this.vertexShader = null
@@ -163,6 +168,9 @@ class Shader {
 		this.cameraPositionLocation = null
 
 		this.vertexShader = gl.createShader(gl.VERTEX_SHADER)
+		if (!this.vertexShader) {
+			throw new Error('Error creating vertex shader')
+		}
 		gl.shaderSource(this.vertexShader, vertexSource)
 		gl.compileShader(this.vertexShader)
 		if (!gl.getShaderParameter(this.vertexShader, gl.COMPILE_STATUS)) {
@@ -170,6 +178,9 @@ class Shader {
 		}
 
 		this.fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)
+		if (!this.fragmentShader) {
+			throw new Error('Error creating fragment shader')
+		}
 		gl.shaderSource(this.fragmentShader, fragmentSource)
 		gl.compileShader(this.fragmentShader)
 		if (!gl.getShaderParameter(this.fragmentShader, gl.COMPILE_STATUS)) {
@@ -196,12 +207,9 @@ class Shader {
 	}
 }
 
-
-
 class Model {
 	constructor(url = '') {
 		this.url = url
-		this.loaded = false
 		this.sizeX = 0
 		this.sizeY = 0
 		this.sizeZ = 0
@@ -255,8 +263,6 @@ class Model {
 		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
 		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
 		gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8UI, this.sizeX, this.sizeY, this.sizeZ, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, this.voxels)
-
-		this.loaded = true
 	}
 
 	draw(mvpMatrix, modelMatrix) {
@@ -280,6 +286,7 @@ class Tileset {
 
 	/**
 	 * @param {string} url
+	 * @returns {Promise<HTMLImageElement>}
 	 */
 	async #loadImage(url) {
 		return new Promise((resolve, reject) => {
@@ -295,7 +302,7 @@ class Tileset {
 	 * @param {number} tileWidth
 	 * @param {number} tileHeight
 	 * @param {number} tileCount
-	 * */
+	 */
 
 	#createTexture(src, tileWidth, tileHeight, tileCount) {
 		this.texture = gl.createTexture()
@@ -333,6 +340,9 @@ class Tileset {
 		} else if (data.tiles) {
 			const canvas = document.createElement('canvas')
 			const ctx = canvas.getContext('2d')
+			if (!ctx) {
+				throw new Error('Failed to create 2d context')
+			}
 			canvas.width = tileWidth
 			canvas.height = tileHeight * tileCount
 
@@ -352,7 +362,6 @@ class Tileset {
 class Level {
 	constructor() {
 		this.url = ''
-		this.loaded = false
 		this.sizeX = 0
 		this.sizeY = 0
 		this.sizeZ = 0
@@ -439,8 +448,6 @@ class Level {
 
 		gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG8UI, this.sizeX, this.sizeY, this.sizeZ,
 			0, gl.RG_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array(this.voxels.buffer))
-
-		this.loaded = true
 	}
 
 	draw(mvpMatrix, modelMatrix) {
@@ -510,6 +517,11 @@ function createContext() {
 	document.body.appendChild(canvas)
 	document.body.appendChild(timeLabel)
 
+	const gl = canvas.getContext('webgl2', { antialias: false, failIfMajorPerformanceCaveat: true })
+	if (!gl) {
+		throw new Error('Failed to create WebGL2 context')
+	}
+
 	window.addEventListener('resize', () => {
 		canvas.width = window.innerWidth
 		canvas.height = window.innerHeight
@@ -517,8 +529,6 @@ function createContext() {
 		viewport[1] = canvas.height
 		gl.viewport(0, 0, canvas.width, canvas.height)
 	})
-
-	const gl = canvas.getContext('webgl2', { antialias: false, failIfMajorPerformanceCaveat: true })
 	return gl
 }
 
@@ -543,7 +553,7 @@ function setupUI() {
 		button.textContent = settings.keybinds[button.id]
 	});
 
-	/** @type {HTMLInputElement} */ 
+	/** @type {HTMLInputElement} */
 	(document.getElementById('invert-mouse')).checked = settings.invertMouse;
 
 	const menu = document.getElementById('main-menu')
@@ -862,8 +872,9 @@ async function main() {
 	player.radius = .25
 	entities.push(player)
 
-	if (localStorage.getItem('gameState')) {
-		let state = JSON.parse(localStorage.getItem('gameState'))
+	let savedState = localStorage.getItem('gameState')
+	if (savedState) {
+		const state = JSON.parse(savedState)
 		player.pos = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
 		player.orientation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
 		cameraPitch = state.cameraPitch
@@ -871,10 +882,11 @@ async function main() {
 		showingMenu = state.showingMenu
 	}
 
-	if (localStorage.getItem('gameSettings')) {
-		const savedSettings = JSON.parse(localStorage.getItem('gameSettings'))
-		if (savedSettings.version === settings.version) {
-			settings = savedSettings
+	let savedSettings = localStorage.getItem('gameSettings')
+	if (savedSettings) {
+		let obj = JSON.parse(savedSettings)
+		if (obj.version === settings.version) {
+			settings = obj
 		} else {
 			localStorage.setItem('gameSettings', JSON.stringify(settings))
 		}
