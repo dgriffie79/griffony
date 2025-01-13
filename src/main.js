@@ -1,24 +1,13 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
 
 import V_SRC from './shaders/V.glsl.js'
-//import MODEL_F_SRC from './shaders/model_F.glsl.js'
-// @ts-ignore
-import MODEL_F_SRC from './shaders/model_F.glsl?raw'
+import MODEL_F_SRC from './shaders/model_F.glsl.js'
 import TERRAIN_F_SRC from './shaders/terrain_F.glsl.js'
-
-/**@type {WebGL2RenderingContext} */
-let gl
 
 let lastTime = 0
 
 /** @type {HTMLDivElement} */
 let timeLabel
-
-/** @type {Shader} */
-let modelShader
-
-/** @type {Shader} */
-let terrainShader
 
 /** @type {Tileset} */
 let tileset
@@ -51,6 +40,9 @@ let mouseMoveY = 0
 let showingMenu = false
 let godMode = true
 
+/** @type {Renderer} */
+let renderer = null
+
 /** @type {Entity[]} */
 const entities = []
 
@@ -73,7 +65,6 @@ const EntityType = Object.freeze({
 class Entity {
 	constructor() {
 		this.id = -1
-
 		/** @type {EntityType} */
 		this.type = EntityType.NONE
 		this.pos = vec3.create()
@@ -86,7 +77,7 @@ class Entity {
 		this.radius = 0.5
 		this.gravity = true
 		/** @type {Model} */
-		this.model
+		this.model = null
 		this.scale = vec3.fromValues(1, 1, 1)
 		this.animationFrame = 0
 	}
@@ -148,64 +139,7 @@ class Entity {
 	}
 }
 
-class Shader {
-	/**
-	 * @param {string} vertexSource
-	 * @param {string} fragmentSource
-	 * */
-	constructor(vertexSource, fragmentSource) {
-		this.program = null
-		this.vertexShader = null
-		this.fragmentShader = null
-		this.viewportLocation = null
-		this.voxelsLocation = null
-		this.tilesLocation = null
-		this.paletteLocation = null
-		this.mvpMatrixLocation = null
-		this.modelMatrixLocation = null
-		this.modelViewMatrixLocation = null
-		this.projectionMatrixLocation = null
-		this.cameraPositionLocation = null
 
-		this.vertexShader = gl.createShader(gl.VERTEX_SHADER)
-		if (!this.vertexShader) {
-			throw new Error('Error creating vertex shader')
-		}
-		gl.shaderSource(this.vertexShader, vertexSource)
-		gl.compileShader(this.vertexShader)
-		if (!gl.getShaderParameter(this.vertexShader, gl.COMPILE_STATUS)) {
-			console.error('Error compiling shader:', gl.getShaderInfoLog(this.vertexShader))
-		}
-
-		this.fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)
-		if (!this.fragmentShader) {
-			throw new Error('Error creating fragment shader')
-		}
-		gl.shaderSource(this.fragmentShader, fragmentSource)
-		gl.compileShader(this.fragmentShader)
-		if (!gl.getShaderParameter(this.fragmentShader, gl.COMPILE_STATUS)) {
-			console.error('Error compiling shader:', gl.getShaderInfoLog(this.fragmentShader))
-		}
-
-		this.program = gl.createProgram()
-		gl.attachShader(this.program, this.vertexShader)
-		gl.attachShader(this.program, this.fragmentShader)
-		gl.linkProgram(this.program)
-		if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
-			console.error('Error linking program:', gl.getProgramInfoLog(this.program))
-		}
-
-		this.viewportLocation = gl.getUniformLocation(this.program, 'viewport')
-		this.voxelsLocation = gl.getUniformLocation(this.program, 'voxels')
-		this.tilesLocation = gl.getUniformLocation(this.program, 'tiles')
-		this.paletteLocation = gl.getUniformLocation(this.program, 'palette')
-		this.mvpMatrixLocation = gl.getUniformLocation(this.program, 'mvpMatrix')
-		this.modelMatrixLocation = gl.getUniformLocation(this.program, 'modelMatrix')
-		this.modelViewMatrixLocation = gl.getUniformLocation(this.program, 'modelViewMatrix')
-		this.projectionMatrixLocation = gl.getUniformLocation(this.program, 'projectionMatrix')
-		this.cameraPositionLocation = gl.getUniformLocation(this.program, 'cameraPosition')
-	}
-}
 
 class Model {
 	constructor(url = '') {
@@ -254,27 +188,7 @@ class Model {
 			this.palette[i] = this.palette[i] << 2
 		}
 
-		this.texture = gl.createTexture()
-		gl.bindTexture(gl.TEXTURE_3D, this.texture)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
-		gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8UI, this.sizeX, this.sizeY, this.sizeZ, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, this.voxels)
-	}
-
-	draw(mvpMatrix, modelMatrix) {
-		gl.useProgram(modelShader.program)
-		gl.uniformMatrix4fv(modelShader.mvpMatrixLocation, false, mvpMatrix)
-		gl.uniformMatrix4fv(modelShader.modelMatrixLocation, false, modelMatrix)
-		gl.uniform3fv(modelShader.cameraPositionLocation, cameraPosition)
-		gl.activeTexture(gl.TEXTURE0)
-		gl.bindTexture(gl.TEXTURE_3D, this.texture)
-		gl.uniform1i(modelShader.voxelsLocation, 0)
-		gl.uniform1uiv(modelShader.paletteLocation, new Uint32Array(this.palette.slice().buffer))
-		gl.drawArrays(gl.TRIANGLES, 0, 36)
+		renderer.createModelTexture(this)
 	}
 }
 
@@ -295,23 +209,6 @@ class Tileset {
 			img.onload = () => resolve(img);
 			img.onerror = reject
 		});
-	}
-
-	/**
-	 * @param {HTMLImageElement | ImageData } src 
-	 * @param {number} tileWidth
-	 * @param {number} tileHeight
-	 * @param {number} tileCount
-	 */
-
-	#createTexture(src, tileWidth, tileHeight, tileCount) {
-		this.texture = gl.createTexture()
-		gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.texture)
-		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT)
-		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT)
-		gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA8, tileWidth, tileHeight, tileCount, 0, gl.RGBA, gl.UNSIGNED_BYTE, src)
 	}
 
 	async load() {
@@ -336,7 +233,7 @@ class Tileset {
 
 		if (data.image) {
 			const img = await this.#loadImage(new URL(data.image, baseUrl).href)
-			this.#createTexture(img, tileWidth, tileHeight, tileCount)
+			this.texture = renderer.createTextureArray(tileWidth, tileHeight, tileCount, img)
 		} else if (data.tiles) {
 			const canvas = document.createElement('canvas')
 			const ctx = canvas.getContext('2d')
@@ -352,7 +249,7 @@ class Tileset {
 			}));
 
 			const imageData = ctx.getImageData(0, 0, data.tilewidth, data.tileheight * data.tilecount)
-			this.#createTexture(imageData, tileWidth, tileHeight, tileCount)
+			this.texture = renderer.createTextureArray(tileWidth, tileHeight, tileCount, imageData)
 		} else {
 			throw new Error('Invalid tileset')
 		}
@@ -437,31 +334,7 @@ class Level {
 			}
 		})
 
-		this.texture = gl.createTexture()
-		gl.bindTexture(gl.TEXTURE_3D, this.texture)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
-
-		gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG8UI, this.sizeX, this.sizeY, this.sizeZ,
-			0, gl.RG_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array(this.voxels.buffer))
-	}
-
-	draw(mvpMatrix, modelMatrix) {
-		gl.useProgram(terrainShader.program)
-		gl.uniformMatrix4fv(terrainShader.mvpMatrixLocation, false, mvpMatrix)
-		gl.uniformMatrix4fv(terrainShader.modelMatrixLocation, false, modelMatrix)
-		gl.uniform3fv(terrainShader.cameraPositionLocation, cameraPosition)
-		gl.activeTexture(gl.TEXTURE0)
-		gl.bindTexture(gl.TEXTURE_3D, this.texture)
-		gl.uniform1i(terrainShader.voxelsLocation, 0)
-		gl.activeTexture(gl.TEXTURE1)
-		gl.bindTexture(gl.TEXTURE_2D_ARRAY, tileset.texture)
-		gl.uniform1i(terrainShader.tilesLocation, 1)
-		gl.drawArrays(gl.TRIANGLES, 0, 36)
+		renderer.createLevelTexture(this)
 	}
 }
 
@@ -502,34 +375,213 @@ class Camera {
 }
 
 
-function createContext() {
-	const canvas = document.createElement('canvas')
-	canvas.width = window.innerWidth
-	canvas.height = window.innerHeight
-
-	viewport = [canvas.width, canvas.height]
-
-	timeLabel = document.createElement('div')
-	timeLabel.style.position = 'fixed'
-	timeLabel.style.top = '0px'
-	timeLabel.style.color = 'white'
-
-	document.body.appendChild(canvas)
-	document.body.appendChild(timeLabel)
-
-	const gl = canvas.getContext('webgl2', { antialias: false, failIfMajorPerformanceCaveat: true })
-	if (!gl) {
-		throw new Error('Failed to create WebGL2 context')
+class Renderer {
+	constructor() {
+		this.gl = null
+		this.viewport = [0, 0]
+		this.modelShader = null
+		this.terrainShader = null
 	}
 
-	window.addEventListener('resize', () => {
+	init() {
+		this.createContext()
+		this.modelShader = this.createProgram(V_SRC, MODEL_F_SRC)
+		this.terrainShader = this.createProgram(V_SRC, TERRAIN_F_SRC)
+	}
+
+	createContext() {
+		const canvas = document.createElement('canvas')
 		canvas.width = window.innerWidth
 		canvas.height = window.innerHeight
-		viewport[0] = canvas.width
-		viewport[1] = canvas.height
-		gl.viewport(0, 0, canvas.width, canvas.height)
-	})
-	return gl
+
+		this.viewport = [canvas.width, canvas.height]
+		viewport = this.viewport
+
+		document.body.appendChild(canvas)
+
+
+		this.gl = canvas.getContext('webgl2', { antialias: false, failIfMajorPerformanceCaveat: true })
+		if (!this.gl) {
+			throw new Error('Failed to create WebGL2 context')
+		}
+
+		window.addEventListener('resize', () => {
+			canvas.width = window.innerWidth
+			canvas.height = window.innerHeight
+			this.viewport[0] = canvas.width
+			this.viewport[1] = canvas.height
+			this.gl.viewport(0, 0, canvas.width, canvas.height)
+		})
+	}
+
+	createProgram(vertexSource, fragmentSource) {
+		let gl = this.gl
+
+		let vertexShader = gl.createShader(gl.VERTEX_SHADER)
+		if (!vertexShader) {
+			throw new Error('Error creating vertex shader')
+		}
+		gl.shaderSource(vertexShader, vertexSource)
+		gl.compileShader(vertexShader)
+		if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+			console.error('Error compiling shader:', gl.getShaderInfoLog(vertexShader))
+		}
+
+		let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER)
+		if (!fragmentShader) {
+			throw new Error('Error creating fragment shader')
+		}
+		gl.shaderSource(fragmentShader, fragmentSource)
+		gl.compileShader(fragmentShader)
+		if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+			console.error('Error compiling shader:', gl.getShaderInfoLog(fragmentShader))
+		}
+
+		const program = gl.createProgram()
+		gl.attachShader(program, vertexShader)
+		gl.attachShader(program, fragmentShader)
+		gl.linkProgram(program)
+		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+			console.error('Error linking program:', gl.getProgramInfoLog(program))
+		}
+
+		const numUniforms = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
+		const uniforms = {}
+		for (let i = 0; i < numUniforms; i++) {
+			const info = gl.getActiveUniform(program, i);
+			uniforms[info.name] = gl.getUniformLocation(program, info.name);
+		}
+
+		return { program, uniforms }
+	}
+
+	/**
+	 * 
+	 * @param {number} width 
+	 * @param {number} height 
+	 * @param {number} count 
+	 * @param {HTMLImageElement | ImageData} source 
+	 * @returns 
+	 */
+	createTextureArray(width, height, count, source) {
+		const gl = this.gl
+		const texture = gl.createTexture()
+		gl.bindTexture(gl.TEXTURE_2D_ARRAY, texture)
+		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.REPEAT)
+		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.REPEAT)
+		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+		gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+		gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA8, width, height, count, 0, gl.RGBA, gl.UNSIGNED_BYTE, source)
+		return texture
+	}
+
+	createLevelTexture(level) {
+		const gl = this.gl
+		const texture = gl.createTexture()
+		gl.bindTexture(gl.TEXTURE_3D, texture)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+
+		gl.texImage3D(gl.TEXTURE_3D, 0, gl.RG8UI, level.sizeX, level.sizeY, level.sizeZ, 0, gl.RG_INTEGER, gl.UNSIGNED_BYTE, new Uint8Array(level.voxels.buffer))
+		level.texture = texture
+	}
+
+	drawLevel(level, mvpMatrix) {
+		const gl = this.gl
+		gl.useProgram(this.terrainShader.program)
+		const uniforms = this.terrainShader.uniforms
+
+		gl.uniformMatrix4fv(uniforms.mvpMatrix, false, mvpMatrix)
+		gl.uniformMatrix4fv(uniforms.modelMatrix, false, mat4.create())
+		gl.uniform3fv(uniforms.cameraPosition, cameraPosition)
+
+		gl.activeTexture(gl.TEXTURE0)
+		gl.bindTexture(gl.TEXTURE_3D, level.texture)
+		gl.uniform1i(uniforms.voxels, 0)
+
+		gl.activeTexture(gl.TEXTURE1)
+		gl.bindTexture(gl.TEXTURE_2D_ARRAY, tileset.texture)
+		gl.uniform1i(uniforms.tiles, 1)
+		gl.drawArrays(gl.TRIANGLES, 0, 36)
+	}
+
+	createModelTexture(model) {
+		const gl = this.gl
+		const texture = gl.createTexture()
+		gl.bindTexture(gl.TEXTURE_3D, texture)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+		gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+		gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8UI, model.sizeX, model.sizeY, model.sizeZ, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, model.voxels)
+		model.texture = texture
+	}
+
+	drawModel(model, mvpMatrix, modelMatrix) {
+		const gl = this.gl
+		gl.useProgram(this.modelShader.program)
+		const uniforms = this.modelShader.uniforms
+
+		gl.uniformMatrix4fv(uniforms.mvpMatrix, false, mvpMatrix)
+		gl.uniformMatrix4fv(uniforms.modelMatrix, false, modelMatrix)
+		gl.uniform3fv(uniforms.cameraPosition, cameraPosition)
+
+		gl.activeTexture(gl.TEXTURE0)
+		gl.bindTexture(gl.TEXTURE_3D, model.texture)
+		gl.uniform1i(uniforms.voxels, 0)
+
+		gl.uniform1uiv(uniforms['palette[0]'], new Uint32Array(model.palette.slice().buffer))
+		gl.drawArrays(gl.TRIANGLES, 0, 36)
+	}
+
+	draw() {
+		const gl = this.gl
+		gl.clearColor(.1, .1, .1, 1)
+		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		gl.enable(gl.DEPTH_TEST)
+		gl.enable(gl.CULL_FACE)
+		gl.cullFace(gl.BACK)
+
+		const viewMatrix = mat4.fromRotationTranslation(mat4.create(), cameraOrientation, cameraPosition)
+		mat4.invert(viewMatrix, viewMatrix)
+
+		// z-up
+		const projectionMatrix = mat4.perspective(mat4.create(), Math.PI / 3, viewport[0] / viewport[1], .1, 1000)
+		mat4.rotateX(projectionMatrix, projectionMatrix, -Math.PI / 2)
+
+		const vp = mat4.multiply(mat4.create(), projectionMatrix, viewMatrix)
+		this.drawLevel(level, vp)
+		//level.draw(vp, mat4.create())
+
+		for (const e of entities) {
+			if (e.model) {
+				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.orientation, e.pos, vec3.scale(vec3.create(), e.scale, 1 / 32))
+				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
+				const mvp = mat4.multiply(mat4.create(), vp, modelMatrix)
+				this.drawModel(e.model, mvp, modelMatrix)
+			}
+			e.animationFrame++
+			if (e.animationFrame > 16) {
+				if (e.model == models['fatta']) {
+					e.model = models['fattb']
+				} else if (e.model == models['fattb']) {
+					e.model = models['fattc']
+				} else if (e.model == models['fattc']) {
+					e.model = models['fattd']
+				} else if (e.model == models['fattd']) {
+					e.model = models['fatta']
+				}
+				e.animationFrame = 0
+			}
+		}
+	}
 }
 
 function respawn() {
@@ -640,6 +692,12 @@ function setupUI() {
 			key_states.clear()
 		}
 	})
+
+	timeLabel = document.createElement('div')
+	timeLabel.style.position = 'fixed'
+	timeLabel.style.top = '0px'
+	timeLabel.style.color = 'white'
+	document.body.appendChild(timeLabel)
 }
 
 function onKeydown(event) {
@@ -734,47 +792,6 @@ function processInput(elapsed) {
 	mouseMoveY = 0
 }
 
-function draw() {
-	gl.clearColor(.1, .1, .1, 1)
-	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-	gl.enable(gl.DEPTH_TEST)
-	gl.enable(gl.CULL_FACE)
-	gl.cullFace(gl.BACK)
-
-	const viewMatrix = mat4.fromRotationTranslation(mat4.create(), cameraOrientation, cameraPosition)
-	mat4.invert(viewMatrix, viewMatrix)
-
-	// z-up
-	const projectionMatrix = mat4.perspective(mat4.create(), Math.PI / 3, viewport[0] / viewport[1], .1, 1000)
-	mat4.rotateX(projectionMatrix, projectionMatrix, -Math.PI / 2)
-
-	const vp = mat4.multiply(mat4.create(), projectionMatrix, viewMatrix)
-	level.draw(vp, mat4.create())
-
-	for (const e of entities) {
-		if (e.model) {
-			const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
-			const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.orientation, e.pos, vec3.scale(vec3.create(), e.scale, 1 / 32))
-			mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
-			const mvp = mat4.multiply(mat4.create(), vp, modelMatrix)
-			e.model.draw(mvp, modelMatrix)
-		}
-		e.animationFrame++
-		if (e.animationFrame > 16) {
-			if (e.model == models['fatta']) {
-				e.model = models['fattb']
-			} else if (e.model == models['fattb']) {
-				e.model = models['fattc']
-			} else if (e.model == models['fattc']) {
-				e.model = models['fattd']
-			} else if (e.model == models['fattd']) {
-				e.model = models['fatta']
-			}
-			e.animationFrame = 0
-		}
-	}
-}
-
 function loop() {
 	const elapsed = performance.now() - lastTime
 	lastTime = performance.now()
@@ -859,10 +876,12 @@ function loop() {
 			cameraPosition[2] += .8 * e.height
 		}
 	}
-
-	draw()
+	renderer.draw()
+	//draw()
 	requestAnimationFrame(loop)
 }
+
+
 
 async function main() {
 	player = new Entity()
@@ -893,10 +912,8 @@ async function main() {
 	}
 
 	setupUI()
-	gl = createContext()
-
-	modelShader = new Shader(V_SRC, MODEL_F_SRC)
-	terrainShader = new Shader(V_SRC, TERRAIN_F_SRC)
+	renderer = new Renderer()
+	renderer.init()
 
 	let modelNames = [
 		'player',
@@ -923,8 +940,6 @@ async function main() {
 		level.load(),
 		Object.values(models).map((model) => model.load())
 	])
-
-	respawn()
 
 	requestAnimationFrame(loop)
 }

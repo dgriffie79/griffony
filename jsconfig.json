@@ -11,13 +11,14 @@
 		"esModuleInterop": false,
 		"skipLibCheck": true,
 		"forceConsistentCasingInFileNames": true,
-		"target": "ES2022",
+		"target": "ESNext",
 		"moduleResolution": "bundler",
 		"resolveJsonModule": true,
-		"module": "ES2022",
-		"noUnusedLocals": true
+		"module": "ESNext",
+		"noUnusedLocals": true,
+		"allowArbitraryExtensions": true,
 	},
 	"include": [
-		"src/**/*.js"
+		"src/**/*.js",
 	],
 }
