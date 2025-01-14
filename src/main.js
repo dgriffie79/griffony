@@ -1,4 +1,5 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
+import { Peer } from 'peerjs'
 
 import V_SRC from './shaders/V.glsl.js'
 import MODEL_F_SRC from './shaders/model_F.glsl.js'
@@ -12,10 +13,8 @@ let timeLabel
 /** @type {Tileset} */
 let tileset
 
-let viewport = [0, 0]
-let cameraPosition = vec3.create()
-let cameraPitch = 0
-let cameraOrientation = quat.create()
+/** @type {Camera} */
+let camera
 
 let settings = {
 	version: 1,
@@ -41,12 +40,12 @@ let showingMenu = false
 let godMode = true
 
 /** @type {Renderer} */
-let renderer = null
+let renderer
 
-/** @type {Entity[]} */
-const entities = []
+/** @type {Net} */
+let net
 
-/** @type {Entity} */
+/** @type {Player} */
 let player
 
 /** @type { {[key: string]: Model}} */
@@ -55,49 +54,52 @@ const models = {}
 /** @type {Level} */
 let level
 
-/** @enum {number} */
-const EntityType = Object.freeze({
-	NONE: 0,
-	PLAYER: 1,
-	SPAWN: 2,
-})
-
 class Entity {
+	/** @type {Entity[]} */
+	static all = []
+	static nextId = 1
+
 	constructor() {
-		this.id = -1
-		/** @type {EntityType} */
-		this.type = EntityType.NONE
+		this.id = 0
+		this.parent = null
+		this.children = []
 		this.pos = vec3.create()
 		this.vel = vec3.create()
-		this.orientation = quat.create()
-		this.frame = 0
-		this.frame_time = 0
-		this.model_id = -1
-		this.height = 1
-		this.radius = 0.5
-		this.gravity = true
+		this.rotation = quat.create()
+		this.scale = vec3.fromValues(1, 1, 1)
 		/** @type {Model} */
 		this.model = null
-		this.scale = vec3.fromValues(1, 1, 1)
+		this.model_id = -1
+		this.frame = 0
+		this.frame_time = 0
 		this.animationFrame = 0
+		this.height = 1
+		this.radius = 0.5
+		this.gravity = false
+
+		Entity.all.push(this)
 	}
 
 	static deserialize(data) {
-		const entity = new Entity()
+		let entity
 
-		entity.type = EntityType[data.type.toUpperCase()] ?? EntityType.NONE
-		entity.pos = vec3.fromValues(data.x / 32, data.y / 32, 1)
-
-		switch (data.type) {
-			case EntityType.SPAWN:
-				entity.gravity = false
+		switch (data.type.toUpperCase()) {
+			case 'PLAYER':
+				return null
+			case 'SPAWN':
+				entity = new Spawn()
+				break
+			default:
+				entity = new Entity()
 				break
 		}
+
+		entity.pos = vec3.fromValues(data.x / 32, data.y / 32, 1)
 
 		for (const property of data.properties ?? []) {
 			switch (property.name) {
 				case 'rotation':
-					quat.fromEuler(entity.orientation, 0, 0, property.value)
+					quat.fromEuler(entity.rotation, 0, 0, property.value)
 					break
 				case 'scale':
 					entity.scale = vec3.fromValues(property.value, property.value, property.value)
@@ -108,9 +110,7 @@ class Entity {
 					break
 			}
 		}
-
 		entity.model = models[entity.model_id]
-
 		return entity
 	}
 
@@ -137,9 +137,46 @@ class Entity {
 		}
 		return false
 	}
+
+	/** 
+	 * @param {number} elapsed 
+	 */
+	update(elapsed) { }
 }
 
+class Player extends Entity {
+	constructor(id = Entity.nextId++) {
+		super()
+		this.id = id
+		this.gravity = true
+		this.height = .5
+		this.radius = .25
+		this.model = models['player']
+		/** @type {Entity} */
+		this.head = new Entity()
+		this.head.id = Entity.nextId++
+		this.head.parent = this
+		this.children.push(this.head)
+	}
 
+	/** @param {number} elapsed */
+	update(elapsed) {
+		if (this.head) {
+			this.head.pos[0] = 0
+			this.head.pos[1] = 0
+			this.head.pos[2] = .8 * this.height
+		}
+	}
+}
+
+class Spawn extends Entity {
+	constructor() {
+		super()
+		this.gravity = false
+		this.height = 0
+		this.radius = 0
+	}
+}
 
 class Model {
 	constructor(url = '') {
@@ -328,7 +365,7 @@ class Level {
 					const entity = Entity.deserialize(object)
 					entity.pos[1] = this.sizeY - entity.pos[1]
 					if (entity != null) {
-						entities.push(entity)
+						Entity.all.push(entity)
 					}
 				}
 			}
@@ -345,17 +382,17 @@ class Camera {
 		this.near = near
 		this.far = far
 		this.position = vec3.create()
-		this.orientation = quat.create()
+		this.rotation = quat.create()
 		this.pitch = 0
 		this.worldMatrix = mat4.create()
 		this.worldInverseMatrix = mat4.create()
 		this.projectionMatrix = mat4.create()
-
-		this.update()
+		/** @type {Entity} */
+		this.subject = null
 	}
 
 	updateWorldMatrix() {
-		mat4.fromRotationTranslation(this.worldMatrix, this.orientation, this.position)
+		mat4.fromRotationTranslation(this.worldMatrix, this.rotation, this.position)
 	}
 
 	updateWorldInverseMatrix() {
@@ -367,13 +404,29 @@ class Camera {
 		mat4.rotateX(this.projectionMatrix, this.projectionMatrix, -Math.PI / 2)
 	}
 
-	update() {
+	update2() {
+		if (this.subject) {
+			this.position = this.subject.pos
+			this.rotation = this.subject.rotation
+			this.aspect = renderer.viewport[0] / renderer.viewport[1]
+		}
 		this.updateWorldMatrix()
 		this.updateWorldInverseMatrix()
 		this.updateProjectionMatrix()
 	}
-}
 
+	update() {
+		mat4.identity(this.worldMatrix)
+		const m = mat4.create()
+		for (let e = this.subject; e; e = e.parent) {
+			mat4.fromRotationTranslationScale(m, e.rotation, e.pos, e.scale)
+			mat4.multiply(this.worldMatrix, m, this.worldMatrix)
+		}
+		mat4.invert(this.worldInverseMatrix, this.worldMatrix)
+		mat4.getTranslation(this.position, this.worldMatrix)
+		this.updateProjectionMatrix()
+	}
+}
 
 class Renderer {
 	constructor() {
@@ -395,7 +448,6 @@ class Renderer {
 		canvas.height = window.innerHeight
 
 		this.viewport = [canvas.width, canvas.height]
-		viewport = this.viewport
 
 		document.body.appendChild(canvas)
 
@@ -497,7 +549,7 @@ class Renderer {
 
 		gl.uniformMatrix4fv(uniforms.mvpMatrix, false, mvpMatrix)
 		gl.uniformMatrix4fv(uniforms.modelMatrix, false, mat4.create())
-		gl.uniform3fv(uniforms.cameraPosition, cameraPosition)
+		gl.uniform3fv(uniforms.cameraPosition, camera.position)
 
 		gl.activeTexture(gl.TEXTURE0)
 		gl.bindTexture(gl.TEXTURE_3D, level.texture)
@@ -530,7 +582,7 @@ class Renderer {
 
 		gl.uniformMatrix4fv(uniforms.mvpMatrix, false, mvpMatrix)
 		gl.uniformMatrix4fv(uniforms.modelMatrix, false, modelMatrix)
-		gl.uniform3fv(uniforms.cameraPosition, cameraPosition)
+		gl.uniform3fv(uniforms.cameraPosition, camera.position)
 
 		gl.activeTexture(gl.TEXTURE0)
 		gl.bindTexture(gl.TEXTURE_3D, model.texture)
@@ -548,21 +600,16 @@ class Renderer {
 		gl.enable(gl.CULL_FACE)
 		gl.cullFace(gl.BACK)
 
-		const viewMatrix = mat4.fromRotationTranslation(mat4.create(), cameraOrientation, cameraPosition)
-		mat4.invert(viewMatrix, viewMatrix)
-
-		// z-up
-		const projectionMatrix = mat4.perspective(mat4.create(), Math.PI / 3, viewport[0] / viewport[1], .1, 1000)
-		mat4.rotateX(projectionMatrix, projectionMatrix, -Math.PI / 2)
+		const viewMatrix = camera.worldInverseMatrix
+		const projectionMatrix = camera.projectionMatrix
 
 		const vp = mat4.multiply(mat4.create(), projectionMatrix, viewMatrix)
 		this.drawLevel(level, vp)
-		//level.draw(vp, mat4.create())
 
-		for (const e of entities) {
+		for (const e of Entity.all) {
 			if (e.model) {
 				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
-				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.orientation, e.pos, vec3.scale(vec3.create(), e.scale, 1 / 32))
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.pos, vec3.scale(vec3.create(), e.scale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const mvp = mat4.multiply(mat4.create(), vp, modelMatrix)
 				this.drawModel(e.model, mvp, modelMatrix)
@@ -584,17 +631,118 @@ class Renderer {
 	}
 }
 
+const MessageType = {
+	PLAYER_JOIN: 0,
+	PLAYER_LEAVE: 1,
+	CHAT: 2,
+	ENTITY_UPDATE: 3,
+}
+
+class Net {
+	constructor() {
+		this.peer = null
+		this.connections = []
+		this.isHost = false
+	}
+
+	host(id) {
+		this.peer = new Peer(id)
+		this.isHost = true
+
+		this.peer.on('open', (id) => {
+			console.log('Host ID:', id)
+		})
+
+		this.peer.on('connection', (conn) => {
+			this.connections.push(conn)
+			conn.on('open', () => {
+				conn.send('Hello!')
+			})
+			conn.on('data', (data) => {
+				this.onData(conn, data)
+			})
+		})
+	}
+
+	join(hostid) {
+		this.isHost = false
+		this.peer = new Peer()
+		this.peer.on('open', (id) => {
+			console.log('Client ID:', id)
+			const conn = this.peer.connect(hostid)
+			conn.on('open', () => {
+				conn.send({ msg: MessageType.PLAYER_JOIN })
+			})
+			conn.on('data', (data) => {
+				this.onData(conn, data)
+			})
+		})
+	}
+
+	onData(conn, data) {
+		switch (data.msg) {
+			case MessageType.PLAYER_JOIN:
+				console.log('Player joined')
+				if (this.isHost) {
+					for (const conn of this.connections) {
+						conn.send(data)
+					}
+				}
+				break
+			case MessageType.PLAYER_LEAVE:
+				break
+			case MessageType.CHAT:
+				break
+			case MessageType.ENTITY_UPDATE:
+				if (!this.isHost) {
+					for (const e of Entity.all) {
+						if (e.id === data.id) {
+							e.pos[0] = data.pos[0]
+							e.pos[1] = data.pos[1]
+							e.pos[2] = data.pos[2]
+							e.rotation[0] = data.ori[0]
+							e.rotation[1] = data.ori[1]
+							e.rotation[2] = data.ori[2]
+							e.rotation[3] = data.ori[3]
+						}
+					}
+					break
+				}
+				break
+		}
+	}
+
+	update() {
+		if (!this.isHost) {
+			return
+		}
+
+		for (const e of Entity.all) {
+			if (e.id > 0) {
+				for (const conn of this.connections) {
+					conn.send({
+						msg: MessageType.ENTITY_UPDATE,
+						id: e.id,
+						pos: [e.pos[0], e.pos[1], e.pos[2]],
+						ori: [e.rotation[0], e.rotation[1], e.rotation[2], e.rotation[3]]
+					})
+				}
+			}
+		}
+	}
+}
+
+
 function respawn() {
-	player.pos = vec3.create()
-	player.vel = vec3.create()
-	player.orientation = quat.create()
-	cameraOrientation = quat.create()
-	cameraPitch = 0
-	player.gravity = true
-	for (const e of entities) {
-		if (e.type === EntityType.SPAWN) {
+	vec3.zero(player.pos)
+	vec3.zero(player.vel)
+	quat.identity(player.rotation)
+	quat.identity(player.head.rotation)
+
+	for (const e of Entity.all) {
+		if (e instanceof Spawn) {
 			vec3.copy(player.pos, e.pos)
-			quat.copy(player.orientation, e.orientation)
+			quat.copy(player.rotation, e.rotation)
 			break
 		}
 	}
@@ -649,6 +797,18 @@ function setupUI() {
 			activeBinding = button;
 			activeBinding.classList.add('listening');
 			activeBinding.textContent = 'Press a key...';
+			return
+		}
+
+		if (button.id === 'host') {
+			net.isHost = true
+			const hostId = /** @type {HTMLInputElement} */ (document.getElementById('hostid')).value
+			net.host(hostId)
+		}
+
+		if (button.id === 'join') {
+			const hostId = /** @type {HTMLInputElement} */ (document.getElementById('hostid')).value
+			net.join(hostId)
 		}
 	});
 
@@ -705,9 +865,8 @@ function onKeydown(event) {
 
 	switch (event.code) {
 		case 'Backquote': {
-			const menu = document.getElementById('main-menu')
 			showingMenu = !showingMenu
-			menu.hidden = !showingMenu
+			document.getElementById('main-menu').hidden = !showingMenu
 			if (showingMenu) {
 				document.exitPointerLock()
 			} else {
@@ -715,6 +874,15 @@ function onKeydown(event) {
 			}
 			break
 		}
+		case 'Escape': {
+			if (showingMenu) {
+				showingMenu = false
+				document.getElementById('main-menu').hidden = true
+				setTimeout(() => document.body.requestPointerLock(), 150)
+			}
+			break
+		}
+
 		case settings.keybinds.godMode: {
 			godMode = !godMode
 			break
@@ -730,14 +898,15 @@ function onKeydown(event) {
 
 function processInput(elapsed) {
 	const right = vec3.fromValues(1, 0, 0);
-	vec3.transformQuat(right, right, cameraOrientation);
+	vec3.transformQuat(right, right, player.rotation);
 
 	const forward = vec3.fromValues(0, 1, 0);
-	vec3.transformQuat(forward, forward, cameraOrientation);
+	vec3.transformQuat(forward, forward, player.rotation);
 
 	const up = vec3.fromValues(0, 0, 1);
-	vec3.transformQuat(up, up, cameraOrientation);
+	vec3.transformQuat(up, up, player.rotation);
 	const speed = 10
+
 
 	if (!godMode) {
 		forward[2] = 0
@@ -779,14 +948,18 @@ function processInput(elapsed) {
 	const dx = mouseMoveX
 	const dy = settings.invertMouse ? -mouseMoveY : mouseMoveY
 
-	const rotZ = quat.setAxisAngle(quat.create(), [0, 0, 1], -dx * elapsed / 2000)
-	quat.multiply(player.orientation, player.orientation, rotZ)
+	quat.rotateZ(player.rotation, player.rotation, -dx * elapsed / 1000)
+	quat.rotateX(player.head.rotation, player.head.rotation, dy * elapsed / 1000)
 
-	cameraPitch += dy * elapsed / 2000
-	cameraPitch = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, cameraPitch))
-	const rotX = quat.setAxisAngle(quat.create(), [1, 0, 0], cameraPitch)
+	const angle = quat.getAxisAngle(vec3.create(), player.head.rotation)
+	if (angle > Math.PI / 2) {
+		if (dy > 0) {
+			quat.setAxisAngle(player.head.rotation, vec3.fromValues(1, 0, 0), Math.PI / 2)
+		} else {
+			quat.setAxisAngle(player.head.rotation, vec3.fromValues(1, 0, 0), -Math.PI / 2)
+		}
 
-	quat.multiply(cameraOrientation, player.orientation, rotX)
+	}
 
 	mouseMoveX = 0
 	mouseMoveY = 0
@@ -798,19 +971,20 @@ function loop() {
 
 	localStorage.setItem('gameState', JSON.stringify({
 		playerPos: Array.from(player.pos),
-		playerOrientation: Array.from(player.orientation),
-		cameraPitch: cameraPitch,
+		playerOrientation: Array.from(player.rotation),
+		playerHeadRotation: Array.from(player.head.rotation),
 		showingMenu: showingMenu,
 		godMode: godMode
 	}))
 
-	processInput(elapsed)
-	timeLabel.innerHTML = `cam_pos: ${cameraPosition[0].toFixed(2)}, ${cameraPosition[1].toFixed(2)}, ${cameraPosition[2].toFixed(2)}
+	timeLabel.innerHTML = `cam_pos: ${camera.position[0].toFixed(2)}, ${camera.position[1].toFixed(2)}, ${camera.position[2].toFixed(2)}
 		${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}`
 
+	processInput(elapsed)
 
-	for (const e of entities) {
-		if (e.gravity && e.type != EntityType.PLAYER || !godMode) {
+	for (const e of Entity.all) {
+		e.update(elapsed)
+		if (e.gravity && !(e instanceof Player && godMode)) {
 			if (!e.onGround(level)) {
 				e.vel[2] -= 9.8 * elapsed / 1000
 			}
@@ -820,19 +994,20 @@ function loop() {
 			vec3.normalize(e.vel, e.vel)
 			vec3.scale(e.vel, e.vel, Math.min(vec3.length(e.vel), 100))
 		}
-
 		vec3.scaleAndAdd(e.pos, e.pos, e.vel, elapsed / 1000)
 
-		if (e.type == EntityType.PLAYER && !godMode) {
-
-			for (const ee of entities) {
+		if (e instanceof Player && !godMode) {
+			for (const ee of Entity.all) {
 				if (e == ee) {
 					continue
 				}
-				if (ee.type == EntityType.SPAWN) {
+				if (ee instanceof Spawn) {
 					continue
 				}
 
+				if (ee === e.head) {
+					continue
+				}
 				const s = vec3.sub(vec3.create(), ee.pos, e.pos)
 				const d = vec3.length(s)
 
@@ -870,33 +1045,24 @@ function loop() {
 			}
 		}
 
-		if (e.type === EntityType.PLAYER) {
-			player = e
-			vec3.copy(cameraPosition, e.pos)
-			cameraPosition[2] += .8 * e.height
-		}
 	}
+	camera.update()
 	renderer.draw()
-	//draw()
+	net.update()
 	requestAnimationFrame(loop)
 }
 
-
-
 async function main() {
-	player = new Entity()
-	player.type = EntityType.PLAYER
-	player.gravity = true
-	player.height = .5
-	player.radius = .25
-	entities.push(player)
+	player = new Player()
+	camera = new Camera()
+	camera.subject = player.head
 
 	let savedState = localStorage.getItem('gameState')
 	if (savedState) {
 		const state = JSON.parse(savedState)
 		player.pos = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
-		player.orientation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
-		cameraPitch = state.cameraPitch
+		player.rotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
+		player.head.rotation = state.playerHeadRotation
 		godMode = state.godMode
 		showingMenu = state.showingMenu
 	}
@@ -912,6 +1078,7 @@ async function main() {
 	}
 
 	setupUI()
+	net = new Net()
 	renderer = new Renderer()
 	renderer.init()
 

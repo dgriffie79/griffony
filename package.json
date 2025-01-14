@@ -17,6 +17,7 @@
     "vite": "^6.0.6"
   },
   "dependencies": {
-    "gl-matrix": "^3.4.3"
+    "gl-matrix": "^3.4.3",
+    "peerjs": "^1.5.4"
   }
 }
