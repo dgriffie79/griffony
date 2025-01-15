@@ -5,55 +5,6 @@ import V_SRC from './shaders/V.glsl.js'
 import MODEL_F_SRC from './shaders/model_F.glsl.js'
 import TERRAIN_F_SRC from './shaders/terrain_F.glsl.js'
 
-let lastTime = 0
-
-/** @type {HTMLDivElement} */
-let timeLabel
-
-/** @type {Tileset} */
-let tileset
-
-/** @type {Camera} */
-let camera
-
-let settings = {
-	version: 1,
-	invertMouse: true,
-	keybinds: {
-		forward: 'KeyW',
-		backward: 'KeyS',
-		left: 'KeyA',
-		right: 'KeyD',
-		up: 'KeyE',
-		down: 'KeyQ',
-		jump: 'Space',
-		respawn: 'KeyR',
-		godMode: 'KeyG',
-	}
-}
-
-const key_states = new Set()
-
-let mouseMoveX = 0
-let mouseMoveY = 0
-let showingMenu = false
-let godMode = true
-
-/** @type {Renderer} */
-let renderer
-
-/** @type {Net} */
-let net
-
-/** @type {Player} */
-let player
-
-/** @type { {[key: string]: Model}} */
-const models = {}
-
-/** @type {Level} */
-let level
-
 class Entity {
 	/** @type {Entity[]} */
 	static all = []
@@ -61,25 +12,61 @@ class Entity {
 
 	constructor() {
 		this.id = 0
+		/** @type {Entity} */
 		this.parent = null
+		/** @type {Entity[]} */
 		this.children = []
-		this.pos = vec3.create()
-		this.vel = vec3.create()
+
+		this.position = vec3.create()
 		this.rotation = quat.create()
 		this.scale = vec3.fromValues(1, 1, 1)
+		this.transform = mat4.create()
+
+		this.worldPosition = vec3.create()
+		this.worldRotation = quat.create()
+		this.worldScale = vec3.fromValues(1, 1, 1)
+		this.worldTransform = mat4.create()
+
 		/** @type {Model} */
 		this.model = null
 		this.model_id = -1
 		this.frame = 0
 		this.frame_time = 0
 		this.animationFrame = 0
-		this.height = 1
-		this.radius = 0.5
+
+		this.height = 0
+		this.radius = 0
+		this.vel = vec3.create()
 		this.gravity = false
 
 		Entity.all.push(this)
 	}
 
+	/**
+	 * 
+	 * @param {mat4} parentTransform 
+	 */
+	updateTransform(parentTransform) {
+		mat4.fromRotationTranslationScale(this.transform, this.rotation, this.position, this.scale)
+		if (parentTransform) {
+			mat4.multiply(this.worldTransform, parentTransform, this.transform)
+		} else {
+			mat4.copy(this.worldTransform, this.transform)
+		}
+
+		mat4.getTranslation(this.worldPosition, this.worldTransform);
+		mat4.getRotation(this.worldRotation, this.worldTransform);
+		mat4.getScaling(this.worldScale, this.worldTransform);
+
+		for (const child of this.children) {
+			child.updateTransform(this.worldTransform)
+		}
+	}
+
+	/**
+	 * 
+	 * @param {*} data 
+	 */
 	static deserialize(data) {
 		let entity
 
@@ -94,7 +81,7 @@ class Entity {
 				break
 		}
 
-		entity.pos = vec3.fromValues(data.x / 32, data.y / 32, 1)
+		entity.position = vec3.fromValues(data.x / 32, data.y / 32, 1)
 
 		for (const property of data.properties ?? []) {
 			switch (property.name) {
@@ -120,29 +107,64 @@ class Entity {
 	 */
 	onGround(terrain) {
 		const r = .85 * this.radius
-		if (terrain.getVoxel(this.pos[0], this.pos[1], this.pos[2] - Number.EPSILON)) {
+		if (terrain.getVoxel(this.position[0], this.position[1], this.position[2] - Number.EPSILON)) {
 			return true
 		}
-		if (terrain.getVoxel(this.pos[0] + r, this.pos[1], this.pos[2] - Number.EPSILON)) {
+		if (terrain.getVoxel(this.position[0] + r, this.position[1], this.position[2] - Number.EPSILON)) {
 			return true
 		}
-		if (terrain.getVoxel(this.pos[0] - r, this.pos[1], this.pos[2] - Number.EPSILON)) {
+		if (terrain.getVoxel(this.position[0] - r, this.position[1], this.position[2] - Number.EPSILON)) {
 			return true
 		}
-		if (terrain.getVoxel(this.pos[0], this.pos[1] + r, this.pos[2] - Number.EPSILON)) {
+		if (terrain.getVoxel(this.position[0], this.position[1] + r, this.position[2] - Number.EPSILON)) {
 			return true
 		}
-		if (terrain.getVoxel(this.pos[0], this.pos[1] - r, this.pos[2] - Number.EPSILON)) {
+		if (terrain.getVoxel(this.position[0], this.position[1] - r, this.position[2] - Number.EPSILON)) {
 			return true
 		}
 		return false
 	}
+
 
 	/** 
 	 * @param {number} elapsed 
 	 */
 	update(elapsed) { }
 }
+
+class Camera extends Entity {
+	constructor(fov = Math.PI / 3, aspect = 1, near = .1, far = 1000) {
+		super()
+		this.fov = fov
+		this.aspect = aspect
+		this.near = near
+		this.far = far
+		this.worldTransform = mat4.create()
+		this.worldInverseMatrix = mat4.create()
+		this.projectionMatrix = mat4.create()
+
+	}
+
+	updateWorldMatrix() {
+		mat4.fromRotationTranslation(this.worldTransform, this.rotation, this.position)
+	}
+
+	updateWorldInverseMatrix() {
+		mat4.invert(this.worldInverseMatrix, this.worldTransform)
+	}
+
+	updateProjectionMatrix() {
+		this.aspect = renderer.viewport[0] / renderer.viewport[1]
+		mat4.perspective(this.projectionMatrix, Math.PI / 3, this.aspect, .1, 1000)
+		mat4.rotateX(this.projectionMatrix, this.projectionMatrix, -Math.PI / 2)
+	}
+
+	update() {
+		mat4.invert(this.worldInverseMatrix, this.worldTransform)
+		this.updateProjectionMatrix()
+	}
+}
+
 
 class Player extends Entity {
 	constructor(id = Entity.nextId++) {
@@ -156,16 +178,8 @@ class Player extends Entity {
 		this.head = new Entity()
 		this.head.id = Entity.nextId++
 		this.head.parent = this
+		this.head.position = vec3.fromValues(0, 0, .8 * this.height)
 		this.children.push(this.head)
-	}
-
-	/** @param {number} elapsed */
-	update(elapsed) {
-		if (this.head) {
-			this.head.pos[0] = 0
-			this.head.pos[1] = 0
-			this.head.pos[2] = .8 * this.height
-		}
 	}
 }
 
@@ -220,7 +234,7 @@ class Model {
 			}
 		}
 
-		this.palette = new Uint8Array(dataView.buffer, 12 + numVoxels, 256 * 3)
+		this.palette = new Uint8Array(dataView.buffer, 12 + numVoxels, 256 * 3).slice()
 		for (let i = 0; i < this.palette.length; i++) {
 			this.palette[i] = this.palette[i] << 2
 		}
@@ -230,8 +244,8 @@ class Model {
 }
 
 class Tileset {
-	constructor() {
-		this.url = ''
+	constructor(url = '') {
+		this.url = url
 		this.texture = null
 	}
 
@@ -294,8 +308,8 @@ class Tileset {
 }
 
 class Level {
-	constructor() {
-		this.url = ''
+	constructor(url = '') {
+		this.url = url
 		this.sizeX = 0
 		this.sizeY = 0
 		this.sizeZ = 0
@@ -363,7 +377,7 @@ class Level {
 			} else if (layer.type === 'objectgroup') {
 				for (const object of layer.objects) {
 					const entity = Entity.deserialize(object)
-					entity.pos[1] = this.sizeY - entity.pos[1]
+					entity.position[1] = this.sizeY - entity.position[1]
 					if (entity != null) {
 						Entity.all.push(entity)
 					}
@@ -375,58 +389,7 @@ class Level {
 	}
 }
 
-class Camera {
-	constructor(fov = Math.PI / 3, aspect = 1, near = .1, far = 1000) {
-		this.fov = fov
-		this.aspect = aspect
-		this.near = near
-		this.far = far
-		this.position = vec3.create()
-		this.rotation = quat.create()
-		this.pitch = 0
-		this.worldMatrix = mat4.create()
-		this.worldInverseMatrix = mat4.create()
-		this.projectionMatrix = mat4.create()
-		/** @type {Entity} */
-		this.subject = null
-	}
 
-	updateWorldMatrix() {
-		mat4.fromRotationTranslation(this.worldMatrix, this.rotation, this.position)
-	}
-
-	updateWorldInverseMatrix() {
-		mat4.invert(this.worldInverseMatrix, this.worldMatrix)
-	}
-
-	updateProjectionMatrix() {
-		mat4.perspective(this.projectionMatrix, Math.PI / 3, this.aspect, .1, 1000)
-		mat4.rotateX(this.projectionMatrix, this.projectionMatrix, -Math.PI / 2)
-	}
-
-	update2() {
-		if (this.subject) {
-			this.position = this.subject.pos
-			this.rotation = this.subject.rotation
-			this.aspect = renderer.viewport[0] / renderer.viewport[1]
-		}
-		this.updateWorldMatrix()
-		this.updateWorldInverseMatrix()
-		this.updateProjectionMatrix()
-	}
-
-	update() {
-		mat4.identity(this.worldMatrix)
-		const m = mat4.create()
-		for (let e = this.subject; e; e = e.parent) {
-			mat4.fromRotationTranslationScale(m, e.rotation, e.pos, e.scale)
-			mat4.multiply(this.worldMatrix, m, this.worldMatrix)
-		}
-		mat4.invert(this.worldInverseMatrix, this.worldMatrix)
-		mat4.getTranslation(this.position, this.worldMatrix)
-		this.updateProjectionMatrix()
-	}
-}
 
 class Renderer {
 	constructor() {
@@ -549,7 +512,7 @@ class Renderer {
 
 		gl.uniformMatrix4fv(uniforms.mvpMatrix, false, mvpMatrix)
 		gl.uniformMatrix4fv(uniforms.modelMatrix, false, mat4.create())
-		gl.uniform3fv(uniforms.cameraPosition, camera.position)
+		gl.uniform3fv(uniforms.cameraPosition, camera.worldPosition)
 
 		gl.activeTexture(gl.TEXTURE0)
 		gl.bindTexture(gl.TEXTURE_3D, level.texture)
@@ -575,6 +538,12 @@ class Renderer {
 		model.texture = texture
 	}
 
+	/**
+	 * 
+	 * @param {Model} model 
+	 * @param {mat4} mvpMatrix 
+	 * @param {mat4} modelMatrix 
+	 */
 	drawModel(model, mvpMatrix, modelMatrix) {
 		const gl = this.gl
 		gl.useProgram(this.modelShader.program)
@@ -582,13 +551,13 @@ class Renderer {
 
 		gl.uniformMatrix4fv(uniforms.mvpMatrix, false, mvpMatrix)
 		gl.uniformMatrix4fv(uniforms.modelMatrix, false, modelMatrix)
-		gl.uniform3fv(uniforms.cameraPosition, camera.position)
+		gl.uniform3fv(uniforms.cameraPosition, camera.worldPosition)
 
 		gl.activeTexture(gl.TEXTURE0)
 		gl.bindTexture(gl.TEXTURE_3D, model.texture)
 		gl.uniform1i(uniforms.voxels, 0)
 
-		gl.uniform1uiv(uniforms['palette[0]'], new Uint32Array(model.palette.slice().buffer))
+		gl.uniform1uiv(uniforms['palette[0]'], new Uint32Array(model.palette.buffer))
 		gl.drawArrays(gl.TRIANGLES, 0, 36)
 	}
 
@@ -607,9 +576,9 @@ class Renderer {
 		this.drawLevel(level, vp)
 
 		for (const e of Entity.all) {
-			if (e.model) {
+			if (e.model && e !== player) {
 				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
-				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.pos, vec3.scale(vec3.create(), e.scale, 1 / 32))
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const mvp = mat4.multiply(mat4.create(), vp, modelMatrix)
 				this.drawModel(e.model, mvp, modelMatrix)
@@ -679,6 +648,8 @@ class Net {
 		})
 	}
 
+
+
 	onData(conn, data) {
 		switch (data.msg) {
 			case MessageType.PLAYER_JOIN:
@@ -697,9 +668,9 @@ class Net {
 				if (!this.isHost) {
 					for (const e of Entity.all) {
 						if (e.id === data.id) {
-							e.pos[0] = data.pos[0]
-							e.pos[1] = data.pos[1]
-							e.pos[2] = data.pos[2]
+							e.position[0] = data.pos[0]
+							e.position[1] = data.pos[1]
+							e.position[2] = data.pos[2]
 							e.rotation[0] = data.ori[0]
 							e.rotation[1] = data.ori[1]
 							e.rotation[2] = data.ori[2]
@@ -723,7 +694,7 @@ class Net {
 					conn.send({
 						msg: MessageType.ENTITY_UPDATE,
 						id: e.id,
-						pos: [e.pos[0], e.pos[1], e.pos[2]],
+						pos: [e.position[0], e.position[1], e.position[2]],
 						ori: [e.rotation[0], e.rotation[1], e.rotation[2], e.rotation[3]]
 					})
 				}
@@ -734,14 +705,14 @@ class Net {
 
 
 function respawn() {
-	vec3.zero(player.pos)
+	vec3.zero(player.position)
 	vec3.zero(player.vel)
 	quat.identity(player.rotation)
 	quat.identity(player.head.rotation)
 
 	for (const e of Entity.all) {
 		if (e instanceof Spawn) {
-			vec3.copy(player.pos, e.pos)
+			vec3.copy(player.position, e.position)
 			quat.copy(player.rotation, e.rotation)
 			break
 		}
@@ -970,7 +941,7 @@ function loop() {
 	lastTime = performance.now()
 
 	localStorage.setItem('gameState', JSON.stringify({
-		playerPos: Array.from(player.pos),
+		playerPos: Array.from(player.position),
 		playerOrientation: Array.from(player.rotation),
 		playerHeadRotation: Array.from(player.head.rotation),
 		showingMenu: showingMenu,
@@ -994,7 +965,7 @@ function loop() {
 			vec3.normalize(e.vel, e.vel)
 			vec3.scale(e.vel, e.vel, Math.min(vec3.length(e.vel), 100))
 		}
-		vec3.scaleAndAdd(e.pos, e.pos, e.vel, elapsed / 1000)
+		vec3.scaleAndAdd(e.position, e.position, e.vel, elapsed / 1000)
 
 		if (e instanceof Player && !godMode) {
 			for (const ee of Entity.all) {
@@ -1008,44 +979,50 @@ function loop() {
 				if (ee === e.head) {
 					continue
 				}
-				const s = vec3.sub(vec3.create(), ee.pos, e.pos)
+				const s = vec3.sub(vec3.create(), ee.position, e.position)
 				const d = vec3.length(s)
 
 				if (d < e.radius + ee.radius) {
 					const pushback = e.radius + ee.radius - d
 					const t = vec3.add(vec3.create(), s, e.vel)
 					vec3.normalize(t, t)
-					vec3.scaleAndAdd(e.pos, e.pos, t, -pushback)
+					vec3.scaleAndAdd(e.position, e.position, t, -pushback)
 					if (e.radius >= ee.radius) {
-						vec3.scaleAndAdd(ee.pos, e.vel, t, pushback)
+						vec3.scaleAndAdd(ee.position, e.vel, t, pushback)
 					}
 				}
 
 			}
 
-			if (level.getVoxel(e.pos[0] + e.radius, e.pos[1], e.pos[2] + e.height / 2)) {
-				e.pos[0] = Math.floor(e.pos[0] + e.radius) - e.radius
+			if (level.getVoxel(e.position[0] + e.radius, e.position[1], e.position[2] + e.height / 2)) {
+				e.position[0] = Math.floor(e.position[0] + e.radius) - e.radius
 			}
-			if (level.getVoxel(e.pos[0] - e.radius, e.pos[1], e.pos[2] + e.height / 2)) {
-				e.pos[0] = Math.ceil(e.pos[0] - e.radius) + e.radius
+			if (level.getVoxel(e.position[0] - e.radius, e.position[1], e.position[2] + e.height / 2)) {
+				e.position[0] = Math.ceil(e.position[0] - e.radius) + e.radius
 			}
-			if (level.getVoxel(e.pos[0], e.pos[1] + e.radius, e.pos[2] + e.height / 2)) {
-				e.pos[1] = Math.floor(e.pos[1] + e.radius) - e.radius
+			if (level.getVoxel(e.position[0], e.position[1] + e.radius, e.position[2] + e.height / 2)) {
+				e.position[1] = Math.floor(e.position[1] + e.radius) - e.radius
 			}
-			if (level.getVoxel(e.pos[0], e.pos[1] - e.radius, e.pos[2] + e.height / 2)) {
-				e.pos[1] = Math.ceil(e.pos[1] - e.radius) + e.radius
+			if (level.getVoxel(e.position[0], e.position[1] - e.radius, e.position[2] + e.height / 2)) {
+				e.position[1] = Math.ceil(e.position[1] - e.radius) + e.radius
 			}
-			if (level.getVoxel(e.pos[0], e.pos[1], e.pos[2] + e.height)) {
-				e.pos[2] = Math.floor(e.pos[2] + e.height) - e.height
+			if (level.getVoxel(e.position[0], e.position[1], e.position[2] + e.height)) {
+				e.position[2] = Math.floor(e.position[2] + e.height) - e.height
 				e.vel[2] = 0
 			}
-			if (level.getVoxel(e.pos[0], e.pos[1], e.pos[2])) {
-				e.pos[2] = Math.ceil(e.pos[2])
+			if (level.getVoxel(e.position[0], e.position[1], e.position[2])) {
+				e.position[2] = Math.ceil(e.position[2])
 				e.vel[2] = 0
 			}
 		}
-
 	}
+
+	for (const e of Entity.all) {
+		if (!e.parent) {
+			e.updateTransform(null)
+		}
+	}
+
 	camera.update()
 	renderer.draw()
 	net.update()
@@ -1053,14 +1030,13 @@ function loop() {
 }
 
 async function main() {
-	player = new Player()
-	camera = new Camera()
-	camera.subject = player.head
+	camera.parent = player.head
+	player.head.children.push(camera)
 
 	let savedState = localStorage.getItem('gameState')
 	if (savedState) {
 		const state = JSON.parse(savedState)
-		player.pos = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
+		player.position = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
 		player.rotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
 		player.head.rotation = state.playerHeadRotation
 		godMode = state.godMode
@@ -1078,11 +1054,47 @@ async function main() {
 	}
 
 	setupUI()
-	net = new Net()
-	renderer = new Renderer()
 	renderer.init()
 
-	let modelNames = [
+	await Promise.all([
+		tileset.load(),
+		level.load(),
+		...Object.values(models).map((model) => model.load())
+	])
+
+	requestAnimationFrame(loop)
+}
+
+
+let lastTime = 0
+let timeLabel
+
+let settings = {
+	version: 1,
+	invertMouse: true,
+	keybinds: {
+		forward: 'KeyW',
+		backward: 'KeyS',
+		left: 'KeyA',
+		right: 'KeyD',
+		up: 'KeyE',
+		down: 'KeyQ',
+		jump: 'Space',
+		respawn: 'KeyR',
+		godMode: 'KeyG',
+	}
+}
+
+
+const key_states = new Set()
+
+let mouseMoveX = 0
+let mouseMoveY = 0
+let showingMenu = false
+let godMode = true
+
+const models = Object.fromEntries(
+	[
 		'player',
 		'portal',
 		'fatta',
@@ -1090,24 +1102,16 @@ async function main() {
 		'fattc',
 		'fattd',
 		'maze',
-		'wall'
-	]
-	modelNames.forEach((model) => {
-		models[model] = new Model(`./models/${model}.vox`);
-	})
+		'wall',
+	].map((model) => [model, new Model(`./models/${model}.vox`)])
+)
 
-	tileset = new Tileset()
-	tileset.url = './tilesets/dcss_tiles.tsj'
+let tileset = new Tileset('./tilesets/dcss_tiles.tsj')
+let level = new Level('./maps/test.tmj');
+let player = new Player()
 
-	level = new Level();
-	level.url = './maps/test.tmj'
+const renderer = new Renderer()
+const camera = new Camera()
+let net = new Net()
 
-	await Promise.all([
-		tileset.load(),
-		level.load(),
-		Object.values(models).map((model) => model.load())
-	])
-
-	requestAnimationFrame(loop)
-}
 main()
