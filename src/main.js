@@ -13,36 +13,33 @@ class Entity
 	static all = []
 	static nextId = 1
 
+	id = 0
+    /** @type {Entity} */ parent = null
+    /** @type {Entity[]} */ children = []
+
+	position = vec3.create()
+	rotation = quat.create()
+	scale = vec3.fromValues(1, 1, 1)
+	transform = mat4.create()
+
+	worldPosition = vec3.create()
+	worldRotation = quat.create()
+	worldScale = vec3.fromValues(1, 1, 1)
+	worldTransform = mat4.create()
+
+    /** @type {Model} */ model = null
+	model_id = -1
+	frame = 0
+	frame_time = 0
+	animationFrame = 0
+
+	height = 0
+	radius = 0
+	vel = vec3.create()
+	gravity = false
+
 	constructor()
 	{
-		this.id = 0
-		/** @type {Entity} */
-		this.parent = null
-		/** @type {Entity[]} */
-		this.children = []
-
-		this.position = vec3.create()
-		this.rotation = quat.create()
-		this.scale = vec3.fromValues(1, 1, 1)
-		this.transform = mat4.create()
-
-		this.worldPosition = vec3.create()
-		this.worldRotation = quat.create()
-		this.worldScale = vec3.fromValues(1, 1, 1)
-		this.worldTransform = mat4.create()
-
-		/** @type {Model} */
-		this.model = null
-		this.model_id = -1
-		this.frame = 0
-		this.frame_time = 0
-		this.animationFrame = 0
-
-		this.height = 0
-		this.radius = 0
-		this.vel = vec3.create()
-		this.gravity = false
-
 		Entity.all.push(this)
 	}
 
@@ -152,18 +149,12 @@ class Entity
 
 class Camera extends Entity
 {
-	constructor(fov = Math.PI / 3, aspect = 1, near = .1, far = 1000)
-	{
-		super()
-		this.fov = fov
-		this.aspect = aspect
-		this.near = near
-		this.far = far
-		this.worldTransform = mat4.create()
-		this.worldInverseMatrix = mat4.create()
-		this.projectionMatrix = mat4.create()
-
-	}
+	fov = Math.PI / 3
+	aspect = 1
+	near = .1
+	far = 1000
+	projectionMatrix = mat4.create()
+	worldInverseMatrix = mat4.create()
 
 	updateWorldMatrix()
 	{
@@ -192,16 +183,16 @@ class Camera extends Entity
 
 class Player extends Entity
 {
+	gravity = true
+	height = .5
+	radius = .25
+	model = models['player']
+	head = new Entity()
+
 	constructor(id = Entity.nextId++)
 	{
 		super()
 		this.id = id
-		this.gravity = true
-		this.height = .5
-		this.radius = .25
-		this.model = models['player']
-		/** @type {Entity} */
-		this.head = new Entity()
 		this.head.id = Entity.nextId++
 		this.head.parent = this
 		this.head.position = vec3.fromValues(0, 0, .8 * this.height)
@@ -211,34 +202,34 @@ class Player extends Entity
 
 class Spawn extends Entity
 {
-	constructor()
-	{
-		super()
-		this.gravity = false
-		this.height = 0
-		this.radius = 0
-	}
+	gravity = true
+	height = 0
+	radius = 0
+	model = models['spawn']
+
 }
 
 class Model
 {
 	static nextId = 0
-	static models = []
+	/** @type {Model[]} */ static models = []
+
+	url = ''
+	id = Model.nextId++
+	sizeX = 0
+	sizeY = 0
+	sizeZ = 0
+	voxels = null
+	faces = null
+	faceCount = 0
+	palette = null
+	paletteBuffer = null
+	texture = null
+	/** @type {GPUBuffer} */ rasterBuffer = null
 
 	constructor(url = '')
 	{
 		this.url = url
-		this.id = Model.nextId++
-		this.sizeX = 0
-		this.sizeY = 0
-		this.sizeZ = 0
-		this.voxels = null
-		this.faces = null
-		this.faceCount = 0
-		this.palette = null
-		this.paletteBuffer = null
-		this.texture = null
-		/** @type {GPUBuffer} */ this.rasterBuffer = null
 	}
 
 	generateFaces()
@@ -378,14 +369,16 @@ class Model
 
 class Tileset
 {
+	url = ''
+	tileWidth = 0
+	tileHeight = 0
+	numTiles = 0
+	imageData = null
+	texture = null
+
 	constructor(url = '')
 	{
 		this.url = url
-		this.tileWidth = 0
-		this.tileHeight = 0
-		this.numTiles = 0
-		this.imageData = null
-		this.texture = null
 	}
 
 	/**
@@ -462,15 +455,18 @@ class Tileset
 
 class Level
 {
+	url = ''
+	sizeX = 0
+	sizeY = 0
+	sizeZ = 0
+	voxels = null
+	texture = null
+	buffer = null
+
+
 	constructor(url = '')
 	{
 		this.url = url
-		this.sizeX = 0
-		this.sizeY = 0
-		this.sizeZ = 0
-		this.voxels = null
-		this.texture = null
-		this.buffer = null
 	}
 
 	getVoxel(x, y, z)
@@ -560,23 +556,20 @@ class Level
 
 class Renderer
 {
-	constructor()
-	{
-		/** @type {GPUDevice} */ this.device = null
-		/** @type {GPUCanvasContext} */ this.context = null
-		/** @type {number[]} */ this.viewport = [0, 0]
-		/** @type {GPUBindGroupLayout} */ this.bindGroupLayout = null
-		/** @type {GPUBindGroupLayout} */ this.modelBindGroupLayout = null
-		/** @type {GPUBindGroupLayout} */ this.rasterBindGroupLayout = null
-		/** @type {GPURenderPipeline} */ this.terrainPipeline = null
-		/** @type {GPURenderPipeline} */ this.modelPipeline = null
-		/** @type {GPURenderPipeline} */ this.rasterPipeline = null
-		/** @type {GPUBuffer} */ this.dummyPaletteBuffer = null
-		/** @type {number} */ this.uniformBufferOffset = 0
-		/** @type {GPUTexture} */ this.depthTexture = null
-		/** @type {GPUBuffer} */ this.uniformBuffer = null
-		/** @type {GPUSampler} */ this.tileSampler = null
-	}
+    /** @type {GPUDevice} */ device = null;
+    /** @type {GPUCanvasContext} */ context = null;
+    /** @type {number[]} */ viewport = [0, 0];
+    /** @type {GPUBindGroupLayout} */ bindGroupLayout = null;
+    /** @type {GPUBindGroupLayout} */ modelBindGroupLayout = null;
+    /** @type {GPUBindGroupLayout} */ rasterBindGroupLayout = null;
+    /** @type {GPURenderPipeline} */ terrainPipeline = null;
+    /** @type {GPURenderPipeline} */ modelPipeline = null;
+    /** @type {GPURenderPipeline} */ rasterPipeline = null;
+    /** @type {GPUBuffer} */ dummyPaletteBuffer = null;
+    /** @type {number} */ uniformBufferOffset = 0;
+    /** @type {GPUTexture} */ depthTexture = null;
+    /** @type {GPUBuffer} */ uniformBuffer = null;
+    /** @type {GPUSampler} */ tileSampler = null;
 
 	/**
 	 * @param {string} code
@@ -850,99 +843,99 @@ class Renderer
 
 		this.createDepthTexture()
 	}
-
-	createRasterModelPipeline()
-	{
-		const bindgroupLayout0 = this.device.createBindGroupLayout({
-			entries: [
-				{
-					binding: 0,
-					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-					buffer: {
-						type: 'uniform',
-					}
-				},
-				{
-					binding: 1,
-					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-					texture: {
-						sampleType: 'float',
-						viewDimension: '2d-array',
-					}
-				},
-				{
-					binding: 2,
-					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-					sampler: {
-						type: 'non-filtering',
-					}
-				}
-			]
-		})
-
-		const bindgroupLayout1 = this.device.createBindGroupLayout({
-			entries: [
-				{
-					binding: 0,
-					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-					texture: {
-						sampleType: 'uint',
-						viewDimension: '3d',
-					}
-				},
-				{
-					binding: 1,
-					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-					buffer: {
-						type: 'uniform',
-					}
-				}
-			]
-		})
-
-		const pipeline = this.device.createRenderPipeline({
-			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [bindgroupLayout0, bindgroupLayout1]
-			}),
-			vertex: {
-				module: raymarch,
-				entryPoint: 'vs_raster',
-				buffers: [
+	/*
+		createRasterModelPipeline()
+		{
+			const bindgroupLayout0 = this.device.createBindGroupLayout({
+				entries: [
 					{
-						arrayStride: 4,
-						stepMode: 'instance',
-						attributes: [
-							{
-								shaderLocation: 0,
-								offset: 0,
-								format: 'uint8x4',
-							},
-						]
+						binding: 0,
+						visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+						buffer: {
+							type: 'uniform',
+						}
+					},
+					{
+						binding: 1,
+						visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+						texture: {
+							sampleType: 'float',
+							viewDimension: '2d-array',
+						}
+					},
+					{
+						binding: 2,
+						visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+						sampler: {
+							type: 'non-filtering',
+						}
 					}
 				]
-			},
-			fragment: {
-				module: raymarch,
-				entryPoint: 'fs_raster',
-				targets: [
+			})
+	
+			const bindgroupLayout1 = this.device.createBindGroupLayout({
+				entries: [
 					{
-						format: navigator.gpu.getPreferredCanvasFormat(),
+						binding: 0,
+						visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+						texture: {
+							sampleType: 'uint',
+							viewDimension: '3d',
+						}
+					},
+					{
+						binding: 1,
+						visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+						buffer: {
+							type: 'uniform',
+						}
 					}
-				],
-			},
-			primitive: {
-				topology: 'triangle-list',
-				cullMode: 'back',
-				frontFace: 'ccw',
-			},
-			depthStencil: {
-				format: 'depth24plus',
-				depthWriteEnabled: true,
-				depthCompare: 'less',
-			},
-		})
-	}
-
+				]
+			})
+	
+			const pipeline = this.device.createRenderPipeline({
+				layout: this.device.createPipelineLayout({
+					bindGroupLayouts: [bindgroupLayout0, bindgroupLayout1]
+				}),
+				vertex: {
+					module: raymarch,
+					entryPoint: 'vs_raster',
+					buffers: [
+						{
+							arrayStride: 4,
+							stepMode: 'instance',
+							attributes: [
+								{
+									shaderLocation: 0,
+									offset: 0,
+									format: 'uint8x4',
+								},
+							]
+						}
+					]
+				},
+				fragment: {
+					module: raymarch,
+					entryPoint: 'fs_raster',
+					targets: [
+						{
+							format: navigator.gpu.getPreferredCanvasFormat(),
+						}
+					],
+				},
+				primitive: {
+					topology: 'triangle-list',
+					cullMode: 'back',
+					frontFace: 'ccw',
+				},
+				depthStencil: {
+					format: 'depth24plus',
+					depthWriteEnabled: true,
+					depthCompare: 'less',
+				},
+			})
+		}
+	*/
 	/**
 	 * @param {Model} model
 	 * @returns {void}

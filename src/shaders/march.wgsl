@@ -9,7 +9,7 @@ struct Uniforms {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var tiles: texture_2d_array<f32>;
 @group(0) @binding(2) var tileSampler: sampler;
-@group(0) @binding(3) var voxels: texture_3d<u32>;
+//@group(0) @binding(3) var voxels: texture_3d<u32>;
 
 @group(1) @binding(0) var voxels: texture_3d<u32>;
 @group(1) @binding(1) var<uniform> palette: array<vec4u, 48>;
