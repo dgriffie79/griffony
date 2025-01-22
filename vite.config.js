@@ -14,7 +14,6 @@ function reloadOnTiledChanges()
 			{
 				server.watcher.add(`public/**/*${ext}`)
 			})
-
 			server.watcher.on('change', (file) =>
 			{
 				extensions.forEach(ext =>

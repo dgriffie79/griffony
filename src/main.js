@@ -206,7 +206,6 @@ class Spawn extends Entity
 	height = 0
 	radius = 0
 	model = models['spawn']
-
 }
 
 class Model
@@ -505,39 +504,25 @@ class Level
 		this.sizeZ = 3
 		this.voxels = new Uint16Array(this.sizeX * this.sizeY * this.sizeZ)
 
-		data.layers.forEach((layer) =>
+		for (const layer of data.layers)
 		{
 			if (layer.type === 'tilelayer')
 			{
-				let layerIndex
-
-				switch (layer.name)
+				const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name)
+				if (layerIndex === -1)
 				{
-					case 'Floor':
-						layerIndex = 0
-						break
-					case 'Walls':
-						layerIndex = 1
-						break
-					case 'Ceiling':
-						layerIndex = 2
-						break
-					default:
-						console.log(`Unknown tilelayer name: ${layer.name}`)
-						return
+					console.log(`Unknown tilelayer name: ${layer.name}`)
+					continue
 				}
-
-				layer.data.forEach((value, index) =>
-				{
-					const x = index % this.sizeX
-					const y = this.sizeY - Math.floor(index / this.sizeX) - 1
+				for (let i = 0; i < layer.data.length; i++) {
+					const x = i % this.sizeX
+					const y = this.sizeY - Math.floor(i / this.sizeX) - 1
 					const z = layerIndex
 					const voxelIndex = z * this.sizeX * this.sizeY + y * this.sizeX + x
-					this.voxels[voxelIndex] = value
-				})
-
+					this.voxels[voxelIndex] = layer.data[i]
+				}
 			} else if (layer.type === 'objectgroup')
-			{
+			{	
 				for (const object of layer.objects)
 				{
 					const entity = Entity.deserialize(object)
@@ -548,7 +533,7 @@ class Level
 					}
 				}
 			}
-		})
+		}
 
 		renderer.registerLevel(this)
 	}
@@ -582,10 +567,11 @@ class Renderer
 		})
 
 		const info = await module.getCompilationInfo()
-		info.messages.forEach((message) =>
+		for (const message of info.messages)
 		{
 			console.log(message)
-		})
+		}
+
 		return module
 	}
 
@@ -1449,10 +1435,9 @@ function respawn()
 function setupUI()
 {
 
-	Array.from(document.getElementsByClassName('bind-button')).forEach((button) =>
-	{
+	for (const button of document.getElementsByClassName('bind-button')) {
 		button.textContent = settings.keybinds[button.id]
-	});
+	}
 
 	/** @type {HTMLInputElement} */
 	(document.getElementById('invert-mouse')).checked = settings.invertMouse
