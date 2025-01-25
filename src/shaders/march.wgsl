@@ -1,25 +1,29 @@
-
-struct Uniforms {
-    modelViewProjection: mat4x4f,
-    model: mat4x4f,
-	cameraPosition: vec3f,
-	cameraObjectPosition: vec3f,
+struct FrameUniforms {
+	projection: mat4x4f,
+	view: mat4x4f,
+	camera_position: vec3f,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> uniforms: FrameUniforms;
 @group(0) @binding(1) var tiles: texture_2d_array<f32>;
 @group(0) @binding(2) var tileSampler: sampler;
-//@group(0) @binding(3) var voxels: texture_3d<u32>;
 
-@group(1) @binding(0) var voxels: texture_3d<u32>;
-@group(1) @binding(1) var<uniform> palette: array<vec4u, 48>;
+struct ObjectUniforms {
+	model: mat4x4f,
+	model_view_projection: mat4x4f,
+	camera_position_local: vec3f,
+}
+
+@group(1) @binding(0) var<uniform> object_uniforms: ObjectUniforms;
+@group(1) @binding(1) var voxels: texture_3d<u32>;
+@group(1) @binding(2) var<uniform> palette: array<vec4u, 48>;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) rayDirection: vec3f,
     @location(1) rayOrigin: vec3f,
     @location(2) debugColor: vec3f,
-};
+}
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertexID: u32) -> VertexOutput {
@@ -60,21 +64,21 @@ fn vs_main(@builtin(vertex_index) vertexID: u32) -> VertexOutput {
     
 	
 	let scale = vec3f(
-		length(uniforms.model[0].xyz),
-		length(uniforms.model[1].xyz),
-		length(uniforms.model[2].xyz)
+		length(object_uniforms.model[0].xyz),
+		length(object_uniforms.model[1].xyz),
+		length(object_uniforms.model[2].xyz)
 	);
 	let invModel = transpose(mat3x3f(
-		uniforms.model[0].xyz / scale.x,
-		uniforms.model[1].xyz / scale.y,
-		uniforms.model[2].xyz / scale.z
+		object_uniforms.model[0].xyz / scale.x,
+		object_uniforms.model[1].xyz / scale.y,
+		object_uniforms.model[2].xyz / scale.z
 	));
-	output.rayOrigin = invModel * (uniforms.cameraPosition - uniforms.model[3].xyz) / scale;
+	output.rayOrigin = invModel * (uniforms.camera_position - object_uniforms.model[3].xyz) / scale;
 
-	output.rayOrigin = uniforms.cameraObjectPosition;
+	output.rayOrigin = object_uniforms.camera_position_local;
     output.rayDirection = position - output.rayOrigin;
     output.debugColor = faceColors[vertexID / 6u];
-    output.position = uniforms.modelViewProjection * vec4f(position, 1.0);
+    output.position = object_uniforms.model_view_projection * vec4f(position, 1.0);
     
     return output;
 }
@@ -172,7 +176,7 @@ fn fs_terrain(in: VertexOutput) -> FragmentOutput {
 		discard;
 	}
 
-	let clipPos = uniforms.modelViewProjection * vec4f(hit.pos, 1.0);
+	let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
 	output.depth = (clipPos.z / clipPos.w);
 
 	var hitUV: vec2f;
@@ -252,26 +256,24 @@ fn getAO(vpos: vec3i, normal: vec3f) -> f32 {
 @fragment
 fn fs_model(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
-	
 
 	let hit = march(in.rayOrigin, normalize(in.rayDirection), 255u);
 
     // Debug visualization
-    // let stepHeat = f32(hit.steps) / 512.0;  // Normalize to 0-1 range
-	// var stepHeat = 0.0;
-	// if (hit.steps > 30u) {
-	// 	stepHeat = 1.0;
-	// }
-    // let debugColor = vec3f(stepHeat, 0.0, 1.0 - stepHeat);
-	// output.color = vec4f(debugColor, 1.0);
-	// return output;
+    var stepHeat = f32(hit.steps) / 30.0;
+	if (hit.steps > 30u) {
+	 	stepHeat = 1.0;
+	}
+    let debugColor = vec3f(stepHeat, 0.0, 1.0 - stepHeat);
+	output.color = vec4f(debugColor, 1.0);
+	//return output;
 
 	if (hit.voxel == 255u) {
 		discard;
 	}
 
-    let clipPos = uniforms.modelViewProjection * vec4f(hit.pos, 1.0);
-    output.depth = (clipPos.z / clipPos.w + 1.0) * 0.5;
+    let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
+    output.depth = (clipPos.z / clipPos.w);
     let ao = getAO(hit.voxelpos, hit.normal);
     let color = getPaletteColor(hit.voxel);
     output.color = vec4f(color.rgb * ao, 1.0);
@@ -342,7 +344,7 @@ fn vs_raster (
 	);
     
     let worldPos = vec3f(position) + vertices[normal][vertexID];
-    output.position = uniforms.modelViewProjection * vec4f(worldPos, 1.0);
+    output.position = object_uniforms.model_view_projection * vec4f(worldPos, 1.0);
 
 	let localPos = vertices[normal][vertexID];
     output.uv = select(
