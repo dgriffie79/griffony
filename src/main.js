@@ -240,7 +240,7 @@ class Model
 	faces = null
 	faceCount = 0
 	palette = null
-	paletteBuffer = null
+	paletteIndex = -1
 	texture = null
 	/** @type {GPUBuffer} */ rasterBuffer = null
 	bindGroup = null
@@ -333,8 +333,64 @@ class Model
 			}
 		}
 
-		this.faces = faces.subarray(0, faceCount * 4)
-		this.faceCount = faceCount
+		return faces.subarray(0, faceCount * 4)
+	}
+
+	checkOctant(x, y, z)
+	{
+		for (let oz = 0; oz < 4; oz++)
+		{
+			for (let oy = 0; oy < 4; oy++)
+			{
+				for (let ox = 0; ox < 4; ox++)
+				{
+					const px = x + ox
+					const py = y + oy
+					const pz = z + oz
+					if (px >= this.sizeX || py >= this.sizeY || pz >= this.sizeZ) continue
+					const idx = pz * this.sizeY * this.sizeX + py * this.sizeX + px
+					if (this.voxels[idx] !== 255) return true
+				}
+			}
+		}
+		return false
+	}
+
+	generateMipData()
+	{
+		const mipSizeX = Math.ceil(this.sizeX / 8)
+		const mipSizeY = Math.ceil(this.sizeY / 8)
+		const mipSizeZ = Math.ceil(this.sizeZ / 8)
+		const mipData = new Uint8Array(mipSizeX * mipSizeY * mipSizeZ)
+
+		for (let mz = 0; mz < mipSizeZ; mz++)
+		{
+			for (let my = 0; my < mipSizeY; my++)
+			{
+				for (let mx = 0; mx < mipSizeX; mx++)
+				{
+					let bits = 0
+					for (let oz = 0; oz < 2; oz++)
+					{
+						for (let oy = 0; oy < 2; oy++)
+						{
+							for (let ox = 0; ox < 2; ox++)
+							{
+								const bit = this.checkOctant(
+									mx * 8 + ox * 4, my * 8 + oy * 4, mz * 8 + oz * 4
+								)
+								if (bit)
+								{
+									bits |= 1 << (oz * 4 + oy * 2 + ox)
+								}
+							}
+						}
+					}
+					mipData[mz * mipSizeX * mipSizeY + my * mipSizeX + mx] = bits
+				}
+			}
+		}
+		return mipData
 	}
 
 	async load()
@@ -374,13 +430,15 @@ class Model
 			}
 		}
 
-		this.palette = new Uint8Array(dataView.buffer, 12 + numVoxels, 256 * 3).slice()
-		for (let i = 0; i < this.palette.length; i++)
+		this.palette = new Uint8Array(256 * 4)
+		for (let i = 0; i < 256; i++)
 		{
-			this.palette[i] = this.palette[i] << 2
+			this.palette[i * 4 + 0] = dataView.getUint8(12 + numVoxels + i * 3 + 0) << 2
+			this.palette[i * 4 + 1] = dataView.getUint8(12 + numVoxels + i * 3 + 1) << 2
+			this.palette[i * 4 + 2] = dataView.getUint8(12 + numVoxels + i * 3 + 2) << 2
+			this.palette[i * 4 + 3] = 255
 		}
 
-		this.generateFaces()
 		renderer.registerModel(this)
 	}
 }
@@ -653,10 +711,12 @@ class Renderer
 			addressModeW: 'repeat',
 		})
 		const raymarch = await this.compileShader(SHADER0)
-		//const raster = await this.compileShader(SHADER1)
+		const raster = await this.compileShader(SHADER1)
+
 		this.commonLayout = this.device.createBindGroupLayout({
-			label: 'common0',
+			label: 'common',
 			entries: [
+				// frame uniforms
 				{
 					binding: 0,
 					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
@@ -664,16 +724,45 @@ class Renderer
 						type: 'uniform',
 					}
 				},
+				// object uniforms
 				{
 					binding: 1,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					buffer: {
+						type: 'uniform',
+						hasDynamicOffset: true,
+					}
+				},
+				// voxels
+				{
+					binding: 2,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'uint',
+						viewDimension: '3d',
+					}
+				},
+				// palette
+				{
+					binding: 3,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'float',
+						viewDimension: '2d',
+					}
+				},
+				// tiles
+				{
+					binding: 4,
 					visibility: GPUShaderStage.FRAGMENT,
 					texture: {
 						sampleType: 'float',
 						viewDimension: '2d-array',
 					}
 				},
+				// tile sampler
 				{
-					binding: 2,
+					binding: 5,
 					visibility: GPUShaderStage.FRAGMENT,
 					sampler: {
 						type: 'non-filtering',
@@ -683,30 +772,7 @@ class Renderer
 		})
 		this.terrainPipeline = this.device.createRenderPipeline({
 			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [
-					this.commonLayout,
-					this.device.createBindGroupLayout({
-						label: 'terrain',
-						entries: [
-							{
-								binding: 0,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								buffer: {
-									type: 'uniform',
-									hasDynamicOffset: true,
-								}
-							},
-							{
-								binding: 1,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								texture: {
-									sampleType: 'uint',
-									viewDimension: '3d',
-								}
-							},
-						]
-					})
-				]
+				bindGroupLayouts: [this.commonLayout]
 			}),
 			vertex: {
 				module: raymarch,
@@ -733,37 +799,7 @@ class Renderer
 		})
 		this.modelPipeline = this.device.createRenderPipeline({
 			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [
-					this.commonLayout,
-					this.device.createBindGroupLayout({
-						label: 'model',
-						entries: [
-							{
-								binding: 0,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								buffer: {
-									type: 'uniform',
-									hasDynamicOffset: true,
-								}
-							},
-							{
-								binding: 1,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								texture: {
-									sampleType: 'uint',
-									viewDimension: '3d',
-								}
-							},
-							{
-								binding: 2,
-								visibility: GPUShaderStage.FRAGMENT,
-								buffer: {
-									type: 'uniform',
-								}
-							},
-						],
-					})
-				]
+				bindGroupLayouts: [this.commonLayout]
 			}),
 			vertex: {
 				module: raymarch,
@@ -788,43 +824,14 @@ class Renderer
 				depthCompare: 'less',
 			},
 		})
+
 		this.rasterModelPipeline = await this.device.createRenderPipelineAsync({
 			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [
-					this.commonLayout,
-					this.device.createBindGroupLayout({
-						label: 'raster',
-						entries: [
-							{
-								binding: 0,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								buffer: {
-									type: 'uniform',
-									hasDynamicOffset: true,
-								}
-							},
-							{
-								binding: 1,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								texture: {
-									sampleType: 'uint',
-									viewDimension: '3d',
-								}
-							},
-							{
-								binding: 2,
-								visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-								buffer: {
-									type: 'uniform',
-								}
-							}
-						]
-					})
-				]
+				bindGroupLayouts: [this.commonLayout]
 			}),
 			vertex: {
-				module: raymarch,
-				entryPoint: 'vs_raster',
+				module: raster,
+				entryPoint: 'vs_main',
 				buffers: [
 					{
 						arrayStride: 4,
@@ -840,8 +847,8 @@ class Renderer
 				]
 			},
 			fragment: {
-				module: raymarch,
-				entryPoint: 'fs_raster',
+				module: raster,
+				entryPoint: 'fs_model',
 				targets: [
 					{
 						format: navigator.gpu.getPreferredCanvasFormat(),
@@ -859,6 +866,7 @@ class Renderer
 				depthCompare: 'less',
 			},
 		})
+
 		this.createDepthTexture()
 	}
 
@@ -872,7 +880,8 @@ class Renderer
 			size: [model.sizeX, model.sizeY, model.sizeZ],
 			dimension: '3d',
 			format: 'r8uint',
-			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+			mipLevelCount: 2,
 		})
 		this.device.queue.writeTexture(
 			{ texture },
@@ -883,25 +892,44 @@ class Renderer
 			},
 			[model.sizeX, model.sizeY, model.sizeZ]
 		)
+
+		const mipData = model.generateMipData()
+		this.device.queue.writeTexture(
+			{
+				texture,
+				mipLevel: 1,
+			},
+			mipData,
+			{
+				bytesPerRow: Math.ceil(model.sizeX / 8),
+				rowsPerImage: Math.ceil(model.sizeY / 8)
+			},
+			[Math.ceil(model.sizeX / 8), Math.ceil(model.sizeY / 8), Math.ceil(model.sizeZ / 8)]
+		)
+
 		model.texture = texture
+		this.device.queue.writeTexture(
+			{
+				texture: this.paletteTexture,
+				aspect: 'all',
+				origin: [0, this.nextPaletteIndex, 0],
+				mipLevel: 0,
+			},
+			model.palette, {
+			bytesPerRow: 256 * 4,
+		}, [255, 1, 1]
+		)
+		model.paletteIndex = this.nextPaletteIndex++
 
-		const paletteBuffer = this.device.createBuffer({
-			size: model.palette.length,
-			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-		})
-
-		this.device.queue.writeBuffer(paletteBuffer, 0, model.palette.buffer)
-		model.paletteBuffer = paletteBuffer
-
-
-		if (model.faces)
+		if (false && this.rasterModelPipeline)
 		{
+			const faces = model.generateFaces()
+			const faceCount = Math.floor(faces.length / 4)
 			const rasterBuffer = this.device.createBuffer({
-				size: model.faceCount * 4,
+				size: faceCount * 4,
 				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 			})
-
-			this.device.queue.writeBuffer(rasterBuffer, 0, model.faces)
+			this.device.queue.writeBuffer(rasterBuffer, 0, faces)
 			model.rasterBuffer = rasterBuffer
 		}
 	}
@@ -997,33 +1025,8 @@ class Renderer
 		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
 		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
 		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.worldPosition))
-
-		if (!this.commonBindGroup)
-		{
-			this.commonBindGroup = this.device.createBindGroup({
-				layout: this.commonLayout,
-				entries: [
-					{
-						binding: 0,
-						resource: {
-							buffer: this.frameUniforms,
-							size: 256,
-						}
-					},
-					{
-						binding: 1,
-						resource: tileset.texture.createView()
-					},
-					{
-						binding: 2,
-						resource: this.tileSampler
-					},
-				]
-			})
-		}
-		renderPass.setBindGroup(0, this.commonBindGroup)
-
 		this.objectUniformsOffset = 0
+
 		const viewProjectionMatrix = mat4.create()
 		mat4.multiply(viewProjectionMatrix, camera.projection, camera.view)
 		this.drawLevel(level, viewProjectionMatrix, renderPass)
@@ -1035,7 +1038,7 @@ class Renderer
 				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
-				this.drawModelRaster(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
+				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
 			}
 			e.animationFrame++
 			if (e.animationFrame > 16)
@@ -1076,24 +1079,43 @@ class Renderer
 		if (!level.bindGroup)
 		{
 			level.bindGroup = this.device.createBindGroup({
-				layout: this.terrainPipeline.getBindGroupLayout(1),
+				layout: this.commonLayout,
 				entries: [
 					{
 						binding: 0,
 						resource: {
-							buffer: this.objectUniforms,
+							buffer: this.frameUniforms,
 							size: 256,
 						},
 					},
 					{
 						binding: 1,
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
+					},
+					{
+						binding: 2,
 						resource: level.texture.createView()
 					},
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
 				],
 			})
 		}
 
-		renderPass.setBindGroup(1, level.bindGroup, [this.objectUniformsOffset])
+		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
 		renderPass.setPipeline(this.terrainPipeline)
 		renderPass.draw(36, 1, 0, 0)
 		this.objectUniformsOffset += 256
@@ -1113,35 +1135,49 @@ class Renderer
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(modelMatrix))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(cameraObjectPosition))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 140, new Uint32Array([model.paletteIndex]))
 
 
 		if (!model.bindGroup)
 		{
 			model.bindGroup = this.device.createBindGroup({
-				layout: this.modelPipeline.getBindGroupLayout(1),
+				layout: this.commonLayout,
 				entries: [
 					{
 						binding: 0,
 						resource: {
-							buffer: this.objectUniforms,
+							buffer: this.frameUniforms,
 							size: 256,
 						},
 					},
 					{
 						binding: 1,
-						resource: model.texture.createView()
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
 					},
 					{
 						binding: 2,
-						resource: {
-							buffer: model.paletteBuffer,
-						}
+						resource: model.texture.createView()
 					},
-				]
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
+				],
 			})
 		}
 
-		renderPass.setBindGroup(1, model.bindGroup, [this.objectUniformsOffset])
+		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
 		renderPass.setPipeline(this.modelPipeline)
 		renderPass.draw(36, 1, 0, 0)
 		this.objectUniformsOffset += 256
@@ -1156,38 +1192,53 @@ class Renderer
  */
 	drawModelRaster(model, modelViewProjectionMatrix, modelMatrix, renderPass)
 	{
+		new Uint8Array(144)
+
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(modelMatrix))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.worldPosition))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 144, /** @type {Float32Array} */(camera.worldPosition))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 140, new Uint32Array([model.paletteIndex]))
 
 		if (!model.bindGroup)
 		{
-			model.bindGroup = this.device.createBindGroup({
-				layout: this.rasterModelPipeline.getBindGroupLayout(1),
+			level.bindGroup = this.device.createBindGroup({
+				layout: this.commonLayout,
 				entries: [
 					{
 						binding: 0,
 						resource: {
-							buffer: this.objectUniforms,
+							buffer: this.frameUniforms,
 							size: 256,
 						},
 					},
 					{
 						binding: 1,
-						resource: model.texture.createView()
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
 					},
 					{
 						binding: 2,
-						resource: {
-							buffer: model.paletteBuffer,
-						}
+						resource: model.texture.createView()
 					},
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
 				],
 			})
 		}
 
-		renderPass.setBindGroup(1, model.bindGroup, [this.objectUniformsOffset])
+		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
 
 		renderPass.setPipeline(this.rasterModelPipeline)
 		renderPass.setVertexBuffer(0, model.rasterBuffer)
@@ -1689,7 +1740,6 @@ function loop()
 						vec3.scaleAndAdd(ee.position, e.vel, t, pushback)
 					}
 				}
-
 			}
 
 			if (level.getVoxel(e.position[0] + e.radius, e.position[1], e.position[2] + e.height / 2))

@@ -4,19 +4,19 @@ struct FrameUniforms {
 	camera_position: vec3f,
 };
 
-@group(0) @binding(0) var<uniform> uniforms: FrameUniforms;
-@group(0) @binding(1) var tiles: texture_2d_array<f32>;
-@group(0) @binding(2) var tileSampler: sampler;
-
 struct ObjectUniforms {
 	model: mat4x4f,
 	model_view_projection: mat4x4f,
 	camera_position_local: vec3f,
+	palette_index: u32
 }
 
-@group(1) @binding(0) var<uniform> object_uniforms: ObjectUniforms;
-@group(1) @binding(1) var voxels: texture_3d<u32>;
-@group(1) @binding(2) var<uniform> palette: array<vec4u, 48>;
+@group(0) @binding(0) var<uniform> uniforms: FrameUniforms;
+@group(0) @binding(1) var<uniform> object_uniforms: ObjectUniforms;
+@group(0) @binding(2) var voxels: texture_3d<u32>;
+@group(0) @binding(3) var palette: texture_2d<f32>;
+@group(0) @binding(4) var tiles: texture_2d_array<f32>;
+@group(0) @binding(5) var tileSampler: sampler;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -75,7 +75,7 @@ fn vs_main(@builtin(vertex_index) vertexID: u32) -> VertexOutput {
 	));
 	output.rayOrigin = invModel * (uniforms.camera_position - object_uniforms.model[3].xyz) / scale;
 
-	output.rayOrigin = object_uniforms.camera_position_local;
+	//output.rayOrigin = object_uniforms.camera_position_local;
     output.rayDirection = position - output.rayOrigin;
     output.debugColor = faceColors[vertexID / 6u];
     output.position = object_uniforms.model_view_projection * vec4f(position, 1.0);
@@ -96,66 +96,42 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	hit.voxel = empty;
 	hit.steps = 0;
 
-	if(!all(raydir == raydir)) {
-		return hit;		
-	}
-
 	let dims = vec3i(textureDimensions(voxels));
 	let tmin = -raypos / raydir;
 	let tmax = (vec3f(dims) - raypos) / raydir;
 	let t1 = min(tmin, tmax);
 	let t2 = max(tmin, tmax);
 	let tnear = max(max(t1.x, t1.y), t1.z);
-	let tfar = min(min(t2.x, t2.y), t2.z);
 
-	if (tnear > tfar || tfar < 0.0) {
-		return hit;
-	}
+	let step = vec3i(sign(raydir));
 
 	let startpos = raypos + max(0.0, tnear - 1e-4) * raydir;
 	var voxelpos = vec3i(floor(startpos));
-	let step = vec3i(sign(raydir));
 	let startbounds = vec3f(voxelpos + max(step, vec3i(0)));
-	let tdelta = abs(1.0 / raydir);
-	var tnext = (startbounds - startpos) / raydir;
 
-	let maxsteps = dims.x + dims.y + dims.z;
+	let tdelta = abs(1.0 / raydir);
+	var tnext = abs((startbounds - startpos) / raydir);
+
 	for(;;) {
 		hit.steps++;
 		var axis: i32;
 		var tprev: f32;
+		var mask: vec3<bool>;
 
-		if (tnext.x < tnext.y) {
-			if (tnext.x < tnext.z) {
-				axis = 0;
-				voxelpos.x += step.x;
-				tnext.x += tdelta.x;
-			} else {
-				axis = 2;
-				voxelpos.z += step.z;
-				tnext.z += tdelta.z;
-			}
-		} else if (tnext.y < tnext.z) {
-			axis = 1;
-			voxelpos.y += step.y;
-			tnext.y += tdelta.y;
-		} else {
-			axis = 2;
-			voxelpos.z += step.z;
-			tnext.z += tdelta.z;
-		}
+		mask = tnext.xyz <= min(tnext.yzx, tnext.zxy);
+		tprev = min(tnext.x, min(tnext.y, tnext.z));
+		tnext += vec3f(mask) * tdelta;
+		voxelpos += vec3i(mask) * step;
 
-		if(!all(voxelpos >= vec3i(0)) || !all(voxelpos < dims)) {
+		if (any(voxelpos < vec3i(0)) || any(voxelpos >= dims)) {
 			return hit;
 		}
 
 		hit.voxel = textureLoad(voxels, voxelpos, 0).x;
 		if (hit.voxel != empty) {
-			hit.normal = vec3f(0.0);
-			hit.normal[axis] = f32(step[axis]);
+			hit.normal = vec3f(mask) * -vec3f(step);
 			hit.voxelpos = voxelpos;
-			let t = tnext[axis] - tdelta[axis];
-			hit.pos = startpos + t * raydir;
+			hit.pos = startpos + tprev * raydir;
 			return hit;
 		}
 	}
@@ -181,9 +157,9 @@ fn fs_terrain(in: VertexOutput) -> FragmentOutput {
 
 	var hitUV: vec2f;
 	if (abs(hit.normal.x) > 0.0) {
-		hitUV = vec2f(-hit.normal.x * hit.pos.y, -hit.pos.z);
+		hitUV = vec2f(hit.normal.x * hit.pos.y, -hit.pos.z);
 	} else if (abs(hit.normal.y) > 0.0) {
-		hitUV = vec2f(hit.normal.y * hit.pos.x, -hit.pos.z);
+		hitUV = vec2f(-hit.normal.y * hit.pos.x, -hit.pos.z);
 	} else {
 		hitUV = vec2f(hit.pos.x, -hit.pos.y);
 	}
@@ -191,29 +167,6 @@ fn fs_terrain(in: VertexOutput) -> FragmentOutput {
 	return output;
 }
 
-fn getPaletteColor(index: u32) -> vec4f {
-	let rOffset = index * 3u;
-	let gOffset = rOffset + 1u;
-	let bOffset = rOffset + 2u;
-
-	let rVec = rOffset >> 4u;
-	let gVec = gOffset >> 4u;
-	let bVec = bOffset >> 4u;
-
-	let rComp = (rOffset % 16u) >> 2u;
-	let gComp = (gOffset % 16u) >> 2u;
-	let bComp = (bOffset % 16u) >> 2u;
-
-	let rByte = rOffset % 4u;
-	let gByte = gOffset % 4u;
-	let bByte = bOffset % 4u;
-
-    let r = (palette[rVec][rComp] >> (rByte * 8u)) & 255u;
-    let g = (palette[gVec][gComp] >> (gByte * 8u)) & 255u;
-    let b = (palette[bVec][bComp] >> (bByte * 8u)) & 255u;
-
-	return vec4f(f32(r) / 255.0, f32(g) / 255.0, f32(b) / 255.0, 1.0f);
-}
 
 fn getAO(vpos: vec3i, normal: vec3f) -> f32 {
     var ao = 0.0;
@@ -260,8 +213,8 @@ fn fs_model(in: VertexOutput) -> FragmentOutput {
 	let hit = march(in.rayOrigin, normalize(in.rayDirection), 255u);
 
     // Debug visualization
-    var stepHeat = f32(hit.steps) / 30.0;
-	if (hit.steps > 30u) {
+    var stepHeat = 0.0;
+	if (hit.steps > 32u) {
 	 	stepHeat = 1.0;
 	}
     let debugColor = vec3f(stepHeat, 0.0, 1.0 - stepHeat);
@@ -275,102 +228,8 @@ fn fs_model(in: VertexOutput) -> FragmentOutput {
     let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
     output.depth = (clipPos.z / clipPos.w);
     let ao = getAO(hit.voxelpos, hit.normal);
-    let color = getPaletteColor(hit.voxel);
-    output.color = vec4f(color.rgb * ao, 1.0);
+    let color = textureLoad(palette, vec2<u32>(hit.voxel, object_uniforms.palette_index), 0);
+	output.color = vec4f(color.rgb * ao, 1.0);
 
     return output;
 }
-
-
-
-
-struct RasterVertexOutput {
-    @builtin(position) position: vec4f,
-    @location(0) uv: vec2f,
-    @location(1) @interpolate(flat) voxel: u32,
-	@location(2) debugColor: vec3f,
-}
-
-@vertex
-fn vs_raster (
-    @location(0) face: vec4u,
-    @builtin(vertex_index) vertexID: u32,
-	@builtin(instance_index) instanceID: u32
-) -> RasterVertexOutput {
-    var output: RasterVertexOutput;
-    
-	var position: vec3u;
-	position.x = face.x;
-	position.y = face.y;
-	position.z = face.z;
-	var normal = face.w;
-	
-    let vertices = array<array<vec3f, 6>, 6>(
-        array<vec3f, 6>( // -X face
-            vec3f(0,1,0), vec3f(0,0,0), vec3f(0,1,1),  // tri 1
-            vec3f(0,1,1), vec3f(0,0,0), vec3f(0,0,1)   // tri 2
-        ),
-        array<vec3f, 6>( // +X face
-            vec3f(1,0,0), vec3f(1,1,0), vec3f(1,0,1),  // tri 1
-            vec3f(1,0,1), vec3f(1,1,0), vec3f(1,1,1)   // tri 2
-        ),
-		
-        array<vec3f, 6>( // -Y face
-            vec3f(0,0,0), vec3f(1,0,0), vec3f(0,0,1),  // tri 1
-            vec3f(0,0,1), vec3f(1,0,0), vec3f(1,0,1)   // tri 2
-        ),
-		
-		array<vec3f, 6>( // -Y face
-            vec3f(0,1,1), vec3f(1,1,0), vec3f(0,1,0),  // tri 1
-            vec3f(1,1,1), vec3f(1,1,0), vec3f(0,1,1)   // tri 2
-        ),
-		array<vec3f, 6>( // -Z face (top)
-            vec3f(0,1,0), vec3f(1,0,0), vec3f(0,0,0),  // tri 1
-            vec3f(1,1,0), vec3f(1,0,0), vec3f(0,1,0)   // tri 2
-        ),
-        array<vec3f, 6>( // +Z face (top)
-            vec3f(0,0,1), vec3f(1,0,1), vec3f(0,1,1),  // tri 1
-            vec3f(0,1,1), vec3f(1,0,1), vec3f(1,1,1)   // tri 2
-        )
-    );
-
-	let faceColors = array<vec3f, 6>(
-		vec3f(0.0, 0.0, 1.0),  // -X blue
-		vec3f(0.0, 1.0, 1.0),  // +X cyan
-		vec3f(1.0, 1.0, 0.0),  // -Y yellow
-		vec3f(1.0, 0.0, 0.0),  // +y red
-		vec3f(0.0, 1.0, 0.0),  // -Z green
-		vec3f(1.0, 0.0, 1.0),  // +Z magenta
-	);
-    
-    let worldPos = vec3f(position) + vertices[normal][vertexID];
-    output.position = object_uniforms.model_view_projection * vec4f(worldPos, 1.0);
-
-	let localPos = vertices[normal][vertexID];
-    output.uv = select(
-        select(
-            vec2f(localPos.x, localPos.y),  // Z faces
-            vec2f(localPos.y, localPos.x),  // Y faces
-            normal == 2u || normal == 3u
-        ),
-        vec2f(localPos.z, localPos.y),      // X faces
-        normal == 0u || normal == 1u
-    );
-
-	let voxel = textureLoad(voxels, position, 0).r;
-	output.voxel = voxel;
-	output.debugColor = getPaletteColor(voxel).rgb;
-
-    return output;
-}
-
-@fragment
-fn fs_textured(in: RasterVertexOutput) -> @location(0) vec4f {
-	return textureSample(tiles, tileSampler, in.uv, i32(in.voxel));
-}
- 
-@fragment
-fn fs_raster(in: RasterVertexOutput) -> @location(0) vec4f {
-	return vec4(in.debugColor, 1.0);
-}
-
