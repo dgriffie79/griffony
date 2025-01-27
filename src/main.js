@@ -1,11 +1,17 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
 import { Peer } from 'peerjs'
 
+// 0 = march, 1 = raster
+let RENDER_MODE = 2
 
 // @ts-ignore
 import SHADER0 from './shaders/march.wgsl?raw'
 // @ts-ignore
 import SHADER1 from './shaders/raster.wgsl?raw'
+// @ts-ignore
+import SHADER2 from './shaders/majercik.wgsl?raw'
+
+const SHADER = [SHADER0, SHADER1, SHADER2][RENDER_MODE]
 
 class Entity
 {
@@ -539,6 +545,7 @@ class Level
 	texture = null
 	buffer = null
 	bindGroup = null
+	/** @type {GPUBuffer} */ rasterBuffer = null
 
 
 	constructor(url = '')
@@ -559,6 +566,93 @@ class Level
 
 		return this.voxels[z * this.sizeY * this.sizeX + y * this.sizeX + x]
 	}
+
+	generateFaces()
+	{
+		const maxFaces = 4 * (
+			this.sizeX * this.sizeY * this.sizeZ
+		)
+
+		const faces = new Uint8Array(maxFaces * 6)
+		let faceCount = 0
+		const sx = this.sizeX
+		const sy = this.sizeY
+		const sz = this.sizeZ
+
+		for (let x = 0; x < sx; x++)
+		{
+			for (let y = 0; y < sy; y++)
+			{
+				for (let z = 0; z < sz; z++)
+				{
+					const idx = z * sy * sx + y * sx + x
+
+					if (this.voxels[idx] === 0) continue
+
+					// Check -X face
+					if (x === 0 || this.voxels[z * sy * sx + y * sx + (x - 1)] === 0)
+					{
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 0
+						faceCount++
+					}
+					// Check +X face
+					if (x === sx - 1 || this.voxels[z * sy * sx + y * sx + (x + 1)] === 0)
+					{
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 1
+						faceCount++
+					}
+					// Check -Y face
+					if (y === 0 || this.voxels[z * sy * sx + (y - 1) * sx + x] === 0)
+					{
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 2
+						faceCount++
+					}
+					// Check +Y face
+					if (y === sy - 1 || this.voxels[z * sy * sx + (y + 1) * sx + x] === 0)
+					{
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 3
+						faceCount++
+					}
+					// Check -Z face
+					if (z === 0 || this.voxels[(z - 1) * sy * sx + y * sx + x] === 0)
+					{
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 4
+						faceCount++
+					}
+					// Check +Z face
+					if (z === sz - 1 || this.voxels[(z + 1) * sy * sx + y * sx + x] === 0)
+					{
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 5
+						faceCount++
+					}
+				}
+			}
+		}
+
+		return faces.subarray(0, faceCount * 4)
+	}
+
 
 	async load()
 	{
@@ -606,10 +700,7 @@ class Level
 				{
 					const entity = Entity.deserialize(object)
 					entity.position[1] = this.sizeY - entity.position[1]
-					if (entity != null)
-					{
-						Entity.all.push(entity)
-					}
+					entity.position[0] += .5
 				}
 			}
 		}
@@ -627,7 +718,6 @@ class Renderer
 	/** @type {GPUBindGroup} */ commonBindGroup = null;
     /** @type {GPURenderPipeline} */ terrainPipeline = null;
     /** @type {GPURenderPipeline} */ modelPipeline = null;
-    /** @type {GPURenderPipeline} */ rasterModelPipeline = null;
     /** @type {GPUTexture} */ depthTexture = null;
     /** @type {GPUBuffer} */ frameUniforms = null;
 	/** @type {GPUBuffer} */ objectUniforms = null;
@@ -690,12 +780,13 @@ class Renderer
 				alphaMode: 'premultiplied',
 			})
 		})
+		this.createDepthTexture()
 		this.frameUniforms = this.device.createBuffer({
 			size: 256,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		})
 		this.objectUniforms = this.device.createBuffer({
-			size: (256) * 100,
+			size: (256) * 200,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		})
 		this.paletteTexture = this.device.createTexture({
@@ -710,8 +801,7 @@ class Renderer
 			addressModeV: 'repeat',
 			addressModeW: 'repeat',
 		})
-		const raymarch = await this.compileShader(SHADER0)
-		const raster = await this.compileShader(SHADER1)
+		const shader = await this.compileShader(SHADER)
 
 		this.commonLayout = this.device.createBindGroupLayout({
 			label: 'common',
@@ -770,104 +860,233 @@ class Renderer
 				},
 			],
 		})
-		this.terrainPipeline = this.device.createRenderPipeline({
-			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [this.commonLayout]
-			}),
-			vertex: {
-				module: raymarch,
-				entryPoint: 'vs_main',
-			},
-			fragment: {
-				module: raymarch,
-				entryPoint: 'fs_terrain',
-				targets: [
-					{
-						format: navigator.gpu.getPreferredCanvasFormat(),
-					}
-				],
-			},
-			primitive: {
-				topology: 'triangle-list',
-				cullMode: 'back',
-			},
-			depthStencil: {
-				format: 'depth24plus',
-				depthWriteEnabled: true,
-				depthCompare: 'less',
-			},
-		})
-		this.modelPipeline = this.device.createRenderPipeline({
-			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [this.commonLayout]
-			}),
-			vertex: {
-				module: raymarch,
-				entryPoint: 'vs_main',
-			},
-			fragment: {
-				module: raymarch,
-				entryPoint: 'fs_model',
-				targets: [
-					{
-						format: navigator.gpu.getPreferredCanvasFormat(),
-					}
-				],
-			},
-			primitive: {
-				topology: 'triangle-list',
-				cullMode: 'back',
-			},
-			depthStencil: {
-				format: 'depth24plus',
-				depthWriteEnabled: true,
-				depthCompare: 'less',
-			},
-		})
 
-		this.rasterModelPipeline = await this.device.createRenderPipelineAsync({
-			layout: this.device.createPipelineLayout({
-				bindGroupLayouts: [this.commonLayout]
-			}),
-			vertex: {
-				module: raster,
-				entryPoint: 'vs_main',
-				buffers: [
-					{
-						arrayStride: 4,
-						stepMode: 'instance',
-						attributes: [
+		switch (RENDER_MODE)
+		{
+			case 0:
+				this.terrainPipeline = this.device.createRenderPipeline({
+					layout: this.device.createPipelineLayout({
+						bindGroupLayouts: [this.commonLayout]
+					}),
+					vertex: {
+						module: shader,
+						entryPoint: 'vs_main',
+					},
+					fragment: {
+						module: shader,
+						entryPoint: 'fs_terrain',
+						targets: [
 							{
-								shaderLocation: 0,
-								offset: 0,
-								format: 'uint8x4',
-							},
+								format: navigator.gpu.getPreferredCanvasFormat(),
+							}
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+					},
+					depthStencil: {
+						format: 'depth24plus',
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+					},
+				})
+				this.modelPipeline = this.device.createRenderPipeline({
+					layout: this.device.createPipelineLayout({
+						bindGroupLayouts: [this.commonLayout]
+					}),
+					vertex: {
+						module: shader,
+						entryPoint: 'vs_main',
+					},
+					fragment: {
+						module: shader,
+						entryPoint: 'fs_model',
+						targets: [
+							{
+								format: navigator.gpu.getPreferredCanvasFormat(),
+							}
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+					},
+					depthStencil: {
+						format: 'depth24plus',
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+					},
+				})
+				break
+			case 1:
+				this.terrainPipeline = this.device.createRenderPipeline({
+					layout: this.device.createPipelineLayout({
+						bindGroupLayouts: [this.commonLayout]
+					}),
+					vertex: {
+						module: shader,
+						entryPoint: 'vs_main',
+						buffers: [
+							{
+								arrayStride: 4,
+								stepMode: 'instance',
+								attributes: [
+									{
+										shaderLocation: 0,
+										offset: 0,
+										format: 'uint8x4',
+									},
+								]
+							}
 						]
-					}
-				]
-			},
-			fragment: {
-				module: raster,
-				entryPoint: 'fs_model',
-				targets: [
-					{
-						format: navigator.gpu.getPreferredCanvasFormat(),
-					}
-				],
-			},
-			primitive: {
-				topology: 'triangle-list',
-				cullMode: 'back',
-				frontFace: 'ccw',
-			},
-			depthStencil: {
-				format: 'depth24plus',
-				depthWriteEnabled: true,
-				depthCompare: 'less',
-			},
-		})
-
-		this.createDepthTexture()
+					},
+					fragment: {
+						module: shader,
+						entryPoint: 'fs_textured',
+						targets: [
+							{
+								format: navigator.gpu.getPreferredCanvasFormat(),
+							}
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+						frontFace: 'ccw',
+					},
+					depthStencil: {
+						format: 'depth24plus',
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+					},
+				})
+				this.modelPipeline = await this.device.createRenderPipelineAsync({
+					layout: this.device.createPipelineLayout({
+						bindGroupLayouts: [this.commonLayout]
+					}),
+					vertex: {
+						module: shader,
+						entryPoint: 'vs_main',
+						buffers: [
+							{
+								arrayStride: 4,
+								stepMode: 'instance',
+								attributes: [
+									{
+										shaderLocation: 0,
+										offset: 0,
+										format: 'uint8x4',
+									},
+								]
+							}
+						]
+					},
+					fragment: {
+						module: shader,
+						entryPoint: 'fs_model',
+						targets: [
+							{
+								format: navigator.gpu.getPreferredCanvasFormat(),
+							}
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+						frontFace: 'ccw',
+					},
+					depthStencil: {
+						format: 'depth24plus',
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+					},
+				})
+				break
+			case 2:
+				this.terrainPipeline = this.device.createRenderPipeline({
+					layout: this.device.createPipelineLayout({
+						bindGroupLayouts: [this.commonLayout]
+					}),
+					vertex: {
+						module: shader,
+						entryPoint: 'vs_main',
+						buffers: [
+							{
+								arrayStride: 4,
+								stepMode: 'instance',
+								attributes: [
+									{
+										shaderLocation: 0,
+										offset: 0,
+										format: 'uint8x4',
+									},
+								]
+							}
+						]
+					},
+					fragment: {
+						module: shader,
+						entryPoint: 'fs_main',
+						targets: [
+							{
+								format: navigator.gpu.getPreferredCanvasFormat(),
+							}
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+					},
+					depthStencil: {
+						format: 'depth24plus',
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+					},
+				})
+				this.modelPipeline = await this.device.createRenderPipelineAsync({
+					layout: this.device.createPipelineLayout({
+						bindGroupLayouts: [this.commonLayout]
+					}),
+					vertex: {
+						module: shader,
+						entryPoint: 'vs_main',
+						buffers: [
+							{
+								arrayStride: 4,
+								stepMode: 'instance',
+								attributes: [
+									{
+										shaderLocation: 0,
+										offset: 0,
+										format: 'uint8x4',
+									},
+								]
+							}
+						]
+					},
+					fragment: {
+						module: shader,
+						entryPoint: 'fs_main',
+						targets: [
+							{
+								format: navigator.gpu.getPreferredCanvasFormat(),
+							}
+						],
+					},
+					primitive: {
+						topology: 'triangle-list',
+						cullMode: 'back',
+						frontFace: 'ccw',
+					},
+					depthStencil: {
+						format: 'depth24plus',
+						depthWriteEnabled: true,
+						depthCompare: 'less',
+					},
+				})
+				break
+		}
 	}
 
 	/**
@@ -893,20 +1112,6 @@ class Renderer
 			[model.sizeX, model.sizeY, model.sizeZ]
 		)
 
-		const mipData = model.generateMipData()
-		this.device.queue.writeTexture(
-			{
-				texture,
-				mipLevel: 1,
-			},
-			mipData,
-			{
-				bytesPerRow: Math.ceil(model.sizeX / 8),
-				rowsPerImage: Math.ceil(model.sizeY / 8)
-			},
-			[Math.ceil(model.sizeX / 8), Math.ceil(model.sizeY / 8), Math.ceil(model.sizeZ / 8)]
-		)
-
 		model.texture = texture
 		this.device.queue.writeTexture(
 			{
@@ -921,7 +1126,24 @@ class Renderer
 		)
 		model.paletteIndex = this.nextPaletteIndex++
 
-		if (false && this.rasterModelPipeline)
+		if (RENDER_MODE == 0)
+		{
+			const mipData = model.generateMipData()
+			this.device.queue.writeTexture(
+				{
+					texture,
+					mipLevel: 1,
+				},
+				mipData,
+				{
+					bytesPerRow: Math.ceil(model.sizeX / 8),
+					rowsPerImage: Math.ceil(model.sizeY / 8)
+				},
+				[Math.ceil(model.sizeX / 8), Math.ceil(model.sizeY / 8), Math.ceil(model.sizeZ / 8)]
+			)
+		}
+
+		if (RENDER_MODE == 1)
 		{
 			const faces = model.generateFaces()
 			const faceCount = Math.floor(faces.length / 4)
@@ -930,6 +1152,17 @@ class Renderer
 				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 			})
 			this.device.queue.writeBuffer(rasterBuffer, 0, faces)
+			model.rasterBuffer = rasterBuffer
+		}
+
+		if (RENDER_MODE == 2)
+		{
+			const visible = this.generateVisible(model.voxels, model.sizeX, model.sizeY, model.sizeZ, 255)
+			const rasterBuffer = this.device.createBuffer({
+				size: visible.byteLength,
+				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+			})
+			this.device.queue.writeBuffer(rasterBuffer, 0, visible)
 			model.rasterBuffer = rasterBuffer
 		}
 	}
@@ -988,7 +1221,114 @@ class Renderer
 		)
 
 		level.texture = texture
+
+		if (RENDER_MODE == 1)
+		{
+			const faces = level.generateFaces()
+			const faceCount = Math.floor(faces.length / 4)
+			const rasterBuffer = this.device.createBuffer({
+				size: faceCount * 4,
+				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+			})
+			this.device.queue.writeBuffer(rasterBuffer, 0, faces)
+			level.rasterBuffer = rasterBuffer
+		}
+
+		if (RENDER_MODE == 2)
+		{
+			const visible = this.generateVisible(level.voxels, level.sizeX, level.sizeY, level.sizeZ, 0)
+			const rasterBuffer = this.device.createBuffer({
+				size: visible.byteLength,
+				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+			})
+			this.device.queue.writeBuffer(rasterBuffer, 0, visible)
+			level.rasterBuffer = rasterBuffer
+		}
 	}
+
+	/**
+	 * @param {Uint8Array} voxels
+	 * @param {number} sizeX
+	 * @param {number} sizeY
+	 * @param {number} sizeZ
+	 * @param {number} empty
+	 * @returns {Uint8Array}
+	 * */
+	generateVisible(voxels, sizeX, sizeY, sizeZ, empty)
+	{
+		const visible = new Uint8Array(sizeX * sizeY * sizeZ * 3)
+		let index = 0
+
+		for (let x = 0; x < sizeX; x++)
+		{
+			for (let y = 0; y < sizeY; y++)
+			{
+				for (let z = 0; z < sizeZ; z++)
+				{
+					const idx = z * sizeY * sizeX + y * sizeX + x
+
+					if (voxels[idx] === empty) continue
+
+					// Check -X face
+					if (x === 0 || voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +X face
+					if (x === sizeX - 1 || voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check -Y face
+					if (y === 0 || voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +Y face
+					if (y === sizeY - 1 || voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check -Z face
+					if (z === 0 || voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +Z face
+					if (z === sizeZ - 1 || voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+				}
+			}
+		}
+		return visible.subarray(0, index)
+	}
+
 
 	createDepthTexture()
 	{
@@ -1025,51 +1365,54 @@ class Renderer
 		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
 		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
 		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.worldPosition))
+		this.device.queue.writeBuffer(this.frameUniforms, 144, new Float32Array(this.viewport))
 		this.objectUniformsOffset = 0
 
 		const viewProjectionMatrix = mat4.create()
 		mat4.multiply(viewProjectionMatrix, camera.projection, camera.view)
-		this.drawLevel(level, viewProjectionMatrix, renderPass)
-		for (const e of Entity.all)
+		//this.drawLevel(level, viewProjectionMatrix, renderPass)
+		if (RENDER_MODE == 2)
 		{
-			if (e.model && e !== player)
+			for (const e of Entity.all)
 			{
-				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
-				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
-				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
-				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
-				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
-			}
-			e.animationFrame++
-			if (e.animationFrame > 16)
-			{
-				if (e.model == models['fatta'])
+				if (e.model && e !== player)
 				{
-					e.model = models['fattb']
-				} else if (e.model == models['fattb'])
-				{
-					e.model = models['fattc']
-				} else if (e.model == models['fattc'])
-				{
-					e.model = models['fattd']
-				} else if (e.model == models['fattd'])
-				{
-					e.model = models['fatta']
+					const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
+					const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
+					mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
+					const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
+					this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
 				}
-				e.animationFrame = 0
+				e.animationFrame++
+				if (e.animationFrame > 16)
+				{
+					if (e.model == models['fatta'])
+					{
+						e.model = models['fattb']
+					} else if (e.model == models['fattb'])
+					{
+						e.model = models['fattc']
+					} else if (e.model == models['fattc'])
+					{
+						e.model = models['fattd']
+					} else if (e.model == models['fattd'])
+					{
+						e.model = models['fatta']
+					}
+					e.animationFrame = 0
+				}
 			}
 		}
-
 		renderPass.end()
 		this.device.queue.submit([commandEncoder.finish()])
 	}
 
 	/**
- * @param {Level} level
- * @param {mat4} mvpMatrix
- * @param {GPURenderPassEncoder} renderPass
- * @returns {void}
- */
+	* @param {Level} level
+	* @param {mat4} mvpMatrix
+	* @param {GPURenderPassEncoder} renderPass
+	* @returns {void}
+	*/
 	drawLevel(level, mvpMatrix, renderPass)
 	{
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(mat4.create()))
@@ -1115,9 +1458,19 @@ class Renderer
 			})
 		}
 
-		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
 		renderPass.setPipeline(this.terrainPipeline)
-		renderPass.draw(36, 1, 0, 0)
+		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
+
+		switch (RENDER_MODE)
+		{
+			case 0:
+				renderPass.draw(36, 1, 0, 0)
+				break
+			case 1: case 2:
+				renderPass.setVertexBuffer(0, level.rasterBuffer)
+				renderPass.draw(6, level.rasterBuffer.size / 4, 0, 0)
+				break
+		}
 		this.objectUniformsOffset += 256
 	}
 
@@ -1177,78 +1530,22 @@ class Renderer
 			})
 		}
 
-		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
 		renderPass.setPipeline(this.modelPipeline)
-		renderPass.draw(36, 1, 0, 0)
-		this.objectUniformsOffset += 256
-	}
-
-	/**
- * 
- * @param {Model} model 
- * @param {mat4} modelViewProjectionMatrix 
- * @param {mat4} modelMatrix 
- * @param {GPURenderPassEncoder} renderPass 
- */
-	drawModelRaster(model, modelViewProjectionMatrix, modelMatrix, renderPass)
-	{
-		new Uint8Array(144)
-
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(modelMatrix))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.worldPosition))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 140, new Uint32Array([model.paletteIndex]))
-
-		if (!model.bindGroup)
-		{
-			level.bindGroup = this.device.createBindGroup({
-				layout: this.commonLayout,
-				entries: [
-					{
-						binding: 0,
-						resource: {
-							buffer: this.frameUniforms,
-							size: 256,
-						},
-					},
-					{
-						binding: 1,
-						resource: {
-							buffer: this.objectUniforms,
-							size: 256,
-						}
-					},
-					{
-						binding: 2,
-						resource: model.texture.createView()
-					},
-					{
-						binding: 3,
-						resource: this.paletteTexture.createView()
-					},
-					{
-						binding: 4,
-						resource: tileset.texture.createView()
-					},
-					{
-						binding: 5,
-						resource: this.tileSampler
-					}
-				],
-			})
-		}
-
 		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
 
-		renderPass.setPipeline(this.rasterModelPipeline)
-		renderPass.setVertexBuffer(0, model.rasterBuffer)
-		renderPass.draw(6, model.faceCount, 0, 0)
+		switch (RENDER_MODE)
+		{
+			case 0:
+				renderPass.draw(36, 1, 0, 0)
+				break
+			case 1: case 2:
+				renderPass.setVertexBuffer(0, model.rasterBuffer)
+				renderPass.draw(6, model.rasterBuffer.size / 4, 0, 0)
+				break
+		}
 		this.objectUniformsOffset += 256
 	}
 }
-
-
-
 
 const MessageType = {
 	PLAYER_JOIN: 0,
@@ -1780,7 +2077,11 @@ function loop()
 	}
 
 	camera.update()
-	renderer.draw()
+	for (let i = 0; i < 1; i++)
+	{
+		renderer.draw()
+	}
+
 	net.update()
 	requestAnimationFrame(loop)
 }
@@ -1854,13 +2155,13 @@ let godMode = true
 
 const models = Object.fromEntries(
 	[
-		'player',
-		'portal',
-		'fatta',
-		'fattb',
-		'fattc',
-		'fattd',
-		'maze',
+		//'player',
+		//'portal',
+		//'fatta',
+		//'fattb',
+		//'fattc',
+		//'fattd',
+		//'maze',
 		'wall',
 	].map((model) => [model, new Model(`/models/${model}.vox`)])
 )

@@ -82,12 +82,34 @@ fn vs_main (@location(0) face: vec4u, @builtin(vertex_index) vertex_index: u32) 
 
 	let localPos = vertices[normal][vertex_index];
 
-    if (normal == 0u || normal == 1u) {
-        output.uv = vec2f(localPos.z, localPos.y);      // X faces
-    } else if (normal == 2u || normal == 3u) {
-        output.uv = vec2f(localPos.y, localPos.x);      // Y faces
-    } else {
-        output.uv = vec2f(localPos.x, localPos.y);      // Z faces
+    switch (normal) {
+         // -X
+        case 0u {
+            output.uv = vec2f(-localPos.y, -localPos.z);
+        }
+        // +X
+        case 1u {
+            output.uv = vec2f(localPos.y, -localPos.z);
+        }
+        // -Y
+        case 2u {
+            output.uv = vec2f(localPos.x, -localPos.z);
+        }
+        // +Y
+        case 3u {
+            output.uv = vec2f(-localPos.x, -localPos.z);
+        }
+        // -Z
+        case 4u {
+            output.uv = vec2f(localPos.x, localPos.y);
+        }
+        // +Z
+        case 5u {
+            output.uv = vec2f(localPos.x, -localPos.y);
+        }
+        default {
+            output.uv = vec2f(0.0, 0.0);
+        }
     }
 
 	let voxel = textureLoad(voxels, position, 0).r;
@@ -98,7 +120,7 @@ fn vs_main (@location(0) face: vec4u, @builtin(vertex_index) vertex_index: u32) 
 
 @fragment
 fn fs_textured(in: VertexOutput) -> @location(0) vec4f {
-	return textureSample(tiles, tileSampler, in.uv, i32(in.voxel));
+	return textureSample(tiles, tileSampler, in.uv, i32(in.voxel - 1));
 }
  
 @fragment

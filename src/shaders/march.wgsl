@@ -227,9 +227,9 @@ fn fs_model(in: VertexOutput) -> FragmentOutput {
 
     let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
     output.depth = (clipPos.z / clipPos.w);
-    let ao = getAO(hit.voxelpos, hit.normal);
+    //let ao = getAO(hit.voxelpos, hit.normal);
     let color = textureLoad(palette, vec2<u32>(hit.voxel, object_uniforms.palette_index), 0);
-	output.color = vec4f(color.rgb * ao, 1.0);
+	output.color = vec4f(color.rgb, 1.0);
 
     return output;
 }

@@ -155,7 +155,7 @@
          "name":"Walls",
          "opacity":1,
          "type":"tilelayer",
-         "visible":true,
+         "visible":false,
          "width":64,
          "x":0,
          "y":0
@@ -230,7 +230,7 @@
          "name":"Ceiling",
          "opacity":1,
          "type":"tilelayer",
-         "visible":true,
+         "visible":false,
          "width":64,
          "x":0,
          "y":0
@@ -411,113 +411,6 @@
                 }, 
                 {
                  "height":32,
-                 "id":292,
-                 "name":"Maze",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":112,
-                 "y":80
-                }, 
-                {
-                 "height":32,
-                 "id":293,
-                 "name":"Maze",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":144,
-                 "y":80
-                }, 
-                {
-                 "height":32,
-                 "id":294,
-                 "name":"Maze",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }, 
-                        {
-                         "name":"rotation",
-                         "type":"int",
-                         "value":0
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":176,
-                 "y":80
-                }, 
-                {
-                 "height":32,
-                 "id":295,
-                 "name":"Maze",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":208,
-                 "y":80
-                }, 
-                {
-                 "height":32,
-                 "id":296,
-                 "name":"Maze",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":240,
-                 "y":80
-                }, 
-                {
-                 "height":32,
-                 "id":297,
-                 "name":"Maze",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":272,
-                 "y":80
-                }, 
-                {
-                 "height":32,
                  "id":298,
                  "name":"Maze",
                  "properties":[
@@ -535,7 +428,7 @@
                  "type":"Decoration",
                  "visible":true,
                  "width":32,
-                 "x":216,
+                 "x":152,
                  "y":288
                 }],
          "opacity":1,
@@ -545,7 +438,7 @@
          "y":0
         }],
  "nextlayerid":5,
- "nextobjectid":299,
+ "nextobjectid":300,
  "orientation":"orthogonal",
  "renderorder":"left-down",
  "tiledversion":"1.11.0",
