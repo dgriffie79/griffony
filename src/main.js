@@ -2,7 +2,7 @@ import { mat4, quat, vec3 } from 'gl-matrix'
 import { Peer } from 'peerjs'
 
 // 0 = march, 1 = raster
-let RENDER_MODE = 2
+let RENDER_MODE = 1
 
 // @ts-ignore
 import SHADER0 from './shaders/march.wgsl?raw'
@@ -786,7 +786,7 @@ class Renderer
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		})
 		this.objectUniforms = this.device.createBuffer({
-			size: (256) * 200,
+			size: (256) * 100000,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		})
 		this.paletteTexture = this.device.createTexture({
@@ -1371,38 +1371,44 @@ class Renderer
 		const viewProjectionMatrix = mat4.create()
 		mat4.multiply(viewProjectionMatrix, camera.projection, camera.view)
 		//this.drawLevel(level, viewProjectionMatrix, renderPass)
-		if (RENDER_MODE == 2)
+		let voxels_drawn = 0
+		for (const e of Entity.all)
 		{
-			for (const e of Entity.all)
+			if (e.model && e !== player)
 			{
-				if (e.model && e !== player)
+				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
+				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
+				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
+
+				for (let i = 0; i < 500; i++)
 				{
-					const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
-					const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
-					mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
-					const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
+					voxels_drawn += e.model.rasterBuffer.size / 4
 					this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
 				}
-				e.animationFrame++
-				if (e.animationFrame > 16)
+
+			}
+			e.animationFrame++
+			if (e.animationFrame > 16)
+			{
+				if (e.model == models['fatta'])
 				{
-					if (e.model == models['fatta'])
-					{
-						e.model = models['fattb']
-					} else if (e.model == models['fattb'])
-					{
-						e.model = models['fattc']
-					} else if (e.model == models['fattc'])
-					{
-						e.model = models['fattd']
-					} else if (e.model == models['fattd'])
-					{
-						e.model = models['fatta']
-					}
-					e.animationFrame = 0
+					e.model = models['fattb']
+				} else if (e.model == models['fattb'])
+				{
+					e.model = models['fattc']
+				} else if (e.model == models['fattc'])
+				{
+					e.model = models['fattd']
+				} else if (e.model == models['fattd'])
+				{
+					e.model = models['fatta']
 				}
+				e.animationFrame = 0
 			}
 		}
+		console.log(voxels_drawn)
+
 		renderPass.end()
 		this.device.queue.submit([commandEncoder.finish()])
 	}
@@ -2157,12 +2163,13 @@ const models = Object.fromEntries(
 	[
 		//'player',
 		//'portal',
-		//'fatta',
-		//'fattb',
-		//'fattc',
-		//'fattd',
+		'fatta',
+		'fattb',
+		'fattc',
+		'fattd',
 		//'maze',
-		'wall',
+		//'wall',
+		'box_frame',
 	].map((model) => [model, new Model(`/models/${model}.vox`)])
 )
 

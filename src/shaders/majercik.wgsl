@@ -104,6 +104,32 @@ void quadricProj(in vec3 osPosition, in float voxelSize, in mat4 objectToScreenM
 }
 */
 
+fn computeBoundingBox(os_position: vec3f, voxel_size: f32, mvp: mat4x4f) -> vec4f {
+    let half_size = voxel_size * 0.5;
+    let corners = array<vec3f, 8>(
+        os_position + vec3f(-half_size, -half_size, -half_size),
+        os_position + vec3f( half_size, -half_size, -half_size),
+        os_position + vec3f(-half_size,  half_size, -half_size),
+        os_position + vec3f( half_size,  half_size, -half_size),
+        os_position + vec3f(-half_size, -half_size,  half_size),
+        os_position + vec3f( half_size, -half_size,  half_size),
+        os_position + vec3f(-half_size,  half_size,  half_size),
+        os_position + vec3f( half_size,  half_size,  half_size)
+    );
+
+    var min_pos = vec4f(1.0e10, 1.0e10, 1.0e10, 1.0);
+    var max_pos = vec4f(-1.0e10, -1.0e10, -1.0e10, 1.0);
+
+    for (var i = 0u; i < 8u; i++) {
+        let clip_pos = mvp * vec4f(corners[i], 1.0);
+        min_pos = min(min_pos, clip_pos);
+        max_pos = max(max_pos, clip_pos);
+    }
+
+    return vec4f(min_pos.xy, max_pos.xy);
+}
+
+
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var output: VertexOutput;
@@ -116,17 +142,40 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let indices = array<u32, 6>(0u, 1u, 2u, 2u, 1u, 3u);
     let corner = corner_offsets[indices[in.vertex_index]];
     
+
+	var position = vec4<f32>(vec3<f32>(in.position.xyz) + .5, 1.0);
+	//position = vec4f(position.xy + corner.xy * .5, position.z, position.w);
+	position = object_uniforms.model_view_projection * position;
+	
+	
+	var scale = vec2f(
+		length(object_uniforms.model_view_projection[0].xyz),
+		length(object_uniforms.model_view_projection[1].xyz),
+	) * 1.2;
+	
+	//var scale = vec2f(1.0/32) * 1.2;
+	
+
+	//scale = vec2f(1/32); 
+	position.x = position.x + scale.x * corner.x * uniforms.viewport.y / uniforms.viewport.x;
+	position.y = position.y + scale.y * corner.y;
+	
+	//position.x = position.x + scale.x + corner.x * .5;
+	//position.y = position.y + scale.y + corner.y * .5;
+	
+	output.position = position;
+	/*
+
     // Extract clip_pos.w directly
 	let position = vec3<f32>(in.position.xyz);
-    let clip_pos_w = dot(object_uniforms.model_view_projection[3], vec4f(position, 1.0));
-    
+    let clip_pos_w = dot(object_uniforms.model_view_projection[3], vec4f(position, 1.0));    
 	var viewport = uniforms.viewport;
-	//viewport = vec2f(1745, 859);
 
+	
     // Pass clip_pos.w to quadricProj
     let proj = quadricProj(
         position, 
-        1.0 / 32, 
+        1.0/32, 
         object_uniforms.model_view_projection, 
         viewport * 0.5,
         clip_pos_w
@@ -139,8 +188,20 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 	var test_position = vec4f(position.x, position.y + offset.y, position.z + offset.x, 1.0);
 	test_position = object_uniforms.model_view_projection * test_position;
 	//output.position = test_position;
-	output.color = vec4f(position * 4 / 255, 1.0);
-   	//output.uv = (corner + vec2f(1.0)) * 0.5;
+	*/
+	
+
+/*
+
+    let bbox = computeBoundingBox(vec3f(in.position.xyz), 1.0, object_uniforms.model_view_projection);
+	let os_position = vec4f(vec3f(in.position.xyz), 1.0);
+    let clip_pos = object_uniforms.model_view_projection * os_position;
+    let screen_offset = corner * 0.5 * (bbox.zw - bbox.xy);
+    output.position = vec4f(clip_pos.xy + screen_offset, 1.0, clip_pos.w);
+*/
+	//output.color = vec4f(position * 4 / 255, 1.0);
+
+   	output.color = vec4f(1.0, 0.0, 0.0, 1.0);
     return output;
 }
 
