@@ -255,6 +255,7 @@ class Model
 	palette = null
 	paletteIndex = -1
 	texture = null
+	accelerationTexture = null
 	/** @type {GPUBuffer} */ rasterBuffer = null
 	bindGroup = null
 
@@ -367,43 +368,6 @@ class Model
 			}
 		}
 		return false
-	}
-
-	generateMipData()
-	{
-		const mipSizeX = Math.ceil(this.sizeX / 8)
-		const mipSizeY = Math.ceil(this.sizeY / 8)
-		const mipSizeZ = Math.ceil(this.sizeZ / 8)
-		const mipData = new Uint8Array(mipSizeX * mipSizeY * mipSizeZ)
-
-		for (let mz = 0; mz < mipSizeZ; mz++)
-		{
-			for (let my = 0; my < mipSizeY; my++)
-			{
-				for (let mx = 0; mx < mipSizeX; mx++)
-				{
-					let bits = 0
-					for (let oz = 0; oz < 2; oz++)
-					{
-						for (let oy = 0; oy < 2; oy++)
-						{
-							for (let ox = 0; ox < 2; ox++)
-							{
-								const bit = this.checkOctant(
-									mx * 8 + ox * 4, my * 8 + oy * 4, mz * 8 + oz * 4
-								)
-								if (bit)
-								{
-									bits |= 1 << (oz * 4 + oy * 2 + ox)
-								}
-							}
-						}
-					}
-					mipData[mz * mipSizeX * mipSizeY + my * mipSizeX + mx] = bits
-				}
-			}
-		}
-		return mipData
 	}
 
 	async load()
@@ -1100,6 +1064,40 @@ class Renderer
 		}
 	}
 
+	generateAccelerationData(voxels, sizeX, sizeY, sizeZ)
+	{
+		const regionSizeX = Math.ceil(sizeX >> 2)
+		const regionSizeY = Math.ceil(sizeY >> 2)
+		const regionSizeZ = Math.ceil(sizeZ >> 1)
+		const data = new Uint32Array(regionSizeX * regionSizeY * regionSizeZ)
+
+		for (let z = 0; z < sizeZ; z++)
+		{
+			for (let y = 0; y < sizeY; y++)
+			{
+				for (let x = 0; x < sizeX; x++)
+				{
+					const voxel = voxels[z * sizeY * sizeX + y * sizeX + x]
+					if (voxel !== 255)
+					{
+						const regionX = x >> 2
+						const regionY = y >> 2
+						const regionZ = z >> 1
+						const localX = x & 3
+						const localY = y & 3
+						const localZ = z & 1
+						const bitIndex = localX + (localY * 4) + (localZ * 16)
+						const regionIndex = regionZ * regionSizeY * regionSizeX +
+							regionY * regionSizeX + regionX
+						data[regionIndex] |= 1 << bitIndex
+					}
+				}
+			}
+		}
+		return data
+	}
+
+
 	/**
 	 * @param {Model} model
 	 * @returns {void}
@@ -1139,18 +1137,24 @@ class Renderer
 
 		if (RENDER_MODE == 0)
 		{
-			const mipData = model.generateMipData()
+			const acceleration = this.generateAccelerationData(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
+			const accelerationTexture = this.device.createTexture({
+				size: [model.sizeX >> 2, model.sizeY >> 2, (model.sizeZ >> 1)],
+				format: 'r32uint',
+				usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+			})
 			this.device.queue.writeTexture(
+				{ texture: accelerationTexture },
+				acceleration,
 				{
-					texture,
-					mipLevel: 1,
+					bytesPerRow: (model.sizeX >> 2) * 4,
+					rowsPerImage: model.sizeY >> 2,
 				},
-				mipData,
 				{
-					bytesPerRow: Math.ceil(model.sizeX / 8),
-					rowsPerImage: Math.ceil(model.sizeY / 8)
-				},
-				[Math.ceil(model.sizeX / 8), Math.ceil(model.sizeY / 8), Math.ceil(model.sizeZ / 8)]
+					width: model.sizeX >> 2,
+					height: model.sizeY >> 2,
+					depthOrArrayLayers: model.sizeZ >> 1
+				}
 			)
 		}
 

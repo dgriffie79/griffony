@@ -17,6 +17,7 @@ struct ObjectUniforms {
 @group(0) @binding(3) var palette: texture_2d<f32>;
 @group(0) @binding(4) var tiles: texture_2d_array<f32>;
 @group(0) @binding(5) var tileSampler: sampler;
+@group(0) @binding(6) var acceleration: texture_3d<u32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -135,6 +136,69 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 		}
 	}
 }
+
+
+
+fn march2(raypos: vec3f, raydir: vec3f) -> Hit {
+	var hit: Hit;
+	hit.voxel = empty;
+	hit.steps = 0;
+
+	let dims = vec3i(textureDimensions(voxels));
+	let tmin = -raypos / raydir;
+	let tmax = (vec3f(dims) - raypos) / raydir;
+	let t1 = min(tmin, tmax);
+	let t2 = max(tmin, tmax);
+	let tnear = max(max(t1.x, t1.y), t1.z);
+
+	let step = vec3i(sign(raydir));
+
+	let startpos = raypos + max(0.0, tnear - 1e-4) * raydir;
+	var voxelpos = vec3i(floor(startpos));
+	let startbounds = vec3f(voxelpos + max(step, vec3i(0)));
+
+	let tdelta = abs(1.0 / raydir);
+	var tnext = abs((startbounds - startpos) / raydir);
+
+	var currentRegion = vec3i(voxelpos.x >> 2, voxelpos.y >> 2, voxelpos.z >> 1);
+    var currentRegionBits = textureLoad(acceleration, currentRegion, 0).x;
+
+	for(;;) {
+		hit.steps++;
+		var axis: i32;
+		var tprev: f32;
+		var mask: vec3<bool>;
+
+		mask = tnext.xyz <= min(tnext.yzx, tnext.zxy);
+		tprev = min(tnext.x, min(tnext.y, tnext.z));
+		tnext += vec3f(mask) * tdelta;
+		voxelpos += vec3i(mask) * step;
+
+		if (any(voxelpos < vec3i(0)) || any(voxelpos >= dims)) {
+			return hit;
+		}
+
+        let newRegion = vec3i(voxelpos.x >> 2, voxelpos.y >> 2, voxelpos.z >> 1);
+        if (any(newRegion != currentRegion)) {
+            currentRegion = newRegion;
+            currentRegionBits = textureLoad(acceleration, currentRegion, 0).x;
+        }
+
+        let localX = voxelpos.x & 3;
+        let localY = voxelpos.y & 3;
+        let localZ = voxelpos.z & 1;
+        let bitIndex = localX + (localY * 4) + (localZ * 16);
+        
+        if ((currentRegionBits >> u32(bitIndex)) & 1u != 0u) {
+			hit.voxel = textureLoad(voxels, voxelpos, 0).x;
+			hit.normal = vec3f(mask) * -vec3f(step);
+			hit.voxelpos = voxelpos;
+			hit.pos = startpos + tprev * raydir;
+			return hit;
+        }
+	}
+}
+
 
 struct FragmentOutput {
 	@location(0) color: vec4f,
