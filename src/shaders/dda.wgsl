@@ -75,7 +75,6 @@ fn vs_main(@builtin(vertex_index) vertexID: u32) -> VertexOutput {
 	));
 	output.rayOrigin = invModel * (uniforms.camera_position - object_uniforms.model[3].xyz) / scale;
 
-	//output.rayOrigin = object_uniforms.camera_position_local;
     output.rayDirection = position - output.rayOrigin;
     output.debugColor = faceColors[vertexID / 6u];
     output.position = object_uniforms.model_view_projection * vec4f(position, 1.0);

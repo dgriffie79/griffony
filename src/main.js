@@ -2,14 +2,14 @@ import { mat4, quat, vec3 } from 'gl-matrix'
 import { Peer } from 'peerjs'
 
 // 0 = march, 1 = raster
-let RENDER_MODE = 1
+let RENDER_MODE = 0
 
 // @ts-ignore
-import SHADER0 from './shaders/march.wgsl?raw'
+import SHADER0 from './shaders/dda.wgsl?raw'
 // @ts-ignore
 import SHADER1 from './shaders/raster.wgsl?raw'
 // @ts-ignore
-import SHADER2 from './shaders/majercik.wgsl?raw'
+import SHADER2 from './shaders/splat.wgsl?raw'
 
 const SHADER = [SHADER0, SHADER1, SHADER2][RENDER_MODE]
 
@@ -26,6 +26,7 @@ class Entity
 	position = vec3.create()
 	rotation = quat.create()
 	scale = vec3.fromValues(1, 1, 1)
+	dirty = true
 	transform = mat4.create()
 
 	worldPosition = vec3.create()
@@ -55,21 +56,26 @@ class Entity
 	 */
 	updateTransform(parentTransform)
 	{
-		mat4.fromRotationTranslationScale(this.transform, this.rotation, this.position, this.scale)
-		if (parentTransform)
+		if (this.dirty)
 		{
-			mat4.multiply(this.worldTransform, parentTransform, this.transform)
-		} else
-		{
-			mat4.copy(this.worldTransform, this.transform)
-		}
+			mat4.fromRotationTranslationScale(this.transform, this.rotation, this.position, this.scale)
+			if (parentTransform)
+			{
+				mat4.multiply(this.worldTransform, parentTransform, this.transform)
+			} else
+			{
+				mat4.copy(this.worldTransform, this.transform)
+			}
 
-		mat4.getTranslation(this.worldPosition, this.worldTransform)
-		mat4.getRotation(this.worldRotation, this.worldTransform)
-		mat4.getScaling(this.worldScale, this.worldTransform)
+			mat4.getTranslation(this.worldPosition, this.worldTransform)
+			mat4.getRotation(this.worldRotation, this.worldTransform)
+			mat4.getScaling(this.worldScale, this.worldTransform)
+			this.dirty = false
+		}
 
 		for (const child of this.children)
 		{
+			child.dirty = true
 			child.updateTransform(this.worldTransform)
 		}
 	}
@@ -218,6 +224,7 @@ class Player extends Entity
 			{
 				vec3.copy(this.position, e.position)
 				quat.copy(this.rotation, e.rotation)
+				this.dirty = true
 				break
 			}
 		}
@@ -698,9 +705,12 @@ class Level
 			{
 				for (const object of layer.objects)
 				{
-					const entity = Entity.deserialize(object)
-					entity.position[1] = this.sizeY - entity.position[1]
-					entity.position[0] += .5
+					for (let i = 0; i < 300; i++)
+					{
+						const entity = Entity.deserialize(object)
+						entity.position[1] = this.sizeY - entity.position[1]
+						entity.position[0] += .5 + 2 * i
+					}
 				}
 			}
 		}
@@ -789,6 +799,7 @@ class Renderer
 			size: (256) * 100000,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		})
+		this.transferBuffer = new ArrayBuffer(256 * 100000)
 		this.paletteTexture = this.device.createTexture({
 			format: 'rgba8unorm',
 			size: [256, 256, 1],
@@ -1362,16 +1373,24 @@ class Renderer
 			},
 		})
 
+		//floatView.set(camera.projection, 0)
+		//floatView.set(camera.view, 16)
+		//floatView.set(camera.worldPosition, 32)
+		//floatView.set(this.viewport, 48)
+
 		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
 		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
 		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.worldPosition))
 		this.device.queue.writeBuffer(this.frameUniforms, 144, new Float32Array(this.viewport))
+
 		this.objectUniformsOffset = 0
 
 		const viewProjectionMatrix = mat4.create()
 		mat4.multiply(viewProjectionMatrix, camera.projection, camera.view)
 		//this.drawLevel(level, viewProjectionMatrix, renderPass)
-		let voxels_drawn = 0
+
+
+		renderPass.setPipeline(this.modelPipeline)
 		for (const e of Entity.all)
 		{
 			if (e.model && e !== player)
@@ -1380,13 +1399,7 @@ class Renderer
 				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
-
-				for (let i = 0; i < 500; i++)
-				{
-					voxels_drawn += e.model.rasterBuffer.size / 4
-					this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
-				}
-
+				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
 			}
 			e.animationFrame++
 			if (e.animationFrame > 16)
@@ -1407,7 +1420,8 @@ class Renderer
 				e.animationFrame = 0
 			}
 		}
-		console.log(voxels_drawn)
+
+		this.device.queue.writeBuffer(this.objectUniforms, 0, this.transferBuffer, 0, this.objectUniformsOffset)
 
 		renderPass.end()
 		this.device.queue.submit([commandEncoder.finish()])
@@ -1489,13 +1503,13 @@ class Renderer
 	 */
 	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass)
 	{
-		let cameraObjectPosition = vec3.transformMat4(vec3.create(), camera.worldPosition, mat4.invert(mat4.create(), modelMatrix))
+		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
+		let uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset)
 
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(modelMatrix))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(cameraObjectPosition))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 140, new Uint32Array([model.paletteIndex]))
+		floatView.set(modelMatrix, 0)
+		floatView.set(modelViewProjectionMatrix, 16)
 
+		uintView[35] = model.paletteIndex
 
 		if (!model.bindGroup)
 		{
@@ -1536,7 +1550,6 @@ class Renderer
 			})
 		}
 
-		renderPass.setPipeline(this.modelPipeline)
 		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
 
 		switch (RENDER_MODE)
@@ -1959,6 +1972,7 @@ function processInput(elapsed)
 	quat.rotateZ(player.rotation, player.rotation, -dx * elapsed / 1000)
 	quat.rotateX(player.head.rotation, player.head.rotation, dy * elapsed / 1000)
 
+
 	const angle = quat.getAxisAngle(vec3.create(), player.head.rotation)
 	if (angle > Math.PI / 2)
 	{
@@ -1969,8 +1983,10 @@ function processInput(elapsed)
 		{
 			quat.setAxisAngle(player.head.rotation, vec3.fromValues(1, 0, 0), -Math.PI / 2)
 		}
-
 	}
+
+	player.dirty = true
+	player.head.dirty = true
 
 	mouseMoveX = 0
 	mouseMoveY = 0
@@ -2005,12 +2021,20 @@ function loop()
 			}
 		}
 
-		if (vec3.length(e.vel) > 100)
-		{
-			vec3.normalize(e.vel, e.vel)
-			vec3.scale(e.vel, e.vel, Math.min(vec3.length(e.vel), 100))
-		}
+
+		let speed = vec3.length(e.vel)
 		vec3.scaleAndAdd(e.position, e.position, e.vel, elapsed / 1000)
+		if (speed > 100)
+		{
+			speed = 100
+			vec3.normalize(e.vel, e.vel)
+			vec3.scale(e.vel, e.vel, speed)
+		}
+		if (speed > 0)
+		{
+			vec3.scaleAndAdd(e.position, e.position, e.vel, elapsed / 1000)
+			e.dirty = true
+		}
 
 		if (e instanceof Player && !godMode)
 		{
@@ -2038,9 +2062,11 @@ function loop()
 					const t = vec3.add(vec3.create(), s, e.vel)
 					vec3.normalize(t, t)
 					vec3.scaleAndAdd(e.position, e.position, t, -pushback)
+					e.dirty = true
 					if (e.radius >= ee.radius)
 					{
 						vec3.scaleAndAdd(ee.position, e.vel, t, pushback)
+						ee.dirty = true
 					}
 				}
 			}
@@ -2048,39 +2074,46 @@ function loop()
 			if (level.getVoxel(e.position[0] + e.radius, e.position[1], e.position[2] + e.height / 2))
 			{
 				e.position[0] = Math.floor(e.position[0] + e.radius) - e.radius
+				e.dirty = true
 			}
 			if (level.getVoxel(e.position[0] - e.radius, e.position[1], e.position[2] + e.height / 2))
 			{
 				e.position[0] = Math.ceil(e.position[0] - e.radius) + e.radius
+				e.dirty = true
 			}
 			if (level.getVoxel(e.position[0], e.position[1] + e.radius, e.position[2] + e.height / 2))
 			{
 				e.position[1] = Math.floor(e.position[1] + e.radius) - e.radius
+				e.dirty = true
 			}
 			if (level.getVoxel(e.position[0], e.position[1] - e.radius, e.position[2] + e.height / 2))
 			{
 				e.position[1] = Math.ceil(e.position[1] - e.radius) + e.radius
+				e.dirty = true
 			}
 			if (level.getVoxel(e.position[0], e.position[1], e.position[2] + e.height))
 			{
 				e.position[2] = Math.floor(e.position[2] + e.height) - e.height
 				e.vel[2] = 0
+				e.dirty = true
 			}
 			if (level.getVoxel(e.position[0], e.position[1], e.position[2]))
 			{
 				e.position[2] = Math.ceil(e.position[2])
 				e.vel[2] = 0
+				e.dirty = true
 			}
 		}
 	}
 
 	for (const e of Entity.all)
 	{
-		if (!e.parent)
+		if (!e.parent) 
 		{
 			e.updateTransform(null)
 		}
 	}
+
 
 	camera.update()
 	for (let i = 0; i < 1; i++)
