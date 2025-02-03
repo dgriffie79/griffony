@@ -260,14 +260,16 @@ fn march_3(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 		}
 		let mip = textureLoad(voxels, current_region / 2, 1u).x;
 		let bit_index = u32((current_region.x & 1) + ((current_region.y & 1) << 1) + ((current_region.z & 1) << 2));	
-		//if(true) {
+
 		if (((mip >> bit_index) & 1u) != 0) {
 			current_voxel = vec3i(floor(start + tprev * raydir + eps));
 			let voxel_bounds = vec3f(current_voxel + max(step, vec3i(0)));
 			var voxel_tnext = abs((voxel_bounds - start) / raydir);
-			let voxel_min = vec3i(0);
-			let voxel_max = voxel_dims;
-
+			
+			//let voxel_min = vec3i(0);
+			//let voxel_max = voxel_dims;
+			let voxel_min = current_region * region_size;
+			let voxel_max = min(voxel_min + region_size, voxel_dims);
 			for(;;) {
 				if (any(current_voxel < voxel_min) || any(current_voxel >= voxel_max)) {
 					break;
@@ -293,6 +295,87 @@ fn march_3(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	}
 }
 
+fn march_4(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
+    var hit: Hit;
+    hit.voxel = empty;
+    hit.steps = 0;
+
+    let step = vec3i(sign(raydir));
+    let eps = raydir * 1e-4;
+
+    let dims = array<vec3i, 2>(
+        vec3i(textureDimensions(voxels)),                    // voxel dims
+        (vec3i(textureDimensions(voxels)) + vec3i(3)) / 4   // region dims
+    );
+
+    let tdelta = array<vec3f, 2>(
+        abs(1.0 / raydir),
+        abs(4.0 / raydir)
+    );
+
+    let t1 = -raypos / raydir;
+    let t2 = (vec3f(dims[0]) - raypos) / raydir;
+    let t_min = min(t1, t2);
+    let t_near = max(max(t_min.x, t_min.y), t_min.z);
+
+    let start = raypos + max(0.0, t_near) * raydir;
+    
+    let positions = array<vec3i, 2>(
+        vec3i(floor(start + eps)),        
+        vec3i(floor(start + eps)) / 4
+    );
+
+	var mode = 1u;  // Start in region mode
+	var current = vec3i(floor(start + eps)) / 4;
+	var bounds_min = vec3i(0);
+	var bounds_max = dims[1];
+	var tnext = abs((vec3f(current + max(step, vec3i(0)) * 4) - start) / raydir);
+	var tprev = 0.0;
+
+    for(;;) {
+        hit.steps++;
+        hit.region = current;
+
+		if (any(current < bounds_min) || any(current >= bounds_max)) {
+			if (mode == 0u) {
+				mode = 1u;
+				current = current / 4;
+				bounds_min = vec3i(0);
+				bounds_max = dims[1];
+				tnext = abs((vec3f(current + max(step, vec3i(0)) * 4) - start) / raydir);
+				continue;
+			}
+			return hit;
+		}
+
+		let val = textureLoad(voxels, current / i32(1 + mode), mode).x;
+		
+		if (mode == 1u) {
+			let bit_index = u32((current.x & 1) + ((current.y & 1) << 1) + ((current.z & 1) << 2));
+			if (((val >> bit_index) & 1u) != 0) {
+				mode = 0u;
+				current = vec3i(floor(start + tprev * raydir + eps));
+				bounds_min = current / 4;
+            	bounds_max = min(dims[0], bounds_min + vec3i(4));
+				tnext = abs((vec3f(current + max(step, vec3i(0))) - start) / raydir);
+				continue;
+			}
+		} else {
+			if (val != empty) {
+				hit.voxel = val;
+				hit.normal = vec3f(step) * -1.0;
+				hit.voxelpos = current;
+				hit.pos = start + tprev * raydir;
+				return hit;
+			}
+    	}
+
+        let mask = tnext.xyz <= min(tnext.yzx, tnext.zxy);
+        tprev = min(tnext.x, min(tnext.y, tnext.z));
+        tnext += vec3f(mask) * tdelta[mode];
+        current += vec3i(mask) * step;
+    }
+}
 
 
 struct FragmentOutput {
