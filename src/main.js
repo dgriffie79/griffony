@@ -1,17 +1,11 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
 import { Peer } from 'peerjs'
 
-// 0 = march, 1 = raster
-let RENDER_MODE = 0
+// 0 = march
+let RENDER_MODE = 1
 
 // @ts-ignore
-import SHADER0 from './shaders/dda.wgsl?raw'
-// @ts-ignore
-import SHADER1 from './shaders/raster.wgsl?raw'
-// @ts-ignore
-import SHADER2 from './shaders/splat.wgsl?raw'
-
-const SHADER = [SHADER0, SHADER1, SHADER2][RENDER_MODE]
+import SHADER from './shaders/dda.wgsl?raw'
 
 class Entity
 {
@@ -264,112 +258,6 @@ class Model
 		this.url = url
 	}
 
-	generateFaces()
-	{
-		const maxFaces = 4 * (
-			this.sizeX * this.sizeY * this.sizeZ
-		)
-
-		const faces = new Uint8Array(maxFaces * 6)
-		let faceCount = 0
-		const sx = this.sizeX
-		const sy = this.sizeY
-		const sz = this.sizeZ
-
-		for (let x = 0; x < sx; x++)
-		{
-			for (let y = 0; y < sy; y++)
-			{
-				for (let z = 0; z < sz; z++)
-				{
-					const idx = z * sy * sx + y * sx + x
-
-					if (this.voxels[idx] === 255) continue
-
-					// Check -X face
-					if (x === 0 || this.voxels[z * sy * sx + y * sx + (x - 1)] === 255)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 0
-						faceCount++
-					}
-					// Check +X face
-					if (x === sx - 1 || this.voxels[z * sy * sx + y * sx + (x + 1)] === 255)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 1
-						faceCount++
-					}
-					// Check -Y face
-					if (y === 0 || this.voxels[z * sy * sx + (y - 1) * sx + x] === 255)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 2
-						faceCount++
-					}
-					// Check +Y face
-					if (y === sy - 1 || this.voxels[z * sy * sx + (y + 1) * sx + x] === 255)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 3
-						faceCount++
-					}
-					// Check -Z face
-					if (z === 0 || this.voxels[(z - 1) * sy * sx + y * sx + x] === 255)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 4
-						faceCount++
-					}
-					// Check +Z face
-					if (z === sz - 1 || this.voxels[(z + 1) * sy * sx + y * sx + x] === 255)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 5
-						faceCount++
-					}
-				}
-			}
-		}
-
-		return faces.subarray(0, faceCount * 4)
-	}
-
-	checkOctant(x, y, z)
-	{
-		for (let oz = 0; oz < 4; oz++)
-		{
-			for (let oy = 0; oy < 4; oy++)
-			{
-				for (let ox = 0; ox < 4; ox++)
-				{
-					const px = x + ox
-					const py = y + oy
-					const pz = z + oz
-					if (px >= this.sizeX || py >= this.sizeY || pz >= this.sizeZ) continue
-					const idx = pz * this.sizeY * this.sizeX + py * this.sizeX + px
-					if (this.voxels[idx] !== 255) return true
-				}
-			}
-		}
-		return false
-	}
-
 	async load()
 	{
 		const response = await fetch(this.url)
@@ -538,93 +426,6 @@ class Level
 		return this.voxels[z * this.sizeY * this.sizeX + y * this.sizeX + x]
 	}
 
-	generateFaces()
-	{
-		const maxFaces = 4 * (
-			this.sizeX * this.sizeY * this.sizeZ
-		)
-
-		const faces = new Uint8Array(maxFaces * 6)
-		let faceCount = 0
-		const sx = this.sizeX
-		const sy = this.sizeY
-		const sz = this.sizeZ
-
-		for (let x = 0; x < sx; x++)
-		{
-			for (let y = 0; y < sy; y++)
-			{
-				for (let z = 0; z < sz; z++)
-				{
-					const idx = z * sy * sx + y * sx + x
-
-					if (this.voxels[idx] === 0) continue
-
-					// Check -X face
-					if (x === 0 || this.voxels[z * sy * sx + y * sx + (x - 1)] === 0)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 0
-						faceCount++
-					}
-					// Check +X face
-					if (x === sx - 1 || this.voxels[z * sy * sx + y * sx + (x + 1)] === 0)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 1
-						faceCount++
-					}
-					// Check -Y face
-					if (y === 0 || this.voxels[z * sy * sx + (y - 1) * sx + x] === 0)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 2
-						faceCount++
-					}
-					// Check +Y face
-					if (y === sy - 1 || this.voxels[z * sy * sx + (y + 1) * sx + x] === 0)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 3
-						faceCount++
-					}
-					// Check -Z face
-					if (z === 0 || this.voxels[(z - 1) * sy * sx + y * sx + x] === 0)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 4
-						faceCount++
-					}
-					// Check +Z face
-					if (z === sz - 1 || this.voxels[(z + 1) * sy * sx + y * sx + x] === 0)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 5
-						faceCount++
-					}
-				}
-			}
-		}
-
-		return faces.subarray(0, faceCount * 4)
-	}
-
-
 	async load()
 	{
 		const response = await fetch(this.url)
@@ -669,7 +470,7 @@ class Level
 			{
 				for (const object of layer.objects)
 				{
-					for (let i = 0; i < 300; i++)
+					for (let i = 0; i < 1; i++)
 					{
 						const entity = Entity.deserialize(object)
 						entity.position[1] = this.sizeY - entity.position[1]
@@ -688,7 +489,7 @@ class Renderer
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
-	/** @type {GPUBindGroupLayout} */ commonLayout = null;
+	/** @type {GPUBindGroupLayout} */ bindGroupLayout = null;
 	/** @type {GPUBindGroup} */ commonBindGroup = null;
     /** @type {GPURenderPipeline} */ terrainPipeline = null;
     /** @type {GPURenderPipeline} */ modelPipeline = null;
@@ -778,7 +579,7 @@ class Renderer
 		})
 		const shader = await this.compileShader(SHADER)
 
-		this.commonLayout = this.device.createBindGroupLayout({
+		/** @type {GPUBindGroupLayoutDescriptor} */const bindGroupDescriptor = {
 			label: 'common',
 			entries: [
 				// frame uniforms
@@ -833,242 +634,90 @@ class Renderer
 						type: 'non-filtering',
 					}
 				},
-			],
-		})
-
-		switch (RENDER_MODE)
-		{
-			case 0:
-				this.terrainPipeline = this.device.createRenderPipeline({
-					layout: this.device.createPipelineLayout({
-						bindGroupLayouts: [this.commonLayout]
-					}),
-					vertex: {
-						module: shader,
-						entryPoint: 'vs_main',
-					},
-					fragment: {
-						module: shader,
-						entryPoint: 'fs_terrain',
-						targets: [
-							{
-								format: navigator.gpu.getPreferredCanvasFormat(),
-							}
-						],
-					},
-					primitive: {
-						topology: 'triangle-list',
-						cullMode: 'back',
-					},
-					depthStencil: {
-						format: 'depth24plus',
-						depthWriteEnabled: true,
-						depthCompare: 'less',
-					},
-				})
-				this.modelPipeline = this.device.createRenderPipeline({
-					layout: this.device.createPipelineLayout({
-						bindGroupLayouts: [this.commonLayout]
-					}),
-					vertex: {
-						module: shader,
-						entryPoint: 'vs_main',
-					},
-					fragment: {
-						module: shader,
-						entryPoint: 'fs_model',
-						targets: [
-							{
-								format: navigator.gpu.getPreferredCanvasFormat(),
-							}
-						],
-					},
-					primitive: {
-						topology: 'triangle-list',
-						cullMode: 'back',
-					},
-					depthStencil: {
-						format: 'depth24plus',
-						depthWriteEnabled: true,
-						depthCompare: 'less',
-					},
-				})
-				break
-			case 1:
-				this.terrainPipeline = this.device.createRenderPipeline({
-					layout: this.device.createPipelineLayout({
-						bindGroupLayouts: [this.commonLayout]
-					}),
-					vertex: {
-						module: shader,
-						entryPoint: 'vs_main',
-						buffers: [
-							{
-								arrayStride: 4,
-								stepMode: 'instance',
-								attributes: [
-									{
-										shaderLocation: 0,
-										offset: 0,
-										format: 'uint8x4',
-									},
-								]
-							}
-						]
-					},
-					fragment: {
-						module: shader,
-						entryPoint: 'fs_textured',
-						targets: [
-							{
-								format: navigator.gpu.getPreferredCanvasFormat(),
-							}
-						],
-					},
-					primitive: {
-						topology: 'triangle-list',
-						cullMode: 'back',
-						frontFace: 'ccw',
-					},
-					depthStencil: {
-						format: 'depth24plus',
-						depthWriteEnabled: true,
-						depthCompare: 'less',
-					},
-				})
-				this.modelPipeline = await this.device.createRenderPipelineAsync({
-					layout: this.device.createPipelineLayout({
-						bindGroupLayouts: [this.commonLayout]
-					}),
-					vertex: {
-						module: shader,
-						entryPoint: 'vs_main',
-						buffers: [
-							{
-								arrayStride: 4,
-								stepMode: 'instance',
-								attributes: [
-									{
-										shaderLocation: 0,
-										offset: 0,
-										format: 'uint8x4',
-									},
-								]
-							}
-						]
-					},
-					fragment: {
-						module: shader,
-						entryPoint: 'fs_model',
-						targets: [
-							{
-								format: navigator.gpu.getPreferredCanvasFormat(),
-							}
-						],
-					},
-					primitive: {
-						topology: 'triangle-list',
-						cullMode: 'back',
-						frontFace: 'ccw',
-					},
-					depthStencil: {
-						format: 'depth24plus',
-						depthWriteEnabled: true,
-						depthCompare: 'less',
-					},
-				})
-				break
-			case 2:
-				this.terrainPipeline = this.device.createRenderPipeline({
-					layout: this.device.createPipelineLayout({
-						bindGroupLayouts: [this.commonLayout]
-					}),
-					vertex: {
-						module: shader,
-						entryPoint: 'vs_main',
-						buffers: [
-							{
-								arrayStride: 4,
-								stepMode: 'instance',
-								attributes: [
-									{
-										shaderLocation: 0,
-										offset: 0,
-										format: 'uint8x4',
-									},
-								]
-							}
-						]
-					},
-					fragment: {
-						module: shader,
-						entryPoint: 'fs_main',
-						targets: [
-							{
-								format: navigator.gpu.getPreferredCanvasFormat(),
-							}
-						],
-					},
-					primitive: {
-						topology: 'triangle-list',
-						cullMode: 'back',
-					},
-					depthStencil: {
-						format: 'depth24plus',
-						depthWriteEnabled: true,
-						depthCompare: 'less',
-					},
-				})
-				this.modelPipeline = await this.device.createRenderPipelineAsync({
-					layout: this.device.createPipelineLayout({
-						bindGroupLayouts: [this.commonLayout]
-					}),
-					vertex: {
-						module: shader,
-						entryPoint: 'vs_main',
-						buffers: [
-							{
-								arrayStride: 4,
-								stepMode: 'instance',
-								attributes: [
-									{
-										shaderLocation: 0,
-										offset: 0,
-										format: 'uint8x4',
-									},
-								]
-							}
-						]
-					},
-					fragment: {
-						module: shader,
-						entryPoint: 'fs_main',
-						targets: [
-							{
-								format: navigator.gpu.getPreferredCanvasFormat(),
-							}
-						],
-					},
-					primitive: {
-						topology: 'triangle-list',
-						cullMode: 'back',
-						frontFace: 'ccw',
-					},
-					depthStencil: {
-						format: 'depth24plus',
-						depthWriteEnabled: true,
-						depthCompare: 'less',
-					},
-				})
-				break
+			]
 		}
+		if (RENDER_MODE === 1)
+		{
+			bindGroupDescriptor.entries = [...bindGroupDescriptor.entries, {
+				binding: 6,
+				visibility: GPUShaderStage.FRAGMENT,
+				texture: {
+					sampleType: 'uint',
+					viewDimension: '3d',
+				}
+			}]
+		}
+
+		this.bindGroupLayout = this.device.createBindGroupLayout(bindGroupDescriptor)
+
+		/** @type {GPURenderPipelineDescriptor} */const terrainPipelineDescriptor = {
+			layout: this.device.createPipelineLayout({
+				bindGroupLayouts: [this.bindGroupLayout]
+			}),
+			vertex: {
+				module: shader,
+				entryPoint: 'vs_main',
+			},
+			fragment: {
+				module: shader,
+				entryPoint: 'fs_terrain',
+				targets: [
+					{
+						format: navigator.gpu.getPreferredCanvasFormat(),
+					}
+				],
+			},
+			primitive: {
+				topology: 'triangle-list',
+				cullMode: 'back',
+			},
+			depthStencil: {
+				format: 'depth24plus',
+				depthWriteEnabled: true,
+				depthCompare: 'less',
+			},
+		}
+
+		this.terrainPipeline = this.device.createRenderPipeline(terrainPipelineDescriptor)
+
+		/** @type {GPURenderPipelineDescriptor} */const modelPipelineDescriptor = {
+			layout: this.device.createPipelineLayout({
+				bindGroupLayouts: [this.bindGroupLayout]
+			}),
+			vertex: {
+				module: shader,
+				entryPoint: 'vs_main',
+			},
+			fragment: {
+				module: shader,
+				entryPoint: 'fs_model_2',
+				targets: [
+					{
+						format: navigator.gpu.getPreferredCanvasFormat(),
+					}
+				],
+
+			},
+			primitive: {
+				topology: 'triangle-list',
+				cullMode: 'back',
+			},
+			depthStencil: {
+				format: 'depth24plus',
+				depthWriteEnabled: true,
+				depthCompare: 'less',
+			},
+		}
+
+
+		this.modelPipeline = this.device.createRenderPipeline(modelPipelineDescriptor)
 	}
 
 	generateAccelerationData(voxels, sizeX, sizeY, sizeZ)
 	{
-		const regionSizeX = Math.ceil(sizeX >> 2)
-		const regionSizeY = Math.ceil(sizeY >> 2)
-		const regionSizeZ = Math.ceil(sizeZ >> 1)
+		const regionSizeX = sizeX + 3 >> 2
+		const regionSizeY = sizeY + 3 >> 2
+		const regionSizeZ = sizeZ + 1 >> 1
 		const data = new Uint32Array(regionSizeX * regionSizeY * regionSizeZ)
 
 		for (let z = 0; z < sizeZ; z++)
@@ -1097,6 +746,63 @@ class Renderer
 		return data
 	}
 
+	generateMipsData(voxels, sizeX, sizeY, sizeZ)
+	{
+		const regionSizeX = sizeX + 3 >> 2
+		const regionSizeY = sizeY + 3 >> 2
+		const regionSizeZ = sizeZ + 3 >> 2
+		const mip1SizeX = sizeX + 7 >> 3
+		const mip1SizeY = sizeY + 7 >> 3
+		const mip1SizeZ = sizeZ + 7 >> 3
+
+		const mip1Data = new Uint8Array(mip1SizeX * mip1SizeY * mip1SizeZ)
+
+		for (let rz = 0; rz < regionSizeZ; rz++)
+		{
+			for (let ry = 0; ry < regionSizeY; ry++)
+			{
+				for (let rx = 0; rx < regionSizeX; rx++)
+				{
+					// Check if this region has any content
+					let hasContent = false
+					const baseX = rx * 4
+					const baseY = ry * 4
+					const baseZ = rz * 4
+
+					for (let z = 0; z < 4 && baseZ + z < sizeZ; z++)
+					{
+						for (let y = 0; y < 4 && baseY + y < sizeY; y++)
+						{
+							for (let x = 0; x < 4 && baseX + x < sizeX; x++)
+							{
+								const voxel = voxels[(baseZ + z) * sizeY * sizeX + (baseY + y) * sizeX + (baseX + x)]
+								if (voxel !== 255)
+								{
+									hasContent = true
+									break
+								}
+							}
+							if (hasContent) break
+						}
+						if (hasContent) break
+					}
+
+					if (hasContent)
+					{
+						const mipX = rx >> 1
+						const mipY = ry >> 1
+						const mipZ = rz >> 1
+						const bitIndex = (rx & 1) + ((ry & 1) << 1) + ((rz & 1) << 2)
+						const mipIndex = mipZ * mip1SizeY * mip1SizeX + mipY * mip1SizeX + mipX
+						mip1Data[mipIndex] |= 1 << bitIndex
+					}
+				}
+			}
+		}
+
+		return mip1Data
+	}
+
 
 	/**
 	 * @param {Model} model
@@ -1112,13 +818,30 @@ class Renderer
 			mipLevelCount: 2,
 		})
 		this.device.queue.writeTexture(
-			{ texture },
+			{
+				texture,
+				mipLevel: 0
+			},
 			model.voxels,
 			{
 				bytesPerRow: model.sizeX,
 				rowsPerImage: model.sizeY
 			},
 			[model.sizeX, model.sizeY, model.sizeZ]
+		)
+		const mip1Data = this.generateMipsData(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
+
+		this.device.queue.writeTexture(
+			{
+				texture,
+				mipLevel: 1
+			},
+			mip1Data,
+			{
+				bytesPerRow: model.sizeX + 7 >> 3,
+				rowsPerImage: model.sizeY + 7 >> 3,
+			},
+			[model.sizeX + 7 >> 3, model.sizeY + 7 >> 3, model.sizeZ + 7 >> 3],
 		)
 
 		model.texture = texture
@@ -1135,50 +858,33 @@ class Renderer
 		)
 		model.paletteIndex = this.nextPaletteIndex++
 
-		if (RENDER_MODE == 0)
+		if (RENDER_MODE == 1)
 		{
 			const acceleration = this.generateAccelerationData(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
+			let regionSizeX = model.sizeX + 3 >> 2
+			let regionSizeY = model.sizeY + 3 >> 2
+			let regionSizeZ = model.sizeZ + 1 >> 1
 			const accelerationTexture = this.device.createTexture({
-				size: [model.sizeX >> 2, model.sizeY >> 2, (model.sizeZ >> 1)],
+				size: [regionSizeX, regionSizeY, regionSizeZ],
+				dimension: '3d',
 				format: 'r32uint',
 				usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 			})
+
 			this.device.queue.writeTexture(
 				{ texture: accelerationTexture },
 				acceleration,
 				{
-					bytesPerRow: (model.sizeX >> 2) * 4,
-					rowsPerImage: model.sizeY >> 2,
+					bytesPerRow: regionSizeX * 4,
+					rowsPerImage: regionSizeY,
 				},
 				{
-					width: model.sizeX >> 2,
-					height: model.sizeY >> 2,
-					depthOrArrayLayers: model.sizeZ >> 1
+					width: regionSizeX,
+					height: regionSizeY,
+					depthOrArrayLayers: regionSizeZ
 				}
 			)
-		}
-
-		if (RENDER_MODE == 1)
-		{
-			const faces = model.generateFaces()
-			const faceCount = Math.floor(faces.length / 4)
-			const rasterBuffer = this.device.createBuffer({
-				size: faceCount * 4,
-				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-			})
-			this.device.queue.writeBuffer(rasterBuffer, 0, faces)
-			model.rasterBuffer = rasterBuffer
-		}
-
-		if (RENDER_MODE == 2)
-		{
-			const visible = this.generateVisible(model.voxels, model.sizeX, model.sizeY, model.sizeZ, 255)
-			const rasterBuffer = this.device.createBuffer({
-				size: visible.byteLength,
-				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-			})
-			this.device.queue.writeBuffer(rasterBuffer, 0, visible)
-			model.rasterBuffer = rasterBuffer
+			model.accelerationTexture = accelerationTexture
 		}
 	}
 
@@ -1236,114 +942,7 @@ class Renderer
 		)
 
 		level.texture = texture
-
-		if (RENDER_MODE == 1)
-		{
-			const faces = level.generateFaces()
-			const faceCount = Math.floor(faces.length / 4)
-			const rasterBuffer = this.device.createBuffer({
-				size: faceCount * 4,
-				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-			})
-			this.device.queue.writeBuffer(rasterBuffer, 0, faces)
-			level.rasterBuffer = rasterBuffer
-		}
-
-		if (RENDER_MODE == 2)
-		{
-			const visible = this.generateVisible(level.voxels, level.sizeX, level.sizeY, level.sizeZ, 0)
-			const rasterBuffer = this.device.createBuffer({
-				size: visible.byteLength,
-				usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-			})
-			this.device.queue.writeBuffer(rasterBuffer, 0, visible)
-			level.rasterBuffer = rasterBuffer
-		}
 	}
-
-	/**
-	 * @param {Uint8Array} voxels
-	 * @param {number} sizeX
-	 * @param {number} sizeY
-	 * @param {number} sizeZ
-	 * @param {number} empty
-	 * @returns {Uint8Array}
-	 * */
-	generateVisible(voxels, sizeX, sizeY, sizeZ, empty)
-	{
-		const visible = new Uint8Array(sizeX * sizeY * sizeZ * 3)
-		let index = 0
-
-		for (let x = 0; x < sizeX; x++)
-		{
-			for (let y = 0; y < sizeY; y++)
-			{
-				for (let z = 0; z < sizeZ; z++)
-				{
-					const idx = z * sizeY * sizeX + y * sizeX + x
-
-					if (voxels[idx] === empty) continue
-
-					// Check -X face
-					if (x === 0 || voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check +X face
-					if (x === sizeX - 1 || voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check -Y face
-					if (y === 0 || voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check +Y face
-					if (y === sizeY - 1 || voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check -Z face
-					if (z === 0 || voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check +Z face
-					if (z === sizeZ - 1 || voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-				}
-			}
-		}
-		return visible.subarray(0, index)
-	}
-
 
 	createDepthTexture()
 	{
@@ -1410,7 +1009,7 @@ class Renderer
 			{
 				if (e.model == models['fatta'])
 				{
-					e.model = models['fattb']
+					e.model = models['fatta']
 				} else if (e.model == models['fattb'])
 				{
 					e.model = models['fattc']
@@ -1446,7 +1045,7 @@ class Renderer
 		if (!level.bindGroup)
 		{
 			level.bindGroup = this.device.createBindGroup({
-				layout: this.commonLayout,
+				layout: this.bindGroupLayout,
 				entries: [
 					{
 						binding: 0,
@@ -1517,8 +1116,8 @@ class Renderer
 
 		if (!model.bindGroup)
 		{
-			model.bindGroup = this.device.createBindGroup({
-				layout: this.commonLayout,
+			/** @type {GPUBindGroupDescriptor} */const descriptor = {
+				layout: this.bindGroupLayout,
 				entries: [
 					{
 						binding: 0,
@@ -1551,21 +1150,21 @@ class Renderer
 						resource: this.tileSampler
 					}
 				],
-			})
+			}
+			if (RENDER_MODE === 1)
+			{
+				descriptor.entries = [...descriptor.entries, {
+					binding: 6,
+					resource: model.accelerationTexture.createView()
+				}]
+			}
+
+			model.bindGroup = this.device.createBindGroup(descriptor)
 		}
 
 		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
+		renderPass.draw(36, 1, 0, 0)
 
-		switch (RENDER_MODE)
-		{
-			case 0:
-				renderPass.draw(36, 1, 0, 0)
-				break
-			case 1: case 2:
-				renderPass.setVertexBuffer(0, model.rasterBuffer)
-				renderPass.draw(6, model.rasterBuffer.size / 4, 0, 0)
-				break
-		}
 		this.objectUniformsOffset += 256
 	}
 }
