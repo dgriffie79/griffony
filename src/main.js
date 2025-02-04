@@ -531,7 +531,9 @@ class Renderer
 		{
 			throw new Error('No GPU adapter found')
 		}
-		this.device = await adapter.requestDevice()
+		this.device = await adapter.requestDevice({
+			requiredFeatures: ['timestamp-query']
+		})
 		const canvas = document.createElement('canvas')
 		canvas.width = window.innerWidth
 		canvas.height = window.innerHeight
@@ -577,6 +579,22 @@ class Renderer
 			addressModeV: 'repeat',
 			addressModeW: 'repeat',
 		})
+
+		this.frameTimes = []
+		this.lastTimePrint = performance.now()
+		this.querySet = this.device.createQuerySet({
+			type: "timestamp",
+			count: 2,
+		})
+		this.queryResolve = this.device.createBuffer({
+			size: 16, // 2 * 8-byte timestamps
+			usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+		})
+		this.queryResult = this.device.createBuffer({
+			size: 16,
+			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		})
+
 		const shader = await this.compileShader(SHADER)
 
 		/** @type {GPUBindGroupLayoutDescriptor} */const bindGroupDescriptor = {
@@ -958,7 +976,7 @@ class Renderer
 		})
 	}
 
-	draw()
+	async draw()
 	{
 		const commandEncoder = this.device.createCommandEncoder()
 		const renderPass = commandEncoder.beginRenderPass({
@@ -974,12 +992,12 @@ class Renderer
 				depthLoadOp: 'clear',
 				depthStoreOp: 'store',
 			},
+			timestampWrites: {
+				querySet: this.querySet,
+				beginningOfPassWriteIndex: 0,
+				endOfPassWriteIndex: 1,
+			}
 		})
-
-		//floatView.set(camera.projection, 0)
-		//floatView.set(camera.view, 16)
-		//floatView.set(camera.worldPosition, 32)
-		//floatView.set(this.viewport, 48)
 
 		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
 		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
@@ -1026,8 +1044,36 @@ class Renderer
 
 		this.device.queue.writeBuffer(this.objectUniforms, 0, this.transferBuffer, 0, this.objectUniformsOffset)
 
+
+
 		renderPass.end()
+		commandEncoder.resolveQuerySet(this.querySet, 0, 2, this.queryResolve, 0)
+		if (this.queryResult.mapState === 'unmapped')
+		{
+			commandEncoder.copyBufferToBuffer(this.queryResolve, 0, this.queryResult, 0, this.queryResult.size)
+		}
+
 		this.device.queue.submit([commandEncoder.finish()])
+
+		if (this.queryResult.mapState === 'unmapped')
+		{
+			await this.queryResult.mapAsync(GPUMapMode.READ)
+			const queryData = new BigUint64Array(this.queryResult.getMappedRange())
+			const delta = queryData[1] - queryData[0]
+			this.queryResult.unmap()
+			const frameTimeMs = Number(delta) / 1e6
+			this.frameTimes.push(frameTimeMs)
+			const now = performance.now()
+			if (now - this.lastTimePrint >= 1000)
+			{
+				const sum = this.frameTimes.reduce((a, b) => a + b, 0)
+				const avgFrameTime = sum / this.frameTimes.length
+				console.log(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`)
+				this.frameTimes.length = 0
+				this.lastTimePrint = now
+			}
+		}
+
 	}
 
 	/**
