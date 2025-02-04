@@ -380,6 +380,87 @@ fn march_4(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	}
 }
 
+fn march_5(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
+    var hit: Hit;
+    hit.voxel = empty;
+    hit.steps = 0;
+
+    let rsign = sign(raydir);
+	let rstep = step(vec3f(0), raydir);
+    let eps = raydir * 1e-4;
+
+    let dims = vec3f(textureDimensions(voxels));
+    let tdelta = abs(1.0 / raydir);
+
+    let t1 = -raypos / raydir;
+    let t2 = (vec3f(dims) - raypos) / raydir;
+    let tmin = min(t1, t2);
+	let tmax = max(t1, t2);
+    let tnear = max(max(tmin.x, tmin.y), tmin.z);
+	let tfar = min(min(tmax.x, tmax.y), tmax.z);
+
+    let start = raypos + max(0.0, tnear) * raydir;
+	var voxel = floor(start + eps);
+	var region = floor(voxel / 4);
+	var skipping = true;
+
+	var tprev = max(0, tnear);
+
+    for(;;) {
+        hit.steps++;
+		if (hit.steps >= 128) {
+			return hit;
+		}
+		
+		if (tprev >= tfar) {
+			return hit;
+		}
+
+		let coords = select(
+			vec3i(voxel),
+			vec3i(voxel / 8),
+			skipping
+		);
+		
+		let texel = textureLoad(voxels, coords, i32(skipping)).x;
+
+		if (skipping) {
+			//let bit_index = dot(vec3u(1, 2, 4), vec3u(region > (region / 2)));
+			//skipping = ((texel >> bit_index) &1) == 0;
+			skipping = texel == 0;
+			if (!skipping) {
+				continue;
+			}
+		} else {
+			if (texel != empty) {
+				hit.voxel = texel;
+				hit.normal = vec3f(rstep) * -1.0;
+				hit.voxelpos = vec3i(voxel);
+				hit.pos = (start + tprev * raydir);
+				return hit;
+			}
+		}
+
+		let edge = vec3f(select(
+			voxel + rstep,
+			//(region + rstep) * 4,
+			(floor(voxel / 4) + rstep) * 4,
+			skipping
+		));
+
+		let tnext = abs((edge - start) / raydir);		
+		tprev = min(tnext.x, min(tnext.y, tnext.z));
+		let mask = tnext.xyz == vec3f(tprev);
+
+		voxel = floor(start + tprev * raydir + eps);
+
+		skipping = (any(voxel < region * 4) || any(voxel >= region * 4 + 4));
+		region = floor(voxel / 4);
+		
+
+	}
+}
+
 struct FragmentOutput {
 	@location(0) color: vec4f,
     @builtin(frag_depth) depth: f32
@@ -483,7 +564,7 @@ fn fs_model(in: VertexOutput) -> FragmentOutput {
 fn fs_model_2(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
 
-	let hit = march_4(in.rayOrigin, normalize(in.rayDirection), 255u);
+	let hit = march_5(in.rayOrigin, normalize(in.rayDirection), 255u);
 
 	let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
     output.depth = (clipPos.z / clipPos.w);
