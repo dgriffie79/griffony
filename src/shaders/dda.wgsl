@@ -456,8 +456,6 @@ fn march_5(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 
 		skipping = (any(voxel < region * 4) || any(voxel >= region * 4 + 4));
 		region = floor(voxel / 4);
-		
-
 	}
 }
 
