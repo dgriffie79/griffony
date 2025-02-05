@@ -399,63 +399,60 @@ fn march_5(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
     let tnear = max(max(tmin.x, tmin.y), tmin.z);
 	let tfar = min(min(tmax.x, tmax.y), tmax.z);
 
-    let start = raypos + max(0.0, tnear) * raydir;
-	var voxel = floor(start + eps);
-	var region = floor(voxel / 4);
-	var skipping = true;
-
-	var tprev = max(0, tnear);
+    let start = raypos + max(0, tnear) * raydir;
+	let tend = tfar - max(0, tnear);
+	var tprev = 0.0;
 
     for(;;) {
-        hit.steps++;
-		if (hit.steps >= 128) {
-			return hit;
-		}
+ 
 		
-		if (tprev >= tfar) {
-			return hit;
-		}
-
-		let coords = select(
-			vec3i(voxel),
-			vec3i(voxel / 8),
-			skipping
-		);
+		var tregion: f32;
 		
-		let texel = textureLoad(voxels, coords, i32(skipping)).x;
-
-		if (skipping) {
-			//let bit_index = dot(vec3u(1, 2, 4), vec3u(region > (region / 2)));
-			//skipping = ((texel >> bit_index) &1) == 0;
-			skipping = texel == 0;
-			if (!skipping) {
-				continue;
+		for(;;) {
+			hit.steps++;
+			if (hit.steps >= 256) {
+				return hit;
+			}	
+			if (tprev + 1e-4 >= tend) {
+				return hit;
 			}
-		} else {
-			if (texel != empty) {
-				hit.voxel = texel;
+
+			let region = floor((start + tprev * raydir) / 8 + eps);
+			let bounds = 8 *(region + rstep);
+			let tnext = abs((bounds - start) / raydir);
+			tregion = min(tnext.x, min(tnext.y, tnext.z));
+
+			let mip = textureLoad(voxels, vec3i(region), 1).x;
+			if (mip != 0) {
+				tregion = min(tregion, tend);
+				break;
+			}
+			tprev = tregion;
+		}
+		
+		for(;;) {
+			hit.steps++;
+			if (hit.steps >= 256) {
+				return hit;
+			}	
+			if (tprev + 1e-4 >= tregion) {
+				break;
+			}
+			let voxel = floor((start + tprev * raydir) + eps);
+			let tex = textureLoad(voxels, vec3i(voxel), 0).x;
+
+			if (tex != empty) {
+				hit.voxel = tex;
 				hit.normal = vec3f(rstep) * -1.0;
 				hit.voxelpos = vec3i(voxel);
 				hit.pos = (start + tprev * raydir);
 				return hit;
 			}
+
+			let bounds = voxel + rstep;
+			let tnext = abs((bounds - start) / raydir);
+			tprev = min(tnext.x, min(tnext.y, tnext.z));
 		}
-
-		let edge = vec3f(select(
-			voxel + rstep,
-			//(region + rstep) * 4,
-			(floor(voxel / 4) + rstep) * 4,
-			skipping
-		));
-
-		let tnext = abs((edge - start) / raydir);		
-		tprev = min(tnext.x, min(tnext.y, tnext.z));
-		let mask = tnext.xyz == vec3f(tprev);
-
-		voxel = floor(start + tprev * raydir + eps);
-
-		skipping = (any(voxel < region * 4) || any(voxel >= region * 4 + 4));
-		region = floor(voxel / 4);
 	}
 }
 
@@ -562,14 +559,14 @@ fn fs_model(in: VertexOutput) -> FragmentOutput {
 fn fs_model_2(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
 
-	let hit = march_5(in.rayOrigin, normalize(in.rayDirection), 255u);
+	let hit = march_4(in.rayOrigin, normalize(in.rayDirection), 255u);
 
 	let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
     output.depth = (clipPos.z / clipPos.w);
 
     // Debug visualization
     var stepHeat = 0.0;
-	if (hit.steps > 16u) {
+	if (hit.steps > 32) {
 	 	stepHeat = 1.0;
 	}
 	//stepHeat = f32(hit.region.z)  / 32.0;
@@ -577,7 +574,7 @@ fn fs_model_2(in: VertexOutput) -> FragmentOutput {
 	
 	if (hit.voxel == 255u) {
 		output.color = vec4f(debugColor, 1.0);
-		//return output;
+		return output;
 	}
 
 	if (hit.voxel == 255u) {
