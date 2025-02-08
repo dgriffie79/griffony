@@ -85,16 +85,15 @@ fn vs_main(@builtin(vertex_index) vertexID: u32) -> VertexOutput {
 
 struct Hit {
 	pos: vec3f,
-	voxelpos: vec3i,
+	voxel: vec3i,
 	normal: vec3f,
-	voxel: u32,
+	val: u32,
 	steps: u32,
-	region: vec3i,
 };
 
 fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	var hit: Hit;
-	hit.voxel = empty;
+	hit.val = empty;
 	hit.steps = 0;
 
 	let dims = vec3i(textureDimensions(voxels));
@@ -128,10 +127,10 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 			return hit;
 		}
 
-		hit.voxel = textureLoad(voxels, voxelpos, 0).x;
-		if (hit.voxel != empty) {
+		hit.val = textureLoad(voxels, voxelpos, 0).x;
+		if (hit.val != empty) {
 			hit.normal = vec3f(mask) * -vec3f(step);
-			hit.voxelpos = voxelpos;
+			hit.voxel = voxelpos;
 			hit.pos = startpos + tprev * raydir;
 			return hit;
 		}
@@ -142,7 +141,7 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 
 fn march_2(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	var hit: Hit;
-	hit.voxel = empty;
+	hit.val = empty;
 	hit.steps = 0;
 
 	let step = vec3i(sign(raydir));
@@ -162,68 +161,66 @@ fn march_2(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 
 	let start = raypos + max(0, t_near) * raydir;
 
-	var current_voxel = vec3i(floor(start + eps));
-	var current_region = vec3i(current_voxel.x >> 2, current_voxel.y >> 2, current_voxel.z >> 1);
+	hit.voxel = vec3i(floor(start + eps));
+	var region = vec3i(hit.voxel.x >> 2, hit.voxel.y >> 2, hit.voxel.z >> 1);
 
-	var region_bounds = vec3f((current_region + max(step, vec3i(0))) * region_size);
+	var region_bounds = vec3f((region + max(step, vec3i(0))) * region_size);
 	var region_tnext = abs((region_bounds - start) / raydir);
 
 	var tprev = 0.0;
 
 	
-	for(;;) {
+	loop {
 		hit.steps++;
-		hit.region = current_region;
 
-		if (any(current_region < vec3i(0)) || any(current_region >= region_dims)) {
+		if (any(region < vec3i(0)) || any(region >= region_dims)) {
 			return hit;
 		}
 
-		let region_bits = textureLoad(acceleration, current_region, 0).x;
+		let region_bits = textureLoad(acceleration, region, 0).x;
 
 		if (region_bits != 0u) 
 		{
-			current_voxel = vec3i(floor(start + tprev * raydir + eps));
-			let voxel_bounds = vec3f(current_voxel + max(step, vec3i(0)));
+			hit.voxel = vec3i(floor(start + tprev * raydir + eps));
+			let voxel_bounds = vec3f(hit.voxel + max(step, vec3i(0)));
 			var voxel_tnext = abs((voxel_bounds - start) / raydir);
-			let voxel_min = current_region * region_size;
+			let voxel_min = region * region_size;
 			let voxel_max = min(voxel_min + region_size, voxel_dims);
 
-			for(;;) {
-				if (any(current_voxel < voxel_min) || any(current_voxel >= voxel_max)) {
+			loop {
+				if (any(hit.voxel < voxel_min) || any(hit.voxel >= voxel_max)) {
 					break;
 				}
-				let local_x = current_voxel.x & 3;
-				let local_y = current_voxel.y & 3;
-				let local_z = current_voxel.z & 1;
+				let local_x = hit.voxel.x & 3;
+				let local_y = hit.voxel.y & 3;
+				let local_z = hit.voxel.z & 1;
 				let bit_index = local_x + (local_y * 4) + (local_z * 16);
 
 				if (((region_bits >> u32(bit_index)) & 1u) != 0u) {
-					hit.voxel = textureLoad(voxels, current_voxel, 0).x; 
-					hit.normal = vec3f(step) * -1.0;
-					hit.voxelpos = current_voxel;
+					hit.val = textureLoad(voxels, hit.voxel, 0).x; 
 					hit.pos = start + tprev * raydir;
 					return hit;
 				}
 
-				let mask = voxel_tnext.xyz <= min(voxel_tnext.yzx, voxel_tnext.zxy);
 				tprev = min(voxel_tnext.x, min(voxel_tnext.y, voxel_tnext.z));
+				let mask = voxel_tnext == vec3f(tprev);
 				voxel_tnext += vec3f(mask) * voxel_tdelta;
-				current_voxel += vec3i(mask) * step;
+				hit.voxel += vec3i(mask) * step;
 			}
 		}
 		
 		tprev = min(region_tnext.x, min(region_tnext.y, region_tnext.z));
 		let mask = region_tnext == vec3f(tprev);
+		hit.normal = vec3f(mask) * -vec3f(step);
 		region_tnext += vec3f(mask) * region_tdelta;
-		current_region += vec3i(mask) * step;
+		region += vec3i(mask) * step;
 	}
 }
 
 
 fn march_3(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	var hit: Hit;
-	hit.voxel = empty;
+	hit.val = empty;
 	hit.steps = 0;
 
 	let step = vec3i(sign(raydir));
@@ -253,7 +250,6 @@ fn march_3(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	var tprev = 0.0;
 	for(;;) {
 		hit.steps++;
-		hit.region = current_region;
 
 		if (any(current_region < vec3i(0)) || any(current_region >= region_dims)) {
 			return hit;
@@ -274,10 +270,10 @@ fn march_3(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 				if (any(current_voxel < voxel_min) || any(current_voxel >= voxel_max)) {
 					break;
 				}
-				hit.voxel = textureLoad(voxels, current_voxel, 0).x;
-				if (hit.voxel != empty) {
+				hit.val = textureLoad(voxels, current_voxel, 0).x;
+				if (hit.val != empty) {
 					hit.normal = vec3f(step) * -1.0;
-					hit.voxelpos = current_voxel;
+					hit.voxel = current_voxel;
 					hit.pos = start + tprev * raydir;
 					return hit;
 				}
@@ -295,166 +291,6 @@ fn march_3(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	}
 }
 
-fn march_4(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
-    var hit: Hit;
-    hit.voxel = empty;
-    hit.steps = 0;
-
-    let rsign = vec3i(sign(raydir));
-	let rstep = vec3i(step(vec3f(0), raydir));
-    let eps = raydir * 1e-4;
-
-    let vdims = vec3i(textureDimensions(voxels));
-	let rdims = (vdims + vec3i(3)) / 4;
-    let tdelta = abs(1.0 / raydir);
-
-    let t1 = -raypos / raydir;
-    let t2 = (vec3f(vdims) - raypos) / raydir;
-    let tmin = min(t1, t2);
-    let tnear = max(max(tmin.x, tmin.y), tmin.z);
-
-    let start = raypos + max(0.0, tnear) * raydir;
-
-	var mode = 1u;
-	var voxel = vec3i(floor(start + eps));
-	var voxel_min: vec3i;
-	var voxel_max: vec3i;
-	var region = vec3i(voxel.x >> 2, voxel.y >> 2, voxel.z >> 2);
-
-	let bounds = vec3f((region + rstep) * 4);
-	var rtnext = abs((bounds - start) / raydir);
-	var vtnext: vec3f;
-	var tprev = 0.0;
-
-    for(;;) {
-        hit.steps++;
-		if (hit.steps >= 64) {
-			return hit;
-		}
-		
-		if (mode == 1u) {
-			hit.region = region;
-
-			if (any(region < vec3i(0)) || any(region >= rdims)) {
-				return hit;
-			}
-
-			let mip = textureLoad(voxels, region / 2, 1u).x;
-			let bit_index = u32((region.x & 1) + ((region.y & 1) << 1) + ((region.z & 1) << 2));	
-
-			if (((mip >> bit_index) & 1) != 0) {
-				mode = 0u;
-				voxel = vec3i(floor(start + tprev * raydir + eps));
-				let bounds = vec3f(voxel + rstep);
-				vtnext = abs((bounds - start) / raydir);
-				voxel_min = region * 4;
-				voxel_max = min(voxel_min + 4, vdims);
-			} 
-
-			tprev = min(rtnext.x, min(rtnext.y, rtnext.z));
-			let mask = rtnext.xyz == vec3f(tprev);
-			rtnext += vec3f(mask) * tdelta * 4;
-			region += vec3i(mask) * rsign;
-		} else {
-
-			if (any(voxel < voxel_min) || any(voxel >= voxel_max)) {
-				mode = 1u;
-				continue;
-			}
-
-			let val = textureLoad(voxels, voxel, 0).x;
-
-			if (val != empty) {
-				hit.voxel = val;
-				hit.normal = vec3f(rstep) * -1.0;
-				hit.voxelpos = voxel;
-				hit.pos = start + tprev * raydir;
-				return hit;
-			}
-
-			tprev = min(vtnext.x, min(vtnext.y, vtnext.z));
-			let mask = vtnext.xyz == vec3f(tprev);
-			vtnext += vec3f(mask) * tdelta;
-			voxel += vec3i(mask) * rsign;
-		}
-	}
-}
-
-fn march_5(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
-    var hit: Hit;
-    hit.voxel = empty;
-    hit.steps = 0;
-
-    let rsign = sign(raydir);
-	let rstep = step(vec3f(0), raydir);
-    let eps = raydir * 1e-4;
-
-    let dims = vec3f(textureDimensions(voxels));
-    let tdelta = abs(1.0 / raydir);
-
-    let t1 = -raypos / raydir;
-    let t2 = (vec3f(dims) - raypos) / raydir;
-    let tmin = min(t1, t2);
-	let tmax = max(t1, t2);
-    let tnear = max(max(tmin.x, tmin.y), tmin.z);
-	let tfar = min(min(tmax.x, tmax.y), tmax.z);
-
-    let start = raypos + max(0, tnear) * raydir;
-	let tend = tfar - max(0, tnear);
-	var tprev = 0.0;
-
-    for(;;) {
- 
-		
-		var tregion: f32;
-		
-		for(;;) {
-			hit.steps++;
-			if (hit.steps >= 256) {
-				return hit;
-			}	
-			if (tprev + 1e-4 >= tend) {
-				return hit;
-			}
-
-			let region = floor((start + tprev * raydir) / 8 + eps);
-			let bounds = 8 *(region + rstep);
-			let tnext = abs((bounds - start) / raydir);
-			tregion = min(tnext.x, min(tnext.y, tnext.z));
-
-			let mip = textureLoad(voxels, vec3i(region), 1).x;
-			if (mip != 0) {
-				tregion = min(tregion, tend);
-				break;
-			}
-			tprev = tregion;
-		}
-		
-		for(;;) {
-			hit.steps++;
-			if (hit.steps >= 256) {
-				return hit;
-			}	
-			if (tprev + 1e-4 >= tregion) {
-				break;
-			}
-			let voxel = floor((start + tprev * raydir) + eps);
-			let tex = textureLoad(voxels, vec3i(voxel), 0).x;
-
-			if (tex != empty) {
-				hit.voxel = tex;
-				hit.normal = vec3f(rstep) * -1.0;
-				hit.voxelpos = vec3i(voxel);
-				hit.pos = (start + tprev * raydir);
-				return hit;
-			}
-
-			let bounds = voxel + rstep;
-			let tnext = abs((bounds - start) / raydir);
-			tprev = min(tnext.x, min(tnext.y, tnext.z));
-		}
-	}
-}
 
 struct FragmentOutput {
 	@location(0) color: vec4f,
@@ -467,7 +303,7 @@ fn fs_terrain(in: VertexOutput) -> FragmentOutput {
 
 	let hit = march(in.rayOrigin, normalize(in.rayDirection), 0u);
 
-	if(hit.voxel == 0) {
+	if(hit.val == 0) {
 		discard;
 	}
 
@@ -482,7 +318,7 @@ fn fs_terrain(in: VertexOutput) -> FragmentOutput {
 	} else {
 		hitUV = vec2f(hit.pos.x, -hit.pos.y);
 	}
-	output.color = textureSample(tiles, tileSampler, hitUV, i32(hit.voxel - 1u));
+	output.color = textureSample(tiles, tileSampler, hitUV, i32(hit.val - 1u));
 	return output;
 }
 
@@ -525,41 +361,12 @@ fn getAO(vpos: vec3i, normal: vec3f) -> f32 {
     return 1.0 - ao;
 }
 
-@id(0) override MARCH_VERSION: u32 = 3;
 
 @fragment
 fn fs_model(in: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
 
-	let hit = march(in.rayOrigin, normalize(in.rayDirection), 255u);
-
-    // Debug visualization
-    var stepHeat = 0.0;
-	if (hit.steps > 64u) {
-	 	stepHeat = 1.0;
-	}
-    let debugColor = vec3f(stepHeat, 0.0, 1.0 - stepHeat);
-	output.color = vec4f(debugColor, 1.0);
-	//return output;
-
-	if (hit.voxel == 255u) {
-		discard;
-	}
-
-    let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
-    output.depth = (clipPos.z / clipPos.w);
-    //let ao = getAO(hit.voxelpos, hit.normal);
-    let color = textureLoad(palette, vec2<u32>(hit.voxel, object_uniforms.palette_index), 0);
-	output.color = vec4f(color.rgb, 1.0);
-
-    return output;
-}
-
-@fragment
-fn fs_model_2(in: VertexOutput) -> FragmentOutput {
-    var output: FragmentOutput;
-
-	let hit = march_4(in.rayOrigin, normalize(in.rayDirection), 255u);
+	let hit = march_2(in.rayOrigin, normalize(in.rayDirection), 255u);
 
 	let clipPos = object_uniforms.model_view_projection * vec4f(hit.pos, 1.0);
     output.depth = (clipPos.z / clipPos.w);
@@ -572,17 +379,13 @@ fn fs_model_2(in: VertexOutput) -> FragmentOutput {
 	//stepHeat = f32(hit.region.z)  / 32.0;
     let debugColor = vec3f(stepHeat, 0.0, 1.0 - stepHeat);
 	
-	if (hit.voxel == 255u) {
-		output.color = vec4f(debugColor, 1.0);
-		return output;
-	}
 
-	if (hit.voxel == 255u) {
+	if (hit.val == 255u) {
 		discard;
 	}
 
-    //let ao = getAO(hit.voxelpos, hit.normal);
-    let color = textureLoad(palette, vec2<u32>(hit.voxel, object_uniforms.palette_index), 0);
+    //let ao = getAO(hit.voxel, hit.normal);
+    let color = textureLoad(palette, vec2<u32>(hit.val, object_uniforms.palette_index), 0);
 	output.color = vec4f(color.rgb, 1.0);
 
     return output;

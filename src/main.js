@@ -1,7 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
 import { Peer } from 'peerjs'
 
-// 0 = march
+// 1 = accelerated marching
 let RENDER_MODE = 1
 
 // @ts-ignore
@@ -185,7 +185,6 @@ class Camera extends Entity
 		this.updateProjection()
 	}
 }
-
 
 class Player extends Entity
 {
@@ -490,7 +489,7 @@ class Renderer
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
 	/** @type {GPUBindGroupLayout} */ bindGroupLayout = null;
-	/** @type {GPUBindGroup} */ commonBindGroup = null;
+	/** @type {GPUBindGroup} */ bindGroup = null;
     /** @type {GPURenderPipeline} */ terrainPipeline = null;
     /** @type {GPURenderPipeline} */ modelPipeline = null;
     /** @type {GPUTexture} */ depthTexture = null;
@@ -708,7 +707,7 @@ class Renderer
 			},
 			fragment: {
 				module: shader,
-				entryPoint: 'fs_model_2',
+				entryPoint: 'fs_model',
 				targets: [
 					{
 						format: navigator.gpu.getPreferredCanvasFormat(),
@@ -764,62 +763,102 @@ class Renderer
 		return data
 	}
 
-	generateMipsData(voxels, sizeX, sizeY, sizeZ)
+
+	isSurface(voxels, x, y, z, width, height, depth, emptyValue = 255)
 	{
-		const regionSizeX = sizeX + 3 >> 2
-		const regionSizeY = sizeY + 3 >> 2
-		const regionSizeZ = sizeZ + 3 >> 2
-		const mip1SizeX = sizeX + 7 >> 3
-		const mip1SizeY = sizeY + 7 >> 3
-		const mip1SizeZ = sizeZ + 7 >> 3
-
-		const mip1Data = new Uint8Array(mip1SizeX * mip1SizeY * mip1SizeZ)
-
-		for (let rz = 0; rz < regionSizeZ; rz++)
+		const idx = z * width * height + y * width + x
+		if (voxels[idx] === emptyValue)
 		{
-			for (let ry = 0; ry < regionSizeY; ry++)
+			return false
+		}
+		// Offsets for the 6 neighbors: +/- x, +/- y, +/- z
+		const neighbors = [
+			[x - 1, y, z], [x + 1, y, z],
+			[x, y - 1, z], [x, y + 1, z],
+			[x, y, z - 1], [x, y, z + 1],
+		]
+		// If any neighbor is out of bounds or empty => this voxel is surface
+		for (let i = 0; i < neighbors.length; i++)
+		{
+			const [nx, ny, nz] = neighbors[i]
+			if (nx < 0 || nx >= width || ny < 0 || ny >= height || nz < 0 || nz >= depth)
 			{
-				for (let rx = 0; rx < regionSizeX; rx++)
+				return true // out of bounds => surface
+			}
+			const nIdx = nz * width * height + ny * width + nx
+			if (voxels[nIdx] === emptyValue)
+			{
+				return true
+			}
+		}
+		return false // all neighbors are in-bounds & non-empty => interior
+	}
+
+	/**
+	 * Encodes each (x,y) column of voxels into up to 8 intervals.
+	 * Each interval stores 1 byte for the starting z value and 1 byte for run length.
+	 * Voxels with value `emptyValue` are considered empty.
+	 *
+    /** @type {GPUBuffer} */ columnMapBuffer = null;
+    /** @type {GPUBuffer} */ columnDataBuffer = null;
+
+	/**
+	 * Encodes voxel columns into interval data with pointer map
+	 * @param {Uint8Array} voxels
+	 * @param {number} width
+	 * @param {number} height
+	 * @param {number} depth
+	 * @returns {{columnMap: Uint32Array, columnData: Uint8Array}}
+	 */
+	encodeColumnIntervals(voxels, width, height, depth, emptyValue = 255)
+	{
+		const numColumns = width * height
+		const columnMap = new Uint32Array(numColumns)
+		const columnData = []
+		let currentOffset = 0
+
+		for (let y = 0; y < height; y++)
+		{
+			for (let x = 0; x < width; x++)
+			{
+				const colIndex = y * width + x
+				columnMap[colIndex] = currentOffset
+
+				let z = 0
+				while (z < depth)
 				{
-					// Check if this region has any content
-					let hasContent = false
-					const baseX = rx * 4
-					const baseY = ry * 4
-					const baseZ = rz * 4
-
-					for (let z = 0; z < 4 && baseZ + z < sizeZ; z++)
+					// Skip non-surface voxels
+					while (z < depth && !this.isSurface(voxels, x, y, z, width, height, depth, emptyValue))
 					{
-						for (let y = 0; y < 4 && baseY + y < sizeY; y++)
-						{
-							for (let x = 0; x < 4 && baseX + x < sizeX; x++)
-							{
-								const voxel = voxels[(baseZ + z) * sizeY * sizeX + (baseY + y) * sizeX + (baseX + x)]
-								if (voxel !== 255)
-								{
-									hasContent = true
-									break
-								}
-							}
-							if (hasContent) break
-						}
-						if (hasContent) break
+						z++
+					}
+					if (z >= depth) break
+
+					// Found surface voxel, start interval
+					const start = z
+					const val = voxels[z * width * height + y * width + x]
+
+					while (z < depth &&
+						this.isSurface(voxels, x, y, z, width, height, depth) &&
+						voxels[z * width * height + y * width + x] === val)
+					{
+						z++
 					}
 
-					if (hasContent)
-					{
-						const mipX = rx >> 1
-						const mipY = ry >> 1
-						const mipZ = rz >> 1
-						const bitIndex = (rx & 1) + ((ry & 1) << 1) + ((rz & 1) << 2)
-						const mipIndex = mipZ * mip1SizeY * mip1SizeX + mipY * mip1SizeX + mipX
-						mip1Data[mipIndex] |= 1 << bitIndex
-					}
+					// Store interval
+					columnData.push(start & 0xFF)        // start z
+					columnData.push((z - start) & 0xFF)  // length
+					currentOffset += 2
 				}
 			}
 		}
-
-		return mip1Data
+		console.log('Encoded', columnData.length + numColumns * 4, 'bytes for', numColumns, 'columns', (columnData.length + numColumns * 4) / numColumns, 'bytes per column')
+		return {
+			columnMap,
+			columnData: new Uint8Array(columnData)
+		}
 	}
+
 
 
 	/**
@@ -833,7 +872,7 @@ class Renderer
 			dimension: '3d',
 			format: 'r8uint',
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-			mipLevelCount: 2,
+			mipLevelCount: 1,
 		})
 		this.device.queue.writeTexture(
 			{
@@ -846,20 +885,6 @@ class Renderer
 				rowsPerImage: model.sizeY
 			},
 			[model.sizeX, model.sizeY, model.sizeZ]
-		)
-		const mip1Data = this.generateMipsData(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
-
-		this.device.queue.writeTexture(
-			{
-				texture,
-				mipLevel: 1
-			},
-			mip1Data,
-			{
-				bytesPerRow: model.sizeX + 7 >> 3,
-				rowsPerImage: model.sizeY + 7 >> 3,
-			},
-			[model.sizeX + 7 >> 3, model.sizeY + 7 >> 3, model.sizeZ + 7 >> 3],
 		)
 
 		model.texture = texture
@@ -904,6 +929,8 @@ class Renderer
 			)
 			model.accelerationTexture = accelerationTexture
 		}
+
+		this.encodeColumnIntervals(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
 	}
 
 
@@ -1338,6 +1365,7 @@ class Net
 		}
 	}
 }
+
 
 function setupUI()
 {
@@ -1843,14 +1871,14 @@ let godMode = true
 
 const models = Object.fromEntries(
 	[
-		//'player',
-		//'portal',
+		'player',
+		'portal',
 		'fatta',
 		'fattb',
 		'fattc',
 		'fattd',
-		//'maze',
-		//'wall',
+		'maze',
+		'wall',
 		'box_frame',
 	].map((model) => [model, new Model(`/models/${model}.vox`)])
 )

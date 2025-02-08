@@ -1,4 +1,7 @@
 node_modules
 griffony.tiled-session
 dist
+doc
+test
+
 
