@@ -6,6 +6,14 @@ let RENDER_MODE = 1
 
 // @ts-ignore
 import SHADER from './shaders/dda.wgsl?raw'
+// @ts-ignore
+import SHADER_RASTER from './shaders/raster.wgsl?raw'
+// @ts-ignore
+import VOXEL_COMPUTE from './shaders/voxel.compute.wgsl?raw'
+// @ts-ignore
+import VOXEL_VERT from './shaders/voxel.vert.wgsl?raw'
+// @ts-ignore
+import VOXEL_FRAG from './shaders/voxel.frag.wgsl?raw'
 
 class Entity
 {
@@ -14,21 +22,26 @@ class Entity
 	static nextId = 1
 
 	id = 0
-    /** @type {Entity} */ parent = null
-    /** @type {Entity[]} */ children = []
 
-	position = vec3.create()
-	rotation = quat.create()
-	scale = vec3.fromValues(1, 1, 1)
+	/** @type {Entity} */
+	parent = null
+
+	/** @type {Entity[]} */
+	children = []
+
 	dirty = true
-	transform = mat4.create()
+	localPosition = vec3.create()
+	localRotation = quat.create()
+	localScale = vec3.fromValues(1, 1, 1)
+	localToWorldTransform = mat4.create()
 
 	worldPosition = vec3.create()
 	worldRotation = quat.create()
 	worldScale = vec3.fromValues(1, 1, 1)
-	worldTransform = mat4.create()
+	worldToLocalTransform = mat4.create()
 
-    /** @type {Model} */ model = null
+	/** @type {Model} */
+	model = null
 	model_id = -1
 	frame = 0
 	frame_time = 0
@@ -38,8 +51,10 @@ class Entity
 	radius = 0
 	vel = vec3.create()
 	gravity = false
+	collision = false
+	spawn = false
 
-	constructor()
+	constructor() 
 	{
 		Entity.all.push(this)
 	}
@@ -48,29 +63,27 @@ class Entity
 	 * 
 	 * @param {mat4} parentTransform 
 	 */
-	updateTransform(parentTransform)
+	updateTransforms(parentTransform)
 	{
 		if (this.dirty)
 		{
-			mat4.fromRotationTranslationScale(this.transform, this.rotation, this.position, this.scale)
+			mat4.fromRotationTranslationScale(this.localToWorldTransform, this.localRotation, this.localPosition, this.localScale)
+
 			if (parentTransform)
 			{
-				mat4.multiply(this.worldTransform, parentTransform, this.transform)
-			} else
-			{
-				mat4.copy(this.worldTransform, this.transform)
+				mat4.multiply(this.localToWorldTransform, parentTransform, this.localToWorldTransform)
 			}
 
-			mat4.getTranslation(this.worldPosition, this.worldTransform)
-			mat4.getRotation(this.worldRotation, this.worldTransform)
-			mat4.getScaling(this.worldScale, this.worldTransform)
+			mat4.getTranslation(this.worldPosition, this.localToWorldTransform)
+			mat4.getRotation(this.worldRotation, this.localToWorldTransform)
+			mat4.getScaling(this.worldScale, this.localToWorldTransform)
 			this.dirty = false
 		}
 
 		for (const child of this.children)
 		{
 			child.dirty = true
-			child.updateTransform(this.worldTransform)
+			child.updateTransforms(this.localToWorldTransform)
 		}
 	}
 
@@ -88,24 +101,26 @@ class Entity
 			case 'PLAYER':
 				return null
 			case 'SPAWN':
-				entity = new Spawn()
+				entity = new Entity()
+				entity.spawn = true
+				entity.model = models['spawn']
 				break
 			default:
 				entity = new Entity()
 				break
 		}
 
-		entity.position = vec3.fromValues(data.x / 32, data.y / 32, 1)
+		entity.localPosition = vec3.fromValues(data.x / 32, data.y / 32, 1)
 
 		for (const property of data.properties ?? [])
 		{
 			switch (property.name)
 			{
 				case 'rotation':
-					quat.fromEuler(entity.rotation, 0, 0, property.value)
+					quat.fromEuler(entity.localRotation, 0, 0, property.value)
 					break
 				case 'scale':
-					entity.scale = vec3.fromValues(property.value, property.value, property.value)
+					entity.localScale = vec3.fromValues(property.value, property.value, property.value)
 					entity.radius = property.value
 					break
 				case 'model_id':
@@ -124,23 +139,23 @@ class Entity
 	onGround(terrain)
 	{
 		const r = .85 * this.radius
-		if (terrain.getVoxel(this.position[0], this.position[1], this.position[2] - Number.EPSILON))
+		if (terrain.getVoxel(this.worldPosition[0], this.worldPosition[1], this.worldPosition[2] - Number.EPSILON))
 		{
 			return true
 		}
-		if (terrain.getVoxel(this.position[0] + r, this.position[1], this.position[2] - Number.EPSILON))
+		if (terrain.getVoxel(this.worldPosition[0] + r, this.worldPosition[1], this.worldPosition[2] - Number.EPSILON))
 		{
 			return true
 		}
-		if (terrain.getVoxel(this.position[0] - r, this.position[1], this.position[2] - Number.EPSILON))
+		if (terrain.getVoxel(this.worldPosition[0] - r, this.worldPosition[1], this.worldPosition[2] - Number.EPSILON))
 		{
 			return true
 		}
-		if (terrain.getVoxel(this.position[0], this.position[1] + r, this.position[2] - Number.EPSILON))
+		if (terrain.getVoxel(this.worldPosition[0], this.worldPosition[1] + r, this.worldPosition[2] - Number.EPSILON))
 		{
 			return true
 		}
-		if (terrain.getVoxel(this.position[0], this.position[1] - r, this.position[2] - Number.EPSILON))
+		if (terrain.getVoxel(this.worldPosition[0], this.worldPosition[1] - r, this.worldPosition[2] - Number.EPSILON))
 		{
 			return true
 		}
@@ -153,8 +168,13 @@ class Entity
 	update(elapsed) { }
 }
 
-class Camera extends Entity
+class Camera
 {
+	static main = new Camera()
+
+	/** @type {Entity} */
+	entity = null
+
 	fov = Math.PI / 3
 	aspect = 1
 	near = .1
@@ -162,27 +182,13 @@ class Camera extends Entity
 	projection = mat4.create()
 	view = mat4.create()
 
-	updateWorld()
-	{
-		mat4.fromRotationTranslation(this.worldTransform, this.rotation, this.position)
-	}
-
-	updateView()
-	{
-		mat4.invert(this.view, this.worldTransform)
-	}
-
-	updateProjection()
+	update()
 	{
 		this.aspect = renderer.viewport[0] / renderer.viewport[1]
 		mat4.perspective(this.projection, Math.PI / 3, this.aspect, .1, 1000)
 		mat4.rotateX(this.projection, this.projection, -Math.PI / 2)
-	}
+		mat4.invert(this.view, this.entity.localToWorldTransform)
 
-	update()
-	{
-		mat4.invert(this.view, this.worldTransform)
-		this.updateProjection()
 	}
 }
 
@@ -200,37 +206,30 @@ class Player extends Entity
 		this.id = id
 		this.head.id = Entity.nextId++
 		this.head.parent = this
-		this.head.position = vec3.fromValues(0, 0, .8 * this.height)
+		this.head.localPosition = vec3.fromValues(0, 0, .8 * this.height)
 		this.children.push(this.head)
 	}
 
 	respawn()
 	{
-		vec3.zero(this.position)
+		vec3.zero(this.localPosition)
 		vec3.zero(this.vel)
-		quat.identity(this.rotation)
-		quat.identity(this.head.rotation)
+		quat.identity(this.localRotation)
+		quat.identity(this.head.localRotation)
+		this.dirty = true
 
 		for (const e of Entity.all)
 		{
-			if (e instanceof Spawn)
+			if (e.spawn)
 			{
-				vec3.copy(this.position, e.position)
-				quat.copy(this.rotation, e.rotation)
-				this.dirty = true
+				vec3.copy(this.localPosition, e.worldPosition)
+				quat.copy(this.localRotation, e.worldRotation)
 				break
 			}
 		}
 	}
 }
 
-class Spawn extends Entity
-{
-	gravity = true
-	height = 0
-	radius = 0
-	model = models['spawn']
-}
 
 class Model
 {
@@ -472,8 +471,8 @@ class Level
 					for (let i = 0; i < 1; i++)
 					{
 						const entity = Entity.deserialize(object)
-						entity.position[1] = this.sizeY - entity.position[1]
-						entity.position[0] += .5 + 2 * i
+						entity.localPosition[1] = this.sizeY - entity.localPosition[1]
+						entity.localPosition[0] += .5 + 2 * i
 					}
 				}
 			}
@@ -496,28 +495,13 @@ class Renderer
     /** @type {GPUBuffer} */ frameUniforms = null;
 	/** @type {GPUBuffer} */ objectUniforms = null;
 	/** @type {number} */ objectUniformsOffset = 0;
-	/** @type {GPUTexture} */ paletteTexture = null;
+    /** @type {GPUTexture} */ paletteTexture = null;
+    /** @type {ArrayBuffer} */ transferBuffer = null;
+    /** @type {Float32Array} */ floatView = null;
+    /** @type {Uint32Array} */ uintView = null;
+
 	/** @type {number} */ nextPaletteIndex = 0;
 	/** @type {GPUSampler} */ tileSampler = null;
-
-	/**
-	 * @param {string} code
-	 * @returns {Promise<GPUShaderModule>}
-	 */
-	async compileShader(code)
-	{
-		const module = this.device.createShaderModule({
-			code: code,
-		})
-
-		const info = await module.getCompilationInfo()
-		for (const message of info.messages)
-		{
-			console.log(message)
-		}
-
-		return module
-	}
 
 	async init()
 	{
@@ -544,18 +528,33 @@ class Renderer
 			format: navigator.gpu.getPreferredCanvasFormat(),
 			alphaMode: 'premultiplied',
 		})
+
+		// Handle window resizing
 		window.addEventListener('resize', () =>
 		{
+			// Update canvas size
 			canvas.width = window.innerWidth
 			canvas.height = window.innerHeight
 			this.viewport = [canvas.width, canvas.height]
+
+			// Recreate depth texture for new size
 			this.createDepthTexture()
+
+			// Reconfigure context
 			this.context.configure({
 				device: this.device,
 				format: navigator.gpu.getPreferredCanvasFormat(),
 				alphaMode: 'premultiplied',
 			})
+
+			// Update camera aspect ratio
+			if (camera)
+			{
+				camera.aspect = this.viewport[0] / this.viewport[1]
+				mat4.perspective(camera.projection, camera.fov, camera.aspect, camera.near, camera.far)
+			}
 		})
+
 		this.createDepthTexture()
 		this.frameUniforms = this.device.createBuffer({
 			size: 256,
@@ -730,6 +729,26 @@ class Renderer
 		this.modelPipeline = this.device.createRenderPipeline(modelPipelineDescriptor)
 	}
 
+	/**
+	 * @param {string} code
+	 * @returns {Promise<GPUShaderModule>}
+	 */
+	async compileShader(code)
+	{
+		const module = this.device.createShaderModule({
+			code: code,
+		})
+
+		const info = await module.getCompilationInfo()
+		for (const message of info.messages)
+		{
+			console.log(message)
+		}
+
+		return module
+	}
+
+
 	generateAccelerationData(voxels, sizeX, sizeY, sizeZ)
 	{
 		const regionSizeX = sizeX + 3 >> 2
@@ -816,7 +835,7 @@ class Renderer
 		const columnMap = new Uint32Array(numColumns)
 		const columnData = []
 		let currentOffset = 0
-
+		let totalVisible = 0
 		for (let y = 0; y < height; y++)
 		{
 			for (let x = 0; x < width; x++)
@@ -848,11 +867,12 @@ class Renderer
 					// Store interval
 					columnData.push(start & 0xFF)        // start z
 					columnData.push((z - start) & 0xFF)  // length
+					totalVisible += z - start
 					currentOffset += 2
 				}
 			}
 		}
-		console.log('Encoded', columnData.length + numColumns * 4, 'bytes for', numColumns, 'columns', (columnData.length + numColumns * 4) / numColumns, 'bytes per column')
+		console.log('Encoded', columnData.length + numColumns * 4, 'bytes for', numColumns, 'columns', (columnData.length + numColumns * 4) / numColumns, 'bytes per column', totalVisible, 'visible voxels')
 		return {
 			columnMap,
 			columnData: new Uint8Array(columnData)
@@ -1028,7 +1048,7 @@ class Renderer
 
 		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
 		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
-		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.worldPosition))
+		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.entity.worldPosition))
 		this.device.queue.writeBuffer(this.frameUniforms, 144, new Float32Array(this.viewport))
 
 		this.objectUniformsOffset = 0
@@ -1044,7 +1064,7 @@ class Renderer
 			if (e.model && e !== player)
 			{
 				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
-				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.rotation, e.position, vec3.scale(vec3.create(), e.scale, 1 / 32))
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, vec3.scale(vec3.create(), e.localScale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
 				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
@@ -1113,7 +1133,7 @@ class Renderer
 	{
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(mat4.create()))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(mvpMatrix))
-		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.worldPosition))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.entity.worldPosition))
 
 		if (!level.bindGroup)
 		{
@@ -1242,6 +1262,782 @@ class Renderer
 	}
 }
 
+class Renderer2
+{
+    /** @type {GPUDevice} */ device = null;
+    /** @type {GPUCanvasContext} */ context = null;
+    /** @type {number[]} */ viewport = [0, 0];
+	/** @type {GPUBindGroupLayout} */ bindGroupLayout = null;
+	/** @type {GPUBindGroup} */ bindGroup = null;
+    /** @type {GPURenderPipeline} */ terrainPipeline = null;
+    /** @type {GPURenderPipeline} */ modelPipeline = null;
+    /** @type {GPUTexture} */ depthTexture = null;
+    /** @type {GPUBuffer} */ frameUniforms = null;
+	/** @type {GPUBuffer} */ objectUniforms = null;
+	/** @type {number} */ objectUniformsOffset = 0;
+	/** @type {GPUTexture} */ paletteTexture = null;
+	/** @type {number} */ nextPaletteIndex = 0;
+	/** @type {GPUSampler} */ tileSampler = null;
+
+	/**
+	 * @param {string} code
+	 * @returns {Promise<GPUShaderModule>}
+	 */
+	async compileShader(code)
+	{
+		const module = this.device.createShaderModule({
+			code: code,
+		})
+
+		const info = await module.getCompilationInfo()
+		for (const message of info.messages)
+		{
+			console.log(message)
+		}
+
+		return module
+	}
+
+	createDepthTexture()
+	{
+		if (this.depthTexture)
+		{
+			this.depthTexture.destroy()
+		}
+
+		this.depthTexture = this.device.createTexture({
+			size: [this.viewport[0], this.viewport[1], 1],
+			format: 'depth24plus',
+			usage: GPUTextureUsage.RENDER_ATTACHMENT,
+		})
+	}
+
+	async init()
+	{
+		if (!navigator.gpu)
+		{
+			throw new Error('WebGPU not supported')
+		}
+		const adapter = await navigator.gpu.requestAdapter()
+		if (!adapter)
+		{
+			throw new Error('No GPU adapter found')
+		}
+		this.device = await adapter.requestDevice({
+			requiredFeatures: ['timestamp-query']
+		})
+		const canvas = document.createElement('canvas')
+		canvas.width = window.innerWidth
+		canvas.height = window.innerHeight
+		document.body.appendChild(canvas)
+		this.viewport = [canvas.width, canvas.height]
+		this.context = canvas.getContext('webgpu')
+		this.context.configure({
+			device: this.device,
+			format: navigator.gpu.getPreferredCanvasFormat(),
+			alphaMode: 'premultiplied',
+		})
+		window.addEventListener('resize', () =>
+		{
+			canvas.width = window.innerWidth
+			canvas.height = window.innerHeight
+			this.viewport = [canvas.width, canvas.height]
+			this.createDepthTexture()
+			this.context.configure({
+				device: this.device,
+				format: navigator.gpu.getPreferredCanvasFormat(),
+				alphaMode: 'premultiplied',
+			})
+		})
+		this.createDepthTexture()
+		this.frameUniforms = this.device.createBuffer({
+			size: 256,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+		})
+		this.objectUniforms = this.device.createBuffer({
+			size: (256) * 100000,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+		})
+		this.transferBuffer = new ArrayBuffer(256 * 100000)
+		this.paletteTexture = this.device.createTexture({
+			format: 'rgba8unorm',
+			size: [256, 256, 1],
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+		})
+		this.tileSampler = this.device.createSampler({
+			magFilter: 'nearest',
+			minFilter: 'nearest',
+			addressModeU: 'repeat',
+			addressModeV: 'repeat',
+			addressModeW: 'repeat',
+		})
+
+		this.frameTimes = []
+		this.lastTimePrint = performance.now()
+		this.querySet = this.device.createQuerySet({
+			type: "timestamp",
+			count: 2,
+		})
+		this.queryResolve = this.device.createBuffer({
+			size: 16, // 2 * 8-byte timestamps
+			usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+		})
+		this.queryResult = this.device.createBuffer({
+			size: 16,
+			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		})
+
+		const shader = await this.compileShader(SHADER_RASTER)
+
+		/** @type {GPUBindGroupLayoutDescriptor} */const bindGroupDescriptor = {
+			label: 'common',
+			entries: [
+				// frame uniforms
+				{
+					binding: 0,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					buffer: {
+						type: 'uniform',
+					}
+				},
+				// object uniforms
+				{
+					binding: 1,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					buffer: {
+						type: 'uniform',
+						hasDynamicOffset: true,
+					}
+				},
+				// voxels
+				{
+					binding: 2,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'uint',
+						viewDimension: '3d',
+					}
+				},
+				// palette
+				{
+					binding: 3,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'float',
+						viewDimension: '2d',
+					}
+				},
+				// tiles
+				{
+					binding: 4,
+					visibility: GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'float',
+						viewDimension: '2d-array',
+					}
+				},
+				// tile sampler
+				{
+					binding: 5,
+					visibility: GPUShaderStage.FRAGMENT,
+					sampler: {
+						type: 'non-filtering',
+					}
+				},
+			]
+		}
+
+		this.bindGroupLayout = this.device.createBindGroupLayout(bindGroupDescriptor)
+
+		/** @type {GPURenderPipelineDescriptor} */const terrainPipelineDescriptor = {
+			layout: this.device.createPipelineLayout({
+				bindGroupLayouts: [this.bindGroupLayout]
+			}),
+			vertex: {
+				module: shader,
+				entryPoint: 'vs_main',
+				buffers: [
+					{
+						arrayStride: 4,
+						stepMode: 'instance',
+						attributes: [
+							{
+								shaderLocation: 0,
+								offset: 0,
+								format: 'uint8x4'
+							}
+						]
+					}
+				]
+			},
+			fragment: {
+				module: shader,
+				entryPoint: 'fs_textured',
+				targets: [
+					{
+						format: navigator.gpu.getPreferredCanvasFormat(),
+					}
+				],
+			},
+			primitive: {
+				topology: 'triangle-list',
+				cullMode: 'back',
+			},
+			depthStencil: {
+				format: 'depth24plus',
+				depthWriteEnabled: true,
+				depthCompare: 'less',
+			},
+		}
+
+		this.terrainPipeline = this.device.createRenderPipeline(terrainPipelineDescriptor)
+
+		/** @type {GPURenderPipelineDescriptor} */const modelPipelineDescriptor = {
+			layout: this.device.createPipelineLayout({
+				bindGroupLayouts: [this.bindGroupLayout]
+			}),
+			vertex: {
+				module: shader,
+				entryPoint: 'vs_main',
+				buffers: [
+					{
+						arrayStride: 4,
+						stepMode: 'instance',
+						attributes: [
+							{
+								shaderLocation: 0,
+								offset: 0,
+								format: 'uint8x4'
+							}
+						]
+					}
+				]
+			},
+			fragment: {
+				module: shader,
+				entryPoint: 'fs_model',
+				targets: [
+					{
+						format: navigator.gpu.getPreferredCanvasFormat(),
+					}
+				],
+			},
+			primitive: {
+				topology: 'triangle-list',
+				cullMode: 'back',
+			},
+			depthStencil: {
+				format: 'depth24plus',
+				depthWriteEnabled: true,
+				depthCompare: 'less',
+			},
+		}
+
+
+		this.modelPipeline = this.device.createRenderPipeline(modelPipelineDescriptor)
+	}
+
+
+	/**
+	 * @param {Uint8Array} voxels
+	 * @param {number} sizeX
+	 * @param {number} sizeY
+	 * @param {number} sizeZ
+	 * @param {number} empty
+	 * @returns {Uint8Array}
+	 * */
+	generateVisible(voxels, sizeX, sizeY, sizeZ, empty)
+	{
+		const visible = new Uint8Array(sizeX * sizeY * sizeZ * 3)
+		let index = 0
+
+		for (let x = 0; x < sizeX; x++)
+		{
+			for (let y = 0; y < sizeY; y++)
+			{
+				for (let z = 0; z < sizeZ; z++)
+				{
+					const idx = z * sizeY * sizeX + y * sizeX + x
+
+					if (voxels[idx] === empty) continue
+
+					// Check -X face
+					if (x === 0 || voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +X face
+					if (x === sizeX - 1 || voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check -Y face
+					if (y === 0 || voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +Y face
+					if (y === sizeY - 1 || voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check -Z face
+					if (z === 0 || voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +Z face
+					if (z === sizeZ - 1 || voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === empty)
+					{
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+				}
+			}
+		}
+		return visible.subarray(0, index)
+	}
+
+	generateFaces(voxels, sizeX, sizeY, sizeZ, empty)
+	{
+		const maxFaces = 4 * (
+			sizeX * sizeY * sizeZ
+		)
+
+		const faces = new Uint8Array(maxFaces * 6)
+		let faceCount = 0
+
+		for (let x = 0; x < sizeX; x++)
+		{
+			for (let y = 0; y < sizeY; y++)
+			{
+				for (let z = 0; z < sizeZ; z++)
+				{
+					const idx = z * sizeY * sizeX + y * sizeX + x
+
+					if (voxels[idx] === empty) continue
+
+					// Check -X face
+					if (x === 0 || voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === empty)
+					{
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 0
+						faceCount++
+					}
+					// Check +X face
+					if (x === sizeX - 1 || voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === empty)
+					{
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 1
+						faceCount++
+					}
+					// Check -Y face
+					if (y === 0 || voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === empty)
+					{
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 2
+						faceCount++
+					}
+					// Check +Y face
+					if (y === sizeY - 1 || voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === empty)
+					{
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 3
+						faceCount++
+					}
+					// Check -Z face
+					if (z === 0 || voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === empty)
+					{
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 4
+						faceCount++
+					}
+					// Check +Z face
+					if (z === sizeZ - 1 || voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === empty)
+					{
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 5
+						faceCount++
+					}
+				}
+			}
+		}
+
+		return faces.subarray(0, faceCount * 4)
+	}
+
+
+
+	/**
+	 * @param {Model} model
+	 * @returns {void}
+	 */
+	registerModel(model)
+	{
+		const texture = this.device.createTexture({
+			size: [model.sizeX, model.sizeY, model.sizeZ],
+			dimension: '3d',
+			format: 'r8uint',
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+			mipLevelCount: 2,
+		})
+		this.device.queue.writeTexture(
+			{ texture },
+			model.voxels,
+			{
+				bytesPerRow: model.sizeX,
+				rowsPerImage: model.sizeY
+			},
+			[model.sizeX, model.sizeY, model.sizeZ]
+		)
+		model.texture = texture
+
+		this.device.queue.writeTexture(
+			{
+				texture: this.paletteTexture,
+				aspect: 'all',
+				origin: [0, this.nextPaletteIndex, 0],
+				mipLevel: 0,
+			},
+			model.palette, {
+			bytesPerRow: 256 * 4,
+		}, [255, 1, 1]
+		)
+		model.paletteIndex = this.nextPaletteIndex++
+
+		const faces = this.generateFaces(model.voxels, model.sizeX, model.sizeY, model.sizeZ, 255)
+		const rasterBuffer = this.device.createBuffer({
+			size: faces.byteLength,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+		})
+		this.device.queue.writeBuffer(rasterBuffer, 0, faces)
+		model.rasterBuffer = rasterBuffer
+	}
+
+
+	/**
+	 * @param {Tileset} tileset
+	 */
+	registerTileset(tileset)
+	{
+		const width = tileset.tileWidth
+		const height = tileset.tileHeight
+		const count = tileset.numTiles
+
+		const texture = this.device.createTexture({
+			size: [width, height, count],
+			format: 'rgba8unorm',
+			dimension: '2d',
+			usage: GPUTextureUsage.TEXTURE_BINDING |
+				GPUTextureUsage.COPY_DST |
+				GPUTextureUsage.RENDER_ATTACHMENT
+		})
+
+		this.device.queue.writeTexture(
+			{ texture },
+			tileset.imageData.data,
+			{
+				bytesPerRow: width * 4,
+				rowsPerImage: height
+			},
+			[width, height, count]
+		)
+		tileset.texture = texture
+	}
+
+	/**
+	 * 
+	 * @param {Level} level 
+	 */
+	registerLevel(level)
+	{
+		const texture = this.device.createTexture({
+			size: [level.sizeX, level.sizeY, level.sizeZ],
+			dimension: '3d',
+			format: 'r16uint',
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+		})
+		this.device.queue.writeTexture(
+			{ texture },
+			new Uint8Array(level.voxels.buffer),
+			{
+				bytesPerRow: level.sizeX * 2,
+				rowsPerImage: level.sizeY
+			},
+			[level.sizeX, level.sizeY, level.sizeZ]
+		)
+		level.texture = texture
+
+		const faces = this.generateFaces(level.voxels, level.sizeX, level.sizeY, level.sizeZ, 0)
+		const rasterBuffer = this.device.createBuffer({
+			size: faces.byteLength,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+		})
+		this.device.queue.writeBuffer(rasterBuffer, 0, faces)
+		level.rasterBuffer = rasterBuffer
+	}
+
+	async draw()
+	{
+		const commandEncoder = this.device.createCommandEncoder()
+		const renderPass = commandEncoder.beginRenderPass({
+			colorAttachments: [{
+				view: this.context.getCurrentTexture().createView(),
+				clearValue: { r: 0, g: 0, b: 0, a: 1 },
+				loadOp: 'clear',
+				storeOp: 'store',
+			}],
+			depthStencilAttachment: {
+				view: this.depthTexture.createView(),
+				depthClearValue: 1.0,
+				depthLoadOp: 'clear',
+				depthStoreOp: 'store',
+			},
+			timestampWrites: {
+				querySet: this.querySet,
+				beginningOfPassWriteIndex: 0,
+				endOfPassWriteIndex: 1,
+			}
+		})
+
+		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
+		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
+		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.entity.worldPosition))
+		this.device.queue.writeBuffer(this.frameUniforms, 144, new Float32Array(this.viewport))
+
+		this.objectUniformsOffset = 0
+
+		const viewProjectionMatrix = mat4.create()
+		mat4.multiply(viewProjectionMatrix, camera.projection, camera.view)
+		this.drawLevel(level, viewProjectionMatrix, renderPass)
+
+
+		renderPass.setPipeline(this.modelPipeline)
+		for (const e of Entity.all)
+		{
+			if (e.model && e !== player)
+			{
+				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, vec3.scale(vec3.create(), e.localScale, 1 / 32))
+				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
+				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
+				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
+			}
+			e.animationFrame++
+			if (e.animationFrame > 16)
+			{
+				if (e.model == models['fatta'])
+				{
+					e.model = models['fatta']
+				} else if (e.model == models['fattb'])
+				{
+					e.model = models['fattc']
+				} else if (e.model == models['fattc'])
+				{
+					e.model = models['fattd']
+				} else if (e.model == models['fattd'])
+				{
+					e.model = models['fatta']
+				}
+				e.animationFrame = 0
+			}
+		}
+
+		this.device.queue.writeBuffer(this.objectUniforms, 0, this.transferBuffer, 0, this.objectUniformsOffset)
+
+		renderPass.end()
+		commandEncoder.resolveQuerySet(this.querySet, 0, 2, this.queryResolve, 0)
+		if (this.queryResult.mapState === 'unmapped')
+		{
+			commandEncoder.copyBufferToBuffer(this.queryResolve, 0, this.queryResult, 0, this.queryResult.size)
+		}
+
+		this.device.queue.submit([commandEncoder.finish()])
+
+		if (this.queryResult.mapState === 'unmapped')
+		{
+			await this.queryResult.mapAsync(GPUMapMode.READ)
+			const queryData = new BigUint64Array(this.queryResult.getMappedRange())
+			const delta = queryData[1] - queryData[0]
+			this.queryResult.unmap()
+			const frameTimeMs = Number(delta) / 1e6
+			this.frameTimes.push(frameTimeMs)
+			const now = performance.now()
+			if (now - this.lastTimePrint >= 1000)
+			{
+				const sum = this.frameTimes.reduce((a, b) => a + b, 0)
+				const avgFrameTime = sum / this.frameTimes.length
+				console.log(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`)
+				this.frameTimes.length = 0
+				this.lastTimePrint = now
+			}
+		}
+	}
+
+	/**
+	* @param {Level} level
+	* @param {mat4} modelViewProjectionMatrix
+	* @param {GPURenderPassEncoder} renderPass
+	* @returns {void}
+	*/
+	drawLevel(level, modelViewProjectionMatrix, renderPass)
+	{
+		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
+		floatView.set(modelViewProjectionMatrix, 0)
+		floatView.set(modelViewProjectionMatrix, 16)
+
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(mat4.create()))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.entity.worldPosition))
+
+		if (!level.bindGroup)
+		{
+			level.bindGroup = this.device.createBindGroup({
+				layout: this.bindGroupLayout,
+				entries: [
+					{
+						binding: 0,
+						resource: {
+							buffer: this.frameUniforms,
+							size: 256,
+						},
+					},
+					{
+						binding: 1,
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
+					},
+					{
+						binding: 2,
+						resource: level.texture.createView()
+					},
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
+				],
+			})
+		}
+
+		renderPass.setPipeline(this.terrainPipeline)
+		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
+		renderPass.setVertexBuffer(0, level.rasterBuffer)
+		renderPass.draw(6, level.rasterBuffer.size / 4, 0, 0)
+
+		this.objectUniformsOffset += 256
+	}
+
+	/**
+	 * 
+	 * @param {Model} model 
+	 * @param {mat4} modelViewProjectionMatrix 
+	 * @param {mat4} modelMatrix 
+	 * @param {GPURenderPassEncoder} renderPass
+	 */
+	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass)
+	{
+		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
+		let uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset)
+
+		floatView.set(modelMatrix, 0)
+		floatView.set(modelViewProjectionMatrix, 16)
+
+		uintView[35] = model.paletteIndex
+
+		if (!model.bindGroup)
+		{
+			model.bindGroup = this.device.createBindGroup({
+				layout: this.bindGroupLayout,
+				entries: [
+					{
+						binding: 0,
+						resource: {
+							buffer: this.frameUniforms,
+							size: 256,
+						},
+					},
+					{
+						binding: 1,
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
+					},
+					{
+						binding: 2,
+						resource: model.texture.createView()
+					},
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
+				],
+			})
+		}
+
+		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
+		renderPass.setVertexBuffer(0, model.rasterBuffer)
+		renderPass.draw(6, model.rasterBuffer.size / 4, 0, 0)
+		this.objectUniformsOffset += 256
+	}
+}
+
 const MessageType = {
 	PLAYER_JOIN: 0,
 	PLAYER_LEAVE: 1,
@@ -1326,13 +2122,13 @@ class Net
 					{
 						if (e.id === data.id)
 						{
-							e.position[0] = data.pos[0]
-							e.position[1] = data.pos[1]
-							e.position[2] = data.pos[2]
-							e.rotation[0] = data.ori[0]
-							e.rotation[1] = data.ori[1]
-							e.rotation[2] = data.ori[2]
-							e.rotation[3] = data.ori[3]
+							e.localPosition[0] = data.pos[0]
+							e.localPosition[1] = data.pos[1]
+							e.localPosition[2] = data.pos[2]
+							e.localRotation[0] = data.ori[0]
+							e.localRotation[1] = data.ori[1]
+							e.localRotation[2] = data.ori[2]
+							e.localRotation[3] = data.ori[3]
 						}
 					}
 					break
@@ -1357,8 +2153,8 @@ class Net
 					conn.send({
 						msg: MessageType.ENTITY_UPDATE,
 						id: e.id,
-						pos: [e.position[0], e.position[1], e.position[2]],
-						ori: [e.rotation[0], e.rotation[1], e.rotation[2], e.rotation[3]]
+						pos: [e.localPosition[0], e.localPosition[1], e.localPosition[2]],
+						ori: [e.localRotation[0], e.localRotation[1], e.localRotation[2], e.localRotation[3]]
 					})
 				}
 			}
@@ -1586,13 +2382,13 @@ function onKeydown(event)
 function processInput(elapsed)
 {
 	const right = vec3.fromValues(1, 0, 0)
-	vec3.transformQuat(right, right, player.rotation)
+	vec3.transformQuat(right, right, player.localRotation)
 
 	const forward = vec3.fromValues(0, 1, 0)
-	vec3.transformQuat(forward, forward, player.rotation)
+	vec3.transformQuat(forward, forward, player.localRotation)
 
 	const up = vec3.fromValues(0, 0, 1)
-	vec3.transformQuat(up, up, player.rotation)
+	vec3.transformQuat(up, up, player.localRotation)
 	const speed = 10
 
 
@@ -1646,19 +2442,19 @@ function processInput(elapsed)
 	const dx = mouseMoveX
 	const dy = settings.invertMouse ? -mouseMoveY : mouseMoveY
 
-	quat.rotateZ(player.rotation, player.rotation, -dx * elapsed / 1000)
-	quat.rotateX(player.head.rotation, player.head.rotation, dy * elapsed / 1000)
+	quat.rotateZ(player.localRotation, player.localRotation, -dx * elapsed / 1000)
+	quat.rotateX(player.head.localRotation, player.head.localRotation, dy * elapsed / 1000)
 
 
-	const angle = quat.getAxisAngle(vec3.create(), player.head.rotation)
+	const angle = quat.getAxisAngle(vec3.create(), player.head.localRotation)
 	if (angle > Math.PI / 2)
 	{
 		if (dy > 0)
 		{
-			quat.setAxisAngle(player.head.rotation, vec3.fromValues(1, 0, 0), Math.PI / 2)
+			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), Math.PI / 2)
 		} else
 		{
-			quat.setAxisAngle(player.head.rotation, vec3.fromValues(1, 0, 0), -Math.PI / 2)
+			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), -Math.PI / 2)
 		}
 	}
 
@@ -1675,14 +2471,14 @@ function loop()
 	lastTime = performance.now()
 
 	localStorage.setItem('gameState', JSON.stringify({
-		playerPos: Array.from(player.position),
-		playerOrientation: Array.from(player.rotation),
-		playerHeadRotation: Array.from(player.head.rotation),
+		playerPos: Array.from(player.localPosition),
+		playerOrientation: Array.from(player.localRotation),
+		playerHeadRotation: Array.from(player.head.localRotation),
 		showingMenu: showingMenu,
 		godMode: godMode
 	}))
 
-	timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.worldPosition[0].toFixed(2)}, ${camera.worldPosition[1].toFixed(2)}, ${camera.worldPosition[2].toFixed(2)}
+	timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity.worldPosition[0].toFixed(2)}, ${camera.entity.worldPosition[1].toFixed(2)}, ${camera.entity.worldPosition[2].toFixed(2)}
 		${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}`
 
 	processInput(elapsed)
@@ -1700,7 +2496,7 @@ function loop()
 
 
 		let speed = vec3.length(e.vel)
-		vec3.scaleAndAdd(e.position, e.position, e.vel, elapsed / 1000)
+		vec3.scaleAndAdd(e.localPosition, e.localPosition, e.vel, elapsed / 1000)
 		if (speed > 100)
 		{
 			speed = 100
@@ -1709,7 +2505,7 @@ function loop()
 		}
 		if (speed > 0)
 		{
-			vec3.scaleAndAdd(e.position, e.position, e.vel, elapsed / 1000)
+			vec3.scaleAndAdd(e.localPosition, e.localPosition, e.vel, elapsed / 1000)
 			e.dirty = true
 		}
 
@@ -1721,7 +2517,7 @@ function loop()
 				{
 					continue
 				}
-				if (ee instanceof Spawn)
+				if (ee.spawn)
 				{
 					continue
 				}
@@ -1730,7 +2526,7 @@ function loop()
 				{
 					continue
 				}
-				const s = vec3.sub(vec3.create(), ee.position, e.position)
+				const s = vec3.sub(vec3.create(), ee.localPosition, e.localPosition)
 				const d = vec3.length(s)
 
 				if (d < e.radius + ee.radius)
@@ -1738,45 +2534,45 @@ function loop()
 					const pushback = e.radius + ee.radius - d
 					const t = vec3.add(vec3.create(), s, e.vel)
 					vec3.normalize(t, t)
-					vec3.scaleAndAdd(e.position, e.position, t, -pushback)
+					vec3.scaleAndAdd(e.localPosition, e.localPosition, t, -pushback)
 					e.dirty = true
 					if (e.radius >= ee.radius)
 					{
-						vec3.scaleAndAdd(ee.position, e.vel, t, pushback)
+						vec3.scaleAndAdd(ee.localPosition, e.vel, t, pushback)
 						ee.dirty = true
 					}
 				}
 			}
 
-			if (level.getVoxel(e.position[0] + e.radius, e.position[1], e.position[2] + e.height / 2))
+			if (level.getVoxel(e.localPosition[0] + e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2))
 			{
-				e.position[0] = Math.floor(e.position[0] + e.radius) - e.radius
+				e.localPosition[0] = Math.floor(e.localPosition[0] + e.radius) - e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.position[0] - e.radius, e.position[1], e.position[2] + e.height / 2))
+			if (level.getVoxel(e.localPosition[0] - e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2))
 			{
-				e.position[0] = Math.ceil(e.position[0] - e.radius) + e.radius
+				e.localPosition[0] = Math.ceil(e.localPosition[0] - e.radius) + e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.position[0], e.position[1] + e.radius, e.position[2] + e.height / 2))
+			if (level.getVoxel(e.localPosition[0], e.localPosition[1] + e.radius, e.localPosition[2] + e.height / 2))
 			{
-				e.position[1] = Math.floor(e.position[1] + e.radius) - e.radius
+				e.localPosition[1] = Math.floor(e.localPosition[1] + e.radius) - e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.position[0], e.position[1] - e.radius, e.position[2] + e.height / 2))
+			if (level.getVoxel(e.localPosition[0], e.localPosition[1] - e.radius, e.localPosition[2] + e.height / 2))
 			{
-				e.position[1] = Math.ceil(e.position[1] - e.radius) + e.radius
+				e.localPosition[1] = Math.ceil(e.localPosition[1] - e.radius) + e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.position[0], e.position[1], e.position[2] + e.height))
+			if (level.getVoxel(e.localPosition[0], e.localPosition[1], e.localPosition[2] + e.height))
 			{
-				e.position[2] = Math.floor(e.position[2] + e.height) - e.height
+				e.localPosition[2] = Math.floor(e.localPosition[2] + e.height) - e.height
 				e.vel[2] = 0
 				e.dirty = true
 			}
-			if (level.getVoxel(e.position[0], e.position[1], e.position[2]))
+			if (level.getVoxel(e.localPosition[0], e.localPosition[1], e.localPosition[2]))
 			{
-				e.position[2] = Math.ceil(e.position[2])
+				e.localPosition[2] = Math.ceil(e.localPosition[2])
 				e.vel[2] = 0
 				e.dirty = true
 			}
@@ -1787,33 +2583,27 @@ function loop()
 	{
 		if (!e.parent) 
 		{
-			e.updateTransform(null)
+			e.updateTransforms(null)
 		}
 	}
 
-
 	camera.update()
-	for (let i = 0; i < 1; i++)
-	{
-		renderer.draw()
-	}
-
+	renderer.draw()
 	net.update()
 	requestAnimationFrame(loop)
 }
 
 async function main()
 {
-	camera.parent = player.head
-	player.head.children.push(camera)
+	camera.entity = player.head
 
 	let savedState = localStorage.getItem('gameState')
 	if (savedState)
 	{
 		const state = JSON.parse(savedState)
-		player.position = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
-		player.rotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
-		player.head.rotation = state.playerHeadRotation
+		player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
+		player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
+		player.head.localRotation = state.playerHeadRotation
 		godMode = state.godMode
 		showingMenu = state.showingMenu
 	}
@@ -1886,9 +2676,8 @@ const models = Object.fromEntries(
 let tileset = new Tileset('/tilesets/dcss_tiles.tsj')
 let level = new Level('/maps/test.tmj')
 let player = new Player()
-
-const renderer = new Renderer()
-const camera = new Camera()
+let renderer = new Renderer2()
 let net = new Net()
+let camera = new Camera()
 
-main()
+main()	

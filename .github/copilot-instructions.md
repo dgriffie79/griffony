@@ -1,0 +1,1 @@
+This is a javascript project. Do not suggest typescript code.
