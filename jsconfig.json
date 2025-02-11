@@ -17,6 +17,10 @@
 		"module": "ESNext",
 		"noUnusedLocals": true,
 		"allowArbitraryExtensions": true,
+		"types": [
+			"vite/client",
+			"@webgpu/types",
+		],
 	},
 	"include": [
 		"src/**/*.js",

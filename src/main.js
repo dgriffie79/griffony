@@ -1,26 +1,18 @@
 import { mat4, quat, vec3 } from 'gl-matrix'
 import { Peer } from 'peerjs'
 
-// 1 = accelerated marching
-let RENDER_MODE = 1
-
 // @ts-ignore
 import SHADER from './shaders/dda.wgsl?raw'
 // @ts-ignore
 import SHADER_RASTER from './shaders/raster.wgsl?raw'
 
 class Entity {
-	/** @type {Entity[]} */
-	static all = []
+	/** @type {Entity[]} */ static all = []
 	static nextId = 1
 
 	id = 0
-
-	/** @type {Entity} */
-	parent = null
-
-	/** @type {Entity[]} */
-	children = []
+	/** @type {Entity} */ parent = null
+	/** @type {Entity[]} */ children = []
 
 	dirty = true
 	localPosition = vec3.create()
@@ -33,8 +25,7 @@ class Entity {
 	worldScale = vec3.fromValues(1, 1, 1)
 	worldToLocalTransform = mat4.create()
 
-	/** @type {Model} */
-	model = null
+	/** @type {Model} */ model = null
 	model_id = -1
 	frame = 0
 	frame_time = 0
@@ -402,7 +393,9 @@ class Level {
 	}
 }
 
+
 class Renderer {
+	renderMode = 0
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
@@ -507,6 +500,7 @@ class Renderer {
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
 		})
 
+
 		const shader = await this.compileShader(SHADER)
 
 		/** @type {GPUBindGroupLayoutDescriptor} */const bindGroupDescriptor = {
@@ -566,7 +560,7 @@ class Renderer {
 				},
 			]
 		}
-		if (RENDER_MODE === 1) {
+		if (this.renderMode === 1) {
 			bindGroupDescriptor.entries = [...bindGroupDescriptor.entries, {
 				binding: 6,
 				visibility: GPUShaderStage.FRAGMENT,
@@ -729,7 +723,7 @@ class Renderer {
 		)
 		model.paletteIndex = this.nextPaletteIndex++
 
-		if (RENDER_MODE == 1) {
+		if (this.renderMode == 1) {
 			const acceleration = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ)
 			let regionSizeX = volume.sizeX + 3 >> 2
 			let regionSizeY = volume.sizeY + 3 >> 2
@@ -967,7 +961,7 @@ class Renderer {
 		renderPass.setPipeline(this.terrainPipeline)
 		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
 
-		switch (RENDER_MODE) {
+		switch (this.renderMode) {
 			case 0:
 				renderPass.draw(36, 1, 0, 0)
 				break
@@ -1031,7 +1025,7 @@ class Renderer {
 					}
 				],
 			}
-			if (RENDER_MODE === 1) {
+			if (this.renderMode === 1) {
 				descriptor.entries = [...descriptor.entries, {
 					binding: 6,
 					resource: model.accelerationTexture.createView()
@@ -1052,6 +1046,7 @@ class Renderer2 {
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
+	shaders = {}
 	/** @type {GPUBindGroupLayout} */ bindGroupLayout = null;
 	/** @type {GPUBindGroup} */ bindGroup = null;
     /** @type {GPURenderPipeline} */ terrainPipeline = null;
@@ -1079,6 +1074,18 @@ class Renderer2 {
 		}
 
 		return module
+	}
+
+	async loadShaders() {
+		const shaders = {}
+		const shaderModules = import.meta.glob('./shaders/*.wgsl', { as: 'raw' })
+
+		for (const path in shaderModules) {
+			const name = path.split('/').pop().replace('.wgsl', '').toUpperCase()
+			shaders[name] = await shaderModules[path]()
+		}
+
+		return shaders
 	}
 
 	createDepthTexture() {
@@ -1165,6 +1172,7 @@ class Renderer2 {
 		})
 
 		const shader = await this.compileShader(SHADER_RASTER)
+		console.log(await this.loadShaders())
 
 		/** @type {GPUBindGroupLayoutDescriptor} */const bindGroupDescriptor = {
 			label: 'common',
