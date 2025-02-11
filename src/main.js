@@ -8,15 +8,8 @@ let RENDER_MODE = 1
 import SHADER from './shaders/dda.wgsl?raw'
 // @ts-ignore
 import SHADER_RASTER from './shaders/raster.wgsl?raw'
-// @ts-ignore
-import VOXEL_COMPUTE from './shaders/voxel.compute.wgsl?raw'
-// @ts-ignore
-import VOXEL_VERT from './shaders/voxel.vert.wgsl?raw'
-// @ts-ignore
-import VOXEL_FRAG from './shaders/voxel.frag.wgsl?raw'
 
-class Entity
-{
+class Entity {
 	/** @type {Entity[]} */
 	static all = []
 	static nextId = 1
@@ -54,8 +47,7 @@ class Entity
 	collision = false
 	spawn = false
 
-	constructor() 
-	{
+	constructor() {
 		Entity.all.push(this)
 	}
 
@@ -63,14 +55,11 @@ class Entity
 	 * 
 	 * @param {mat4} parentTransform 
 	 */
-	updateTransforms(parentTransform)
-	{
-		if (this.dirty)
-		{
+	updateTransforms(parentTransform) {
+		if (this.dirty) {
 			mat4.fromRotationTranslationScale(this.localToWorldTransform, this.localRotation, this.localPosition, this.localScale)
 
-			if (parentTransform)
-			{
+			if (parentTransform) {
 				mat4.multiply(this.localToWorldTransform, parentTransform, this.localToWorldTransform)
 			}
 
@@ -80,8 +69,7 @@ class Entity
 			this.dirty = false
 		}
 
-		for (const child of this.children)
-		{
+		for (const child of this.children) {
 			child.dirty = true
 			child.updateTransforms(this.localToWorldTransform)
 		}
@@ -92,12 +80,10 @@ class Entity
 	 * @param {*} data
 	 * @returns {Entity}
 	 */
-	static deserialize(data)
-	{
+	static deserialize(data) {
 		let entity
 
-		switch (data.type.toUpperCase())
-		{
+		switch (data.type.toUpperCase()) {
 			case 'PLAYER':
 				return null
 			case 'SPAWN':
@@ -112,10 +98,8 @@ class Entity
 
 		entity.localPosition = vec3.fromValues(data.x / 32, data.y / 32, 1)
 
-		for (const property of data.properties ?? [])
-		{
-			switch (property.name)
-			{
+		for (const property of data.properties ?? []) {
+			switch (property.name) {
 				case 'rotation':
 					quat.fromEuler(entity.localRotation, 0, 0, property.value)
 					break
@@ -136,31 +120,19 @@ class Entity
 	 * @param {Level} terrain
 	 * @returns {boolean}
 	 */
-	onGround(terrain)
-	{
+	onGround(terrain) {
 		const r = .85 * this.radius
-		if (terrain.getVoxel(this.worldPosition[0], this.worldPosition[1], this.worldPosition[2] - Number.EPSILON))
-		{
-			return true
-		}
-		if (terrain.getVoxel(this.worldPosition[0] + r, this.worldPosition[1], this.worldPosition[2] - Number.EPSILON))
-		{
-			return true
-		}
-		if (terrain.getVoxel(this.worldPosition[0] - r, this.worldPosition[1], this.worldPosition[2] - Number.EPSILON))
-		{
-			return true
-		}
-		if (terrain.getVoxel(this.worldPosition[0], this.worldPosition[1] + r, this.worldPosition[2] - Number.EPSILON))
-		{
-			return true
-		}
-		if (terrain.getVoxel(this.worldPosition[0], this.worldPosition[1] - r, this.worldPosition[2] - Number.EPSILON))
-		{
-			return true
-		}
-		return false
+		let x = this.worldPosition[0]
+		let y = this.worldPosition[1]
+		let z = this.worldPosition[2] - Number.EPSILON
+
+		return terrain.volume.getVoxelFloor(x, y, z) ||
+			terrain.volume.getVoxelFloor(x + r, y, z) ||
+			terrain.volume.getVoxelFloor(x - r, y, z) ||
+			terrain.volume.getVoxelFloor(x, y + r, z) ||
+			terrain.volume.getVoxelFloor(x, y - r, z)
 	}
+
 
 	/** 
 	 * @param {number} elapsed 
@@ -168,8 +140,7 @@ class Entity
 	update(elapsed) { }
 }
 
-class Camera
-{
+class Camera {
 	static main = new Camera()
 
 	/** @type {Entity} */
@@ -182,8 +153,7 @@ class Camera
 	projection = mat4.create()
 	view = mat4.create()
 
-	update()
-	{
+	update() {
 		this.aspect = renderer.viewport[0] / renderer.viewport[1]
 		mat4.perspective(this.projection, Math.PI / 3, this.aspect, .1, 1000)
 		mat4.rotateX(this.projection, this.projection, -Math.PI / 2)
@@ -192,16 +162,14 @@ class Camera
 	}
 }
 
-class Player extends Entity
-{
+class Player extends Entity {
 	gravity = true
 	height = .5
 	radius = .25
 	model = models['player']
 	head = new Entity()
 
-	constructor(id = Entity.nextId++)
-	{
+	constructor(id = Entity.nextId++) {
 		super()
 		this.id = id
 		this.head.id = Entity.nextId++
@@ -210,18 +178,15 @@ class Player extends Entity
 		this.children.push(this.head)
 	}
 
-	respawn()
-	{
+	respawn() {
 		vec3.zero(this.localPosition)
 		vec3.zero(this.vel)
 		quat.identity(this.localRotation)
 		quat.identity(this.head.localRotation)
 		this.dirty = true
 
-		for (const e of Entity.all)
-		{
-			if (e.spawn)
-			{
+		for (const e of Entity.all) {
+			if (e.spawn) {
 				vec3.copy(this.localPosition, e.worldPosition)
 				quat.copy(this.localRotation, e.worldRotation)
 				break
@@ -231,71 +196,67 @@ class Player extends Entity
 }
 
 
-class Model
-{
+class Model {
 	static nextId = 0
-	/** @type {Model[]} */ static models = []
+
+	/** @type {Model[]} */
+	static models = []
 
 	url = ''
 	id = Model.nextId++
-	sizeX = 0
-	sizeY = 0
-	sizeZ = 0
-	voxels = null
+
+	/** @type {Volume} */
+	volume = null
+
 	faces = null
 	faceCount = 0
 	palette = null
 	paletteIndex = -1
 	texture = null
 	accelerationTexture = null
-	/** @type {GPUBuffer} */ rasterBuffer = null
+
+	/** @type {GPUBuffer} */
+	rasterBuffer = null
+
 	bindGroup = null
 
-	constructor(url = '')
-	{
+	constructor(url = '') {
 		this.url = url
 	}
 
-	async load()
-	{
+	async load() {
 		const response = await fetch(this.url)
-		if (!response.ok)
-		{
+		if (!response.ok) {
 			throw new Error(`HTTP error! status: ${response.status}`)
 		}
-		if (response.headers.get('Content-Type') === 'text/html')
-		{
+		if (response.headers.get('Content-Type') === 'text/html') {
 			throw new Error('Invalid model: ' + this.url)
 		}
 
 		const buffer = await response.arrayBuffer()
 		const dataView = new DataView(buffer)
 
-		this.sizeX = dataView.getInt32(0, true)
-		this.sizeY = dataView.getInt32(4, true)
-		this.sizeZ = dataView.getInt32(8, true)
+		let sizeX = dataView.getInt32(0, true)
+		let sizeY = dataView.getInt32(4, true)
+		let sizeZ = dataView.getInt32(8, true)
 
-		const numVoxels = this.sizeX * this.sizeY * this.sizeZ
+		this.volume = new Volume(sizeX, sizeY, sizeZ, 255)
+
+		const numVoxels = sizeX * sizeY * sizeZ
 		const sourceVoxels = new Uint8Array(dataView.buffer, 12, numVoxels)
-		this.voxels = new Uint8Array(numVoxels)
 
 		// Transform from [x][y][z] to [z][y][x]
-		for (let x = 0; x < this.sizeX; x++)
-		{
-			for (let y = 0; y < this.sizeY; y++)
-			{
-				for (let z = 0; z < this.sizeZ; z++)
-				{
-					const srcIdx = x * this.sizeY * this.sizeZ + y * this.sizeZ + z
-					const dstIdx = (this.sizeZ - z - 1) * this.sizeY * this.sizeX + (this.sizeY - y - 1) * this.sizeX + x
-					this.voxels[dstIdx] = sourceVoxels[srcIdx]
+		for (let x = 0; x < sizeX; x++) {
+			for (let y = 0; y < sizeY; y++) {
+				for (let z = 0; z < sizeZ; z++) {
+					const srcIdx = x * sizeY * sizeZ + y * sizeZ + z
+					this.volume.setVoxel(x, sizeY - y - 1, sizeZ - z - 1, sourceVoxels[srcIdx])
 				}
 			}
 		}
 
 		this.palette = new Uint8Array(256 * 4)
-		for (let i = 0; i < 256; i++)
-		{
+		for (let i = 0; i < 256; i++) {
 			this.palette[i * 4 + 0] = dataView.getUint8(12 + numVoxels + i * 3 + 0) << 2
 			this.palette[i * 4 + 1] = dataView.getUint8(12 + numVoxels + i * 3 + 1) << 2
 			this.palette[i * 4 + 2] = dataView.getUint8(12 + numVoxels + i * 3 + 2) << 2
@@ -306,8 +267,7 @@ class Model
 	}
 }
 
-class Tileset
-{
+class Tileset {
 	url = ''
 	tileWidth = 0
 	tileHeight = 0
@@ -315,8 +275,7 @@ class Tileset
 	imageData = null
 	texture = null
 
-	constructor(url = '')
-	{
+	constructor(url = '') {
 		this.url = url
 	}
 
@@ -324,10 +283,8 @@ class Tileset
 	 * @param {string} url
 	 * @returns {Promise<HTMLImageElement>}
 	 */
-	async #loadImage(url)
-	{
-		return new Promise((resolve, reject) =>
-		{
+	async #loadImage(url) {
+		return new Promise((resolve, reject) => {
 			const img = new Image()
 			img.src = url
 			img.onload = () => resolve(img)
@@ -335,20 +292,16 @@ class Tileset
 		})
 	}
 
-	async load()
-	{
+	async load() {
 		const response = await fetch(this.url)
-		if (!response.ok)
-		{
+		if (!response.ok) {
 			throw new Error(`HTTP error! status: ${response.status}`)
 		}
 		let data
-		try
-		{
+		try {
 			data = await response.json()
 		}
-		catch (e)
-		{
+		catch (e) {
 			console.error('Invalid tileset:', e)
 			throw e
 		}
@@ -364,23 +317,18 @@ class Tileset
 		canvas.height = tileHeight * numTiles
 		const ctx = canvas.getContext('2d')
 
-		if (!ctx)
-		{
+		if (!ctx) {
 			throw new Error('Failed to create 2d context')
 		}
-		if (data.image)
-		{
+		if (data.image) {
 			const img = await this.#loadImage(new URL(data.image, baseUrl).href)
 			ctx.drawImage(img, 0, 0)
-		} else if (data.tiles)
-		{
-			await Promise.all(data.tiles.map(async (tile) =>
-			{
+		} else if (data.tiles) {
+			await Promise.all(data.tiles.map(async (tile) => {
 				const img = await this.#loadImage(new URL(tile.image, baseUrl).href)
 				ctx.drawImage(img, 0, tileHeight * tile.id, tileWidth, tileHeight)
 			}))
-		} else
-		{
+		} else {
 			throw new Error('Invalid tileset')
 		}
 
@@ -392,86 +340,58 @@ class Tileset
 	}
 }
 
-class Level
-{
+class Level {
 	url = ''
-	sizeX = 0
-	sizeY = 0
-	sizeZ = 0
-	voxels = null
+	/** @type {Volume} */
+	volume = null
 	texture = null
 	buffer = null
 	bindGroup = null
 	/** @type {GPUBuffer} */ rasterBuffer = null
 
 
-	constructor(url = '')
-	{
+	constructor(url = '') {
 		this.url = url
 	}
 
-	getVoxel(x, y, z)
-	{
-		x = Math.floor(x)
-		y = Math.floor(y)
-		z = Math.floor(z)
-
-		if (x < 0 || y < 0 || z < 0 || x >= this.sizeX || y >= this.sizeY || z >= this.sizeZ)
-		{
-			return 0
-		}
-
-		return this.voxels[z * this.sizeY * this.sizeX + y * this.sizeX + x]
-	}
-
-	async load()
-	{
+	async load() {
 		const response = await fetch(this.url)
-		if (!response.ok)
-		{
+		if (!response.ok) {
 			throw new Error(`HTTP error! status: ${response.status}`)
 		}
 		let data
-		try
-		{
+		try {
 			data = await response.json()
 		}
-		catch
-		{
+		catch {
 			throw new Error('Invalid level')
 		}
 
-		this.sizeX = data.width
-		this.sizeY = data.height
-		this.sizeZ = 3
-		this.voxels = new Uint16Array(this.sizeX * this.sizeY * this.sizeZ)
+		let sizeX = data.width
+		let sizeY = data.height
+		let sizeZ = 3
 
-		for (const layer of data.layers)
-		{
-			if (layer.type === 'tilelayer')
-			{
+		this.volume = new Volume(sizeX, sizeY, sizeZ, { emptyValue: 0, arrayType: Uint16Array })
+
+
+		for (const layer of data.layers) {
+			if (layer.type === 'tilelayer') {
 				const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name)
-				if (layerIndex === -1)
-				{
+				if (layerIndex === -1) {
 					console.log(`Unknown tilelayer name: ${layer.name}`)
 					continue
 				}
-				for (let i = 0; i < layer.data.length; i++)
-				{
-					const x = i % this.sizeX
-					const y = this.sizeY - Math.floor(i / this.sizeX) - 1
+				for (let i = 0; i < layer.data.length; i++) {
+					const x = i % sizeX
+					const y = sizeY - Math.floor(i / sizeX) - 1
 					const z = layerIndex
-					const voxelIndex = z * this.sizeX * this.sizeY + y * this.sizeX + x
-					this.voxels[voxelIndex] = layer.data[i]
+					this.volume.setVoxel(x, y, z, layer.data[i])
 				}
-			} else if (layer.type === 'objectgroup')
-			{
-				for (const object of layer.objects)
-				{
-					for (let i = 0; i < 1; i++)
-					{
+			} else if (layer.type === 'objectgroup') {
+				for (const object of layer.objects) {
+					for (let i = 0; i < 1; i++) {
 						const entity = Entity.deserialize(object)
-						entity.localPosition[1] = this.sizeY - entity.localPosition[1]
+						entity.localPosition[1] = sizeY - entity.localPosition[1]
 						entity.localPosition[0] += .5 + 2 * i
 					}
 				}
@@ -482,8 +402,7 @@ class Level
 	}
 }
 
-class Renderer
-{
+class Renderer {
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
@@ -503,15 +422,12 @@ class Renderer
 	/** @type {number} */ nextPaletteIndex = 0;
 	/** @type {GPUSampler} */ tileSampler = null;
 
-	async init()
-	{
-		if (!navigator.gpu)
-		{
+	async init() {
+		if (!navigator.gpu) {
 			throw new Error('WebGPU not supported')
 		}
 		const adapter = await navigator.gpu.requestAdapter()
-		if (!adapter)
-		{
+		if (!adapter) {
 			throw new Error('No GPU adapter found')
 		}
 		this.device = await adapter.requestDevice({
@@ -530,8 +446,7 @@ class Renderer
 		})
 
 		// Handle window resizing
-		window.addEventListener('resize', () =>
-		{
+		window.addEventListener('resize', () => {
 			// Update canvas size
 			canvas.width = window.innerWidth
 			canvas.height = window.innerHeight
@@ -548,8 +463,7 @@ class Renderer
 			})
 
 			// Update camera aspect ratio
-			if (camera)
-			{
+			if (camera) {
 				camera.aspect = this.viewport[0] / this.viewport[1]
 				mat4.perspective(camera.projection, camera.fov, camera.aspect, camera.near, camera.far)
 			}
@@ -652,8 +566,7 @@ class Renderer
 				},
 			]
 		}
-		if (RENDER_MODE === 1)
-		{
+		if (RENDER_MODE === 1) {
 			bindGroupDescriptor.entries = [...bindGroupDescriptor.entries, {
 				binding: 6,
 				visibility: GPUShaderStage.FRAGMENT,
@@ -733,15 +646,13 @@ class Renderer
 	 * @param {string} code
 	 * @returns {Promise<GPUShaderModule>}
 	 */
-	async compileShader(code)
-	{
+	async compileShader(code) {
 		const module = this.device.createShaderModule({
 			code: code,
 		})
 
 		const info = await module.getCompilationInfo()
-		for (const message of info.messages)
-		{
+		for (const message of info.messages) {
 			console.log(message)
 		}
 
@@ -749,22 +660,17 @@ class Renderer
 	}
 
 
-	generateAccelerationData(voxels, sizeX, sizeY, sizeZ)
-	{
+	generateAccelerationData(voxels, sizeX, sizeY, sizeZ) {
 		const regionSizeX = sizeX + 3 >> 2
 		const regionSizeY = sizeY + 3 >> 2
 		const regionSizeZ = sizeZ + 1 >> 1
 		const data = new Uint32Array(regionSizeX * regionSizeY * regionSizeZ)
 
-		for (let z = 0; z < sizeZ; z++)
-		{
-			for (let y = 0; y < sizeY; y++)
-			{
-				for (let x = 0; x < sizeX; x++)
-				{
+		for (let z = 0; z < sizeZ; z++) {
+			for (let y = 0; y < sizeY; y++) {
+				for (let x = 0; x < sizeX; x++) {
 					const voxel = voxels[z * sizeY * sizeX + y * sizeX + x]
-					if (voxel !== 255)
-					{
+					if (voxel !== 255) {
 						const regionX = x >> 2
 						const regionY = y >> 2
 						const regionZ = z >> 1
@@ -782,113 +688,15 @@ class Renderer
 		return data
 	}
 
-
-	isSurface(voxels, x, y, z, width, height, depth, emptyValue = 255)
-	{
-		const idx = z * width * height + y * width + x
-		if (voxels[idx] === emptyValue)
-		{
-			return false
-		}
-		// Offsets for the 6 neighbors: +/- x, +/- y, +/- z
-		const neighbors = [
-			[x - 1, y, z], [x + 1, y, z],
-			[x, y - 1, z], [x, y + 1, z],
-			[x, y, z - 1], [x, y, z + 1],
-		]
-		// If any neighbor is out of bounds or empty => this voxel is surface
-		for (let i = 0; i < neighbors.length; i++)
-		{
-			const [nx, ny, nz] = neighbors[i]
-			if (nx < 0 || nx >= width || ny < 0 || ny >= height || nz < 0 || nz >= depth)
-			{
-				return true // out of bounds => surface
-			}
-			const nIdx = nz * width * height + ny * width + nx
-			if (voxels[nIdx] === emptyValue)
-			{
-				return true
-			}
-		}
-		return false // all neighbors are in-bounds & non-empty => interior
-	}
-
-	/**
-	 * Encodes each (x,y) column of voxels into up to 8 intervals.
-	 * Each interval stores 1 byte for the starting z value and 1 byte for run length.
-	 * Voxels with value `emptyValue` are considered empty.
-	 *
-    /** @type {GPUBuffer} */ columnMapBuffer = null;
-    /** @type {GPUBuffer} */ columnDataBuffer = null;
-
-	/**
-	 * Encodes voxel columns into interval data with pointer map
-	 * @param {Uint8Array} voxels
-	 * @param {number} width
-	 * @param {number} height
-	 * @param {number} depth
-	 * @returns {{columnMap: Uint32Array, columnData: Uint8Array}}
-	 */
-	encodeColumnIntervals(voxels, width, height, depth, emptyValue = 255)
-	{
-		const numColumns = width * height
-		const columnMap = new Uint32Array(numColumns)
-		const columnData = []
-		let currentOffset = 0
-		let totalVisible = 0
-		for (let y = 0; y < height; y++)
-		{
-			for (let x = 0; x < width; x++)
-			{
-				const colIndex = y * width + x
-				columnMap[colIndex] = currentOffset
-
-				let z = 0
-				while (z < depth)
-				{
-					// Skip non-surface voxels
-					while (z < depth && !this.isSurface(voxels, x, y, z, width, height, depth, emptyValue))
-					{
-						z++
-					}
-					if (z >= depth) break
-
-					// Found surface voxel, start interval
-					const start = z
-					const val = voxels[z * width * height + y * width + x]
-
-					while (z < depth &&
-						this.isSurface(voxels, x, y, z, width, height, depth) &&
-						voxels[z * width * height + y * width + x] === val)
-					{
-						z++
-					}
-
-					// Store interval
-					columnData.push(start & 0xFF)        // start z
-					columnData.push((z - start) & 0xFF)  // length
-					totalVisible += z - start
-					currentOffset += 2
-				}
-			}
-		}
-		console.log('Encoded', columnData.length + numColumns * 4, 'bytes for', numColumns, 'columns', (columnData.length + numColumns * 4) / numColumns, 'bytes per column', totalVisible, 'visible voxels')
-		return {
-			columnMap,
-			columnData: new Uint8Array(columnData)
-		}
-	}
-
-
-
 	/**
 	 * @param {Model} model
 	 * @returns {void}
 	 */
-	registerModel(model)
-	{
+	registerModel(model) {
+		let volume = model.volume
+
 		const texture = this.device.createTexture({
-			size: [model.sizeX, model.sizeY, model.sizeZ],
+			size: [volume.sizeX, volume.sizeY, volume.sizeZ],
 			dimension: '3d',
 			format: 'r8uint',
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
@@ -899,12 +707,12 @@ class Renderer
 				texture,
 				mipLevel: 0
 			},
-			model.voxels,
+			volume.voxels,
 			{
-				bytesPerRow: model.sizeX,
-				rowsPerImage: model.sizeY
+				bytesPerRow: volume.sizeX,
+				rowsPerImage: volume.sizeY
 			},
-			[model.sizeX, model.sizeY, model.sizeZ]
+			[volume.sizeX, volume.sizeY, volume.sizeZ]
 		)
 
 		model.texture = texture
@@ -921,12 +729,11 @@ class Renderer
 		)
 		model.paletteIndex = this.nextPaletteIndex++
 
-		if (RENDER_MODE == 1)
-		{
-			const acceleration = this.generateAccelerationData(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
-			let regionSizeX = model.sizeX + 3 >> 2
-			let regionSizeY = model.sizeY + 3 >> 2
-			let regionSizeZ = model.sizeZ + 1 >> 1
+		if (RENDER_MODE == 1) {
+			const acceleration = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ)
+			let regionSizeX = volume.sizeX + 3 >> 2
+			let regionSizeY = volume.sizeY + 3 >> 2
+			let regionSizeZ = volume.sizeZ + 1 >> 1
 			const accelerationTexture = this.device.createTexture({
 				size: [regionSizeX, regionSizeY, regionSizeZ],
 				dimension: '3d',
@@ -950,15 +757,14 @@ class Renderer
 			model.accelerationTexture = accelerationTexture
 		}
 
-		this.encodeColumnIntervals(model.voxels, model.sizeX, model.sizeY, model.sizeZ)
+		volume.generateColumns()
 	}
 
 
 	/**
 	 * @param {Tileset} tileset
 	 */
-	registerTileset(tileset)
-	{
+	registerTileset(tileset) {
 		const width = tileset.tileWidth
 		const height = tileset.tileHeight
 		const count = tileset.numTiles
@@ -988,31 +794,28 @@ class Renderer
 	 * 
 	 * @param {Level} level 
 	 */
-	registerLevel(level)
-	{
+	registerLevel(level) {
 		const texture = this.device.createTexture({
-			size: [level.sizeX, level.sizeY, level.sizeZ],
+			size: [level.volume.sizeX, level.volume.sizeY, level.volume.sizeZ],
 			dimension: '3d',
 			format: 'r16uint',
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
 		})
 		this.device.queue.writeTexture(
 			{ texture },
-			new Uint8Array(level.voxels.buffer),
+			new Uint8Array(level.volume.voxels),
 			{
-				bytesPerRow: level.sizeX * 2,
-				rowsPerImage: level.sizeY
+				bytesPerRow: level.volume.sizeX * 2,
+				rowsPerImage: level.volume.sizeY
 			},
-			[level.sizeX, level.sizeY, level.sizeZ]
+			[level.volume.sizeX, level.volume.sizeY, level.volume.sizeZ]
 		)
 
 		level.texture = texture
 	}
 
-	createDepthTexture()
-	{
-		if (this.depthTexture)
-		{
+	createDepthTexture() {
+		if (this.depthTexture) {
 			this.depthTexture.destroy()
 		}
 
@@ -1023,8 +826,7 @@ class Renderer
 		})
 	}
 
-	async draw()
-	{
+	async draw() {
 		const commandEncoder = this.device.createCommandEncoder()
 		const renderPass = commandEncoder.beginRenderPass({
 			colorAttachments: [{
@@ -1059,30 +861,23 @@ class Renderer
 
 
 		renderPass.setPipeline(this.modelPipeline)
-		for (const e of Entity.all)
-		{
-			if (e.model && e !== player)
-			{
-				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
+		for (const e of Entity.all) {
+			if (e.model && e !== player) {
+				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0])
 				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, vec3.scale(vec3.create(), e.localScale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
 				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
 			}
 			e.animationFrame++
-			if (e.animationFrame > 16)
-			{
-				if (e.model == models['fatta'])
-				{
+			if (e.animationFrame > 16) {
+				if (e.model == models['fatta']) {
 					e.model = models['fatta']
-				} else if (e.model == models['fattb'])
-				{
+				} else if (e.model == models['fattb']) {
 					e.model = models['fattc']
-				} else if (e.model == models['fattc'])
-				{
+				} else if (e.model == models['fattc']) {
 					e.model = models['fattd']
-				} else if (e.model == models['fattd'])
-				{
+				} else if (e.model == models['fattd']) {
 					e.model = models['fatta']
 				}
 				e.animationFrame = 0
@@ -1095,15 +890,13 @@ class Renderer
 
 		renderPass.end()
 		commandEncoder.resolveQuerySet(this.querySet, 0, 2, this.queryResolve, 0)
-		if (this.queryResult.mapState === 'unmapped')
-		{
+		if (this.queryResult.mapState === 'unmapped') {
 			commandEncoder.copyBufferToBuffer(this.queryResolve, 0, this.queryResult, 0, this.queryResult.size)
 		}
 
 		this.device.queue.submit([commandEncoder.finish()])
 
-		if (this.queryResult.mapState === 'unmapped')
-		{
+		if (this.queryResult.mapState === 'unmapped') {
 			await this.queryResult.mapAsync(GPUMapMode.READ)
 			const queryData = new BigUint64Array(this.queryResult.getMappedRange())
 			const delta = queryData[1] - queryData[0]
@@ -1111,8 +904,7 @@ class Renderer
 			const frameTimeMs = Number(delta) / 1e6
 			this.frameTimes.push(frameTimeMs)
 			const now = performance.now()
-			if (now - this.lastTimePrint >= 1000)
-			{
+			if (now - this.lastTimePrint >= 1000) {
 				const sum = this.frameTimes.reduce((a, b) => a + b, 0)
 				const avgFrameTime = sum / this.frameTimes.length
 				console.log(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`)
@@ -1129,14 +921,12 @@ class Renderer
 	* @param {GPURenderPassEncoder} renderPass
 	* @returns {void}
 	*/
-	drawLevel(level, mvpMatrix, renderPass)
-	{
+	drawLevel(level, mvpMatrix, renderPass) {
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(mat4.create()))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(mvpMatrix))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.entity.worldPosition))
 
-		if (!level.bindGroup)
-		{
+		if (!level.bindGroup) {
 			level.bindGroup = this.device.createBindGroup({
 				layout: this.bindGroupLayout,
 				entries: [
@@ -1177,8 +967,7 @@ class Renderer
 		renderPass.setPipeline(this.terrainPipeline)
 		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
 
-		switch (RENDER_MODE)
-		{
+		switch (RENDER_MODE) {
 			case 0:
 				renderPass.draw(36, 1, 0, 0)
 				break
@@ -1197,8 +986,7 @@ class Renderer
 	 * @param {mat4} modelMatrix 
 	 * @param {GPURenderPassEncoder} renderPass
 	 */
-	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass)
-	{
+	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass) {
 		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
 		let uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset)
 
@@ -1207,8 +995,7 @@ class Renderer
 
 		uintView[35] = model.paletteIndex
 
-		if (!model.bindGroup)
-		{
+		if (!model.bindGroup) {
 			/** @type {GPUBindGroupDescriptor} */const descriptor = {
 				layout: this.bindGroupLayout,
 				entries: [
@@ -1244,8 +1031,7 @@ class Renderer
 					}
 				],
 			}
-			if (RENDER_MODE === 1)
-			{
+			if (RENDER_MODE === 1) {
 				descriptor.entries = [...descriptor.entries, {
 					binding: 6,
 					resource: model.accelerationTexture.createView()
@@ -1262,8 +1048,7 @@ class Renderer
 	}
 }
 
-class Renderer2
-{
+class Renderer2 {
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
@@ -1283,25 +1068,21 @@ class Renderer2
 	 * @param {string} code
 	 * @returns {Promise<GPUShaderModule>}
 	 */
-	async compileShader(code)
-	{
+	async compileShader(code) {
 		const module = this.device.createShaderModule({
 			code: code,
 		})
 
 		const info = await module.getCompilationInfo()
-		for (const message of info.messages)
-		{
+		for (const message of info.messages) {
 			console.log(message)
 		}
 
 		return module
 	}
 
-	createDepthTexture()
-	{
-		if (this.depthTexture)
-		{
+	createDepthTexture() {
+		if (this.depthTexture) {
 			this.depthTexture.destroy()
 		}
 
@@ -1312,15 +1093,12 @@ class Renderer2
 		})
 	}
 
-	async init()
-	{
-		if (!navigator.gpu)
-		{
+	async init() {
+		if (!navigator.gpu) {
 			throw new Error('WebGPU not supported')
 		}
 		const adapter = await navigator.gpu.requestAdapter()
-		if (!adapter)
-		{
+		if (!adapter) {
 			throw new Error('No GPU adapter found')
 		}
 		this.device = await adapter.requestDevice({
@@ -1337,8 +1115,7 @@ class Renderer2
 			format: navigator.gpu.getPreferredCanvasFormat(),
 			alphaMode: 'premultiplied',
 		})
-		window.addEventListener('resize', () =>
-		{
+		window.addEventListener('resize', () => {
 			canvas.width = window.innerWidth
 			canvas.height = window.innerHeight
 			this.viewport = [canvas.width, canvas.height]
@@ -1538,182 +1315,14 @@ class Renderer2
 	}
 
 
-	/**
-	 * @param {Uint8Array} voxels
-	 * @param {number} sizeX
-	 * @param {number} sizeY
-	 * @param {number} sizeZ
-	 * @param {number} empty
-	 * @returns {Uint8Array}
-	 * */
-	generateVisible(voxels, sizeX, sizeY, sizeZ, empty)
-	{
-		const visible = new Uint8Array(sizeX * sizeY * sizeZ * 3)
-		let index = 0
-
-		for (let x = 0; x < sizeX; x++)
-		{
-			for (let y = 0; y < sizeY; y++)
-			{
-				for (let z = 0; z < sizeZ; z++)
-				{
-					const idx = z * sizeY * sizeX + y * sizeX + x
-
-					if (voxels[idx] === empty) continue
-
-					// Check -X face
-					if (x === 0 || voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check +X face
-					if (x === sizeX - 1 || voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check -Y face
-					if (y === 0 || voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check +Y face
-					if (y === sizeY - 1 || voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check -Z face
-					if (z === 0 || voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-					// Check +Z face
-					if (z === sizeZ - 1 || voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === empty)
-					{
-						visible[index] = x
-						visible[index + 1] = y
-						visible[index + 2] = z
-						index += 4
-						continue
-					}
-				}
-			}
-		}
-		return visible.subarray(0, index)
-	}
-
-	generateFaces(voxels, sizeX, sizeY, sizeZ, empty)
-	{
-		const maxFaces = 4 * (
-			sizeX * sizeY * sizeZ
-		)
-
-		const faces = new Uint8Array(maxFaces * 6)
-		let faceCount = 0
-
-		for (let x = 0; x < sizeX; x++)
-		{
-			for (let y = 0; y < sizeY; y++)
-			{
-				for (let z = 0; z < sizeZ; z++)
-				{
-					const idx = z * sizeY * sizeX + y * sizeX + x
-
-					if (voxels[idx] === empty) continue
-
-					// Check -X face
-					if (x === 0 || voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === empty)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 0
-						faceCount++
-					}
-					// Check +X face
-					if (x === sizeX - 1 || voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === empty)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 1
-						faceCount++
-					}
-					// Check -Y face
-					if (y === 0 || voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === empty)
-					{
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 2
-						faceCount++
-					}
-					// Check +Y face
-					if (y === sizeY - 1 || voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === empty)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 3
-						faceCount++
-					}
-					// Check -Z face
-					if (z === 0 || voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === empty)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 4
-						faceCount++
-					}
-					// Check +Z face
-					if (z === sizeZ - 1 || voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === empty)
-					{
-
-						faces[faceCount * 4 + 0] = x
-						faces[faceCount * 4 + 1] = y
-						faces[faceCount * 4 + 2] = z
-						faces[faceCount * 4 + 3] = 5
-						faceCount++
-					}
-				}
-			}
-		}
-
-		return faces.subarray(0, faceCount * 4)
-	}
-
-
 
 	/**
 	 * @param {Model} model
 	 * @returns {void}
 	 */
-	registerModel(model)
-	{
+	registerModel(model) {
 		const texture = this.device.createTexture({
-			size: [model.sizeX, model.sizeY, model.sizeZ],
+			size: [model.volume.sizeX, model.volume.sizeY, model.volume.sizeZ],
 			dimension: '3d',
 			format: 'r8uint',
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
@@ -1721,12 +1330,12 @@ class Renderer2
 		})
 		this.device.queue.writeTexture(
 			{ texture },
-			model.voxels,
+			model.volume.voxels,
 			{
-				bytesPerRow: model.sizeX,
-				rowsPerImage: model.sizeY
+				bytesPerRow: model.volume.sizeX,
+				rowsPerImage: model.volume.sizeY
 			},
-			[model.sizeX, model.sizeY, model.sizeZ]
+			[model.volume.sizeX, model.volume.sizeY, model.volume.sizeZ]
 		)
 		model.texture = texture
 
@@ -1743,7 +1352,7 @@ class Renderer2
 		)
 		model.paletteIndex = this.nextPaletteIndex++
 
-		const faces = this.generateFaces(model.voxels, model.sizeX, model.sizeY, model.sizeZ, 255)
+		const faces = model.volume.generateFaces()
 		const rasterBuffer = this.device.createBuffer({
 			size: faces.byteLength,
 			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -1756,8 +1365,7 @@ class Renderer2
 	/**
 	 * @param {Tileset} tileset
 	 */
-	registerTileset(tileset)
-	{
+	registerTileset(tileset) {
 		const width = tileset.tileWidth
 		const height = tileset.tileHeight
 		const count = tileset.numTiles
@@ -1787,26 +1395,25 @@ class Renderer2
 	 * 
 	 * @param {Level} level 
 	 */
-	registerLevel(level)
-	{
+	registerLevel(level) {
 		const texture = this.device.createTexture({
-			size: [level.sizeX, level.sizeY, level.sizeZ],
+			size: [level.volume.sizeX, level.volume.sizeY, level.volume.sizeZ],
 			dimension: '3d',
 			format: 'r16uint',
 			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
 		})
 		this.device.queue.writeTexture(
 			{ texture },
-			new Uint8Array(level.voxels.buffer),
+			level.volume.voxels,
 			{
-				bytesPerRow: level.sizeX * 2,
-				rowsPerImage: level.sizeY
+				bytesPerRow: level.volume.sizeX * 2,
+				rowsPerImage: level.volume.sizeY
 			},
-			[level.sizeX, level.sizeY, level.sizeZ]
+			[level.volume.sizeX, level.volume.sizeY, level.volume.sizeZ]
 		)
 		level.texture = texture
 
-		const faces = this.generateFaces(level.voxels, level.sizeX, level.sizeY, level.sizeZ, 0)
+		const faces = level.volume.generateFaces()
 		const rasterBuffer = this.device.createBuffer({
 			size: faces.byteLength,
 			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -1815,8 +1422,7 @@ class Renderer2
 		level.rasterBuffer = rasterBuffer
 	}
 
-	async draw()
-	{
+	async draw() {
 		const commandEncoder = this.device.createCommandEncoder()
 		const renderPass = commandEncoder.beginRenderPass({
 			colorAttachments: [{
@@ -1851,30 +1457,23 @@ class Renderer2
 
 
 		renderPass.setPipeline(this.modelPipeline)
-		for (const e of Entity.all)
-		{
-			if (e.model && e !== player)
-			{
-				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.sizeX / 2, -e.model.sizeY / 2, 0])
+		for (const e of Entity.all) {
+			if (e.model && e !== player) {
+				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0])
 				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, vec3.scale(vec3.create(), e.localScale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
 				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
 				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
 			}
 			e.animationFrame++
-			if (e.animationFrame > 16)
-			{
-				if (e.model == models['fatta'])
-				{
+			if (e.animationFrame > 16) {
+				if (e.model == models['fatta']) {
 					e.model = models['fatta']
-				} else if (e.model == models['fattb'])
-				{
+				} else if (e.model == models['fattb']) {
 					e.model = models['fattc']
-				} else if (e.model == models['fattc'])
-				{
+				} else if (e.model == models['fattc']) {
 					e.model = models['fattd']
-				} else if (e.model == models['fattd'])
-				{
+				} else if (e.model == models['fattd']) {
 					e.model = models['fatta']
 				}
 				e.animationFrame = 0
@@ -1885,15 +1484,13 @@ class Renderer2
 
 		renderPass.end()
 		commandEncoder.resolveQuerySet(this.querySet, 0, 2, this.queryResolve, 0)
-		if (this.queryResult.mapState === 'unmapped')
-		{
+		if (this.queryResult.mapState === 'unmapped') {
 			commandEncoder.copyBufferToBuffer(this.queryResolve, 0, this.queryResult, 0, this.queryResult.size)
 		}
 
 		this.device.queue.submit([commandEncoder.finish()])
 
-		if (this.queryResult.mapState === 'unmapped')
-		{
+		if (this.queryResult.mapState === 'unmapped') {
 			await this.queryResult.mapAsync(GPUMapMode.READ)
 			const queryData = new BigUint64Array(this.queryResult.getMappedRange())
 			const delta = queryData[1] - queryData[0]
@@ -1901,8 +1498,7 @@ class Renderer2
 			const frameTimeMs = Number(delta) / 1e6
 			this.frameTimes.push(frameTimeMs)
 			const now = performance.now()
-			if (now - this.lastTimePrint >= 1000)
-			{
+			if (now - this.lastTimePrint >= 1000) {
 				const sum = this.frameTimes.reduce((a, b) => a + b, 0)
 				const avgFrameTime = sum / this.frameTimes.length
 				console.log(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`)
@@ -1918,8 +1514,7 @@ class Renderer2
 	* @param {GPURenderPassEncoder} renderPass
 	* @returns {void}
 	*/
-	drawLevel(level, modelViewProjectionMatrix, renderPass)
-	{
+	drawLevel(level, modelViewProjectionMatrix, renderPass) {
 		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
 		floatView.set(modelViewProjectionMatrix, 0)
 		floatView.set(modelViewProjectionMatrix, 16)
@@ -1928,8 +1523,7 @@ class Renderer2
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
 		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.entity.worldPosition))
 
-		if (!level.bindGroup)
-		{
+		if (!level.bindGroup) {
 			level.bindGroup = this.device.createBindGroup({
 				layout: this.bindGroupLayout,
 				entries: [
@@ -1982,8 +1576,7 @@ class Renderer2
 	 * @param {mat4} modelMatrix 
 	 * @param {GPURenderPassEncoder} renderPass
 	 */
-	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass)
-	{
+	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass) {
 		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
 		let uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset)
 
@@ -1992,8 +1585,590 @@ class Renderer2
 
 		uintView[35] = model.paletteIndex
 
-		if (!model.bindGroup)
-		{
+		if (!model.bindGroup) {
+			model.bindGroup = this.device.createBindGroup({
+				layout: this.bindGroupLayout,
+				entries: [
+					{
+						binding: 0,
+						resource: {
+							buffer: this.frameUniforms,
+							size: 256,
+						},
+					},
+					{
+						binding: 1,
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
+					},
+					{
+						binding: 2,
+						resource: model.texture.createView()
+					},
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
+				],
+			})
+		}
+
+		renderPass.setBindGroup(0, model.bindGroup, [this.objectUniformsOffset])
+		renderPass.setVertexBuffer(0, model.rasterBuffer)
+		renderPass.draw(6, model.rasterBuffer.size / 4, 0, 0)
+		this.objectUniformsOffset += 256
+	}
+}
+
+class Renderer3 {
+    /** @type {GPUDevice} */ device = null;
+    /** @type {GPUCanvasContext} */ context = null;
+    /** @type {number[]} */ viewport = [0, 0];
+	/** @type {GPUBindGroupLayout} */ bindGroupLayout = null;
+	/** @type {GPUBindGroup} */ bindGroup = null;
+    /** @type {GPURenderPipeline} */ terrainPipeline = null;
+    /** @type {GPURenderPipeline} */ modelPipeline = null;
+    /** @type {GPUTexture} */ depthTexture = null;
+    /** @type {GPUBuffer} */ frameUniforms = null;
+	/** @type {GPUBuffer} */ objectUniforms = null;
+	/** @type {number} */ objectUniformsOffset = 0;
+	/** @type {GPUTexture} */ paletteTexture = null;
+	/** @type {number} */ nextPaletteIndex = 0;
+	/** @type {GPUSampler} */ tileSampler = null;
+
+	/**
+	 * @param {string} code
+	 * @returns {Promise<GPUShaderModule>}
+	 */
+	async compileShader(code) {
+		const module = this.device.createShaderModule({
+			code: code,
+		})
+
+		const info = await module.getCompilationInfo()
+		for (const message of info.messages) {
+			console.log(message)
+		}
+
+		return module
+	}
+
+	createDepthTexture() {
+		if (this.depthTexture) {
+			this.depthTexture.destroy()
+		}
+
+		this.depthTexture = this.device.createTexture({
+			size: [this.viewport[0], this.viewport[1], 1],
+			format: 'depth24plus',
+			usage: GPUTextureUsage.RENDER_ATTACHMENT,
+		})
+	}
+
+	async init() {
+		if (!navigator.gpu) {
+			throw new Error('WebGPU not supported')
+		}
+		const adapter = await navigator.gpu.requestAdapter()
+		if (!adapter) {
+			throw new Error('No GPU adapter found')
+		}
+		this.device = await adapter.requestDevice({
+			requiredFeatures: ['timestamp-query']
+		})
+		const canvas = document.createElement('canvas')
+		canvas.width = window.innerWidth
+		canvas.height = window.innerHeight
+		document.body.appendChild(canvas)
+		this.viewport = [canvas.width, canvas.height]
+		this.context = canvas.getContext('webgpu')
+		this.context.configure({
+			device: this.device,
+			format: navigator.gpu.getPreferredCanvasFormat(),
+			alphaMode: 'premultiplied',
+		})
+		window.addEventListener('resize', () => {
+			canvas.width = window.innerWidth
+			canvas.height = window.innerHeight
+			this.viewport = [canvas.width, canvas.height]
+			this.createDepthTexture()
+			this.context.configure({
+				device: this.device,
+				format: navigator.gpu.getPreferredCanvasFormat(),
+				alphaMode: 'premultiplied',
+			})
+		})
+		this.createDepthTexture()
+		this.frameUniforms = this.device.createBuffer({
+			size: 256,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+		})
+		this.objectUniforms = this.device.createBuffer({
+			size: (256) * 100000,
+			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+		})
+		this.transferBuffer = new ArrayBuffer(256 * 100000)
+		this.paletteTexture = this.device.createTexture({
+			format: 'rgba8unorm',
+			size: [256, 256, 1],
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+		})
+		this.tileSampler = this.device.createSampler({
+			magFilter: 'nearest',
+			minFilter: 'nearest',
+			addressModeU: 'repeat',
+			addressModeV: 'repeat',
+			addressModeW: 'repeat',
+		})
+
+		this.frameTimes = []
+		this.lastTimePrint = performance.now()
+		this.querySet = this.device.createQuerySet({
+			type: "timestamp",
+			count: 2,
+		})
+		this.queryResolve = this.device.createBuffer({
+			size: 16, // 2 * 8-byte timestamps
+			usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+		})
+		this.queryResult = this.device.createBuffer({
+			size: 16,
+			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		})
+
+		const shader = await this.compileShader(SHADER_RASTER)
+
+		/** @type {GPUBindGroupLayoutDescriptor} */const bindGroupDescriptor = {
+			label: 'common',
+			entries: [
+				// frame uniforms
+				{
+					binding: 0,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					buffer: {
+						type: 'uniform',
+					}
+				},
+				// object uniforms
+				{
+					binding: 1,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					buffer: {
+						type: 'uniform',
+						hasDynamicOffset: true,
+					}
+				},
+				// voxels
+				{
+					binding: 2,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'uint',
+						viewDimension: '3d',
+					}
+				},
+				// palette
+				{
+					binding: 3,
+					visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'float',
+						viewDimension: '2d',
+					}
+				},
+				// tiles
+				{
+					binding: 4,
+					visibility: GPUShaderStage.FRAGMENT,
+					texture: {
+						sampleType: 'float',
+						viewDimension: '2d-array',
+					}
+				},
+				// tile sampler
+				{
+					binding: 5,
+					visibility: GPUShaderStage.FRAGMENT,
+					sampler: {
+						type: 'non-filtering',
+					}
+				},
+			]
+		}
+
+		this.bindGroupLayout = this.device.createBindGroupLayout(bindGroupDescriptor)
+
+		/** @type {GPURenderPipelineDescriptor} */const terrainPipelineDescriptor = {
+			layout: this.device.createPipelineLayout({
+				bindGroupLayouts: [this.bindGroupLayout]
+			}),
+			vertex: {
+				module: shader,
+				entryPoint: 'vs_main',
+				buffers: [
+					{
+						arrayStride: 4,
+						stepMode: 'instance',
+						attributes: [
+							{
+								shaderLocation: 0,
+								offset: 0,
+								format: 'uint8x4'
+							}
+						]
+					}
+				]
+			},
+			fragment: {
+				module: shader,
+				entryPoint: 'fs_textured',
+				targets: [
+					{
+						format: navigator.gpu.getPreferredCanvasFormat(),
+					}
+				],
+			},
+			primitive: {
+				topology: 'triangle-list',
+				cullMode: 'back',
+			},
+			depthStencil: {
+				format: 'depth24plus',
+				depthWriteEnabled: true,
+				depthCompare: 'less',
+			},
+		}
+
+		this.terrainPipeline = this.device.createRenderPipeline(terrainPipelineDescriptor)
+
+		/** @type {GPURenderPipelineDescriptor} */const modelPipelineDescriptor = {
+			layout: this.device.createPipelineLayout({
+				bindGroupLayouts: [this.bindGroupLayout]
+			}),
+			vertex: {
+				module: shader,
+				entryPoint: 'vs_main',
+				buffers: [
+					{
+						arrayStride: 4,
+						stepMode: 'instance',
+						attributes: [
+							{
+								shaderLocation: 0,
+								offset: 0,
+								format: 'uint8x4'
+							}
+						]
+					}
+				]
+			},
+			fragment: {
+				module: shader,
+				entryPoint: 'fs_model',
+				targets: [
+					{
+						format: navigator.gpu.getPreferredCanvasFormat(),
+					}
+				],
+			},
+			primitive: {
+				topology: 'triangle-list',
+				cullMode: 'back',
+			},
+			depthStencil: {
+				format: 'depth24plus',
+				depthWriteEnabled: true,
+				depthCompare: 'less',
+			},
+		}
+
+
+		this.modelPipeline = this.device.createRenderPipeline(modelPipelineDescriptor)
+	}
+
+
+
+
+
+	/**
+	 * @param {Model} model
+	 * @returns {void}
+	 */
+	registerModel(model) {
+		const texture = this.device.createTexture({
+			size: [model.volume.sizeX, model.volume.sizeY, model.volume.sizeZ],
+			dimension: '3d',
+			format: 'r8uint',
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+			mipLevelCount: 2,
+		})
+		this.device.queue.writeTexture(
+			{ texture },
+			model.volume.voxels,
+			{
+				bytesPerRow: model.volume.sizeX,
+				rowsPerImage: model.volume.sizeY
+			},
+			[model.volume.sizeX, model.volume.sizeY, model.volume.sizeZ]
+		)
+		model.texture = texture
+
+		this.device.queue.writeTexture(
+			{
+				texture: this.paletteTexture,
+				aspect: 'all',
+				origin: [0, this.nextPaletteIndex, 0],
+				mipLevel: 0,
+			},
+			model.palette, {
+			bytesPerRow: 256 * 4,
+		}, [255, 1, 1]
+		)
+		model.paletteIndex = this.nextPaletteIndex++
+
+		const faces = model.volume.generateFaces()
+		const rasterBuffer = this.device.createBuffer({
+			size: faces.byteLength,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+		})
+		this.device.queue.writeBuffer(rasterBuffer, 0, faces)
+		model.rasterBuffer = rasterBuffer
+	}
+
+
+	/**
+	 * @param {Tileset} tileset
+	 */
+	registerTileset(tileset) {
+		const width = tileset.tileWidth
+		const height = tileset.tileHeight
+		const count = tileset.numTiles
+
+		const texture = this.device.createTexture({
+			size: [width, height, count],
+			format: 'rgba8unorm',
+			dimension: '2d',
+			usage: GPUTextureUsage.TEXTURE_BINDING |
+				GPUTextureUsage.COPY_DST |
+				GPUTextureUsage.RENDER_ATTACHMENT
+		})
+
+		this.device.queue.writeTexture(
+			{ texture },
+			tileset.imageData.data,
+			{
+				bytesPerRow: width * 4,
+				rowsPerImage: height
+			},
+			[width, height, count]
+		)
+		tileset.texture = texture
+	}
+
+	/**
+	 * 
+	 * @param {Level} level 
+	 */
+	registerLevel(level) {
+		const texture = this.device.createTexture({
+			size: [level.volume.sizeX, level.volume.sizeY, level.volume.sizeZ],
+			dimension: '3d',
+			format: 'r16uint',
+			usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+		})
+		this.device.queue.writeTexture(
+			{ texture },
+			new Uint8Array(level.volume.voxels.buffer),
+			{
+				bytesPerRow: level.volume.sizeX * 2,
+				rowsPerImage: level.volume.sizeY
+			},
+			[level.volume.sizeX, level.volume.sizeY, level.volume.sizeZ]
+		)
+		level.texture = texture
+		const faces = level.volume.generateFaces()
+		const rasterBuffer = this.device.createBuffer({
+			size: faces.byteLength,
+			usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+		})
+		this.device.queue.writeBuffer(rasterBuffer, 0, faces)
+		level.rasterBuffer = rasterBuffer
+	}
+
+	async draw() {
+		const commandEncoder = this.device.createCommandEncoder()
+		const renderPass = commandEncoder.beginRenderPass({
+			colorAttachments: [{
+				view: this.context.getCurrentTexture().createView(),
+				clearValue: { r: 0, g: 0, b: 0, a: 1 },
+				loadOp: 'clear',
+				storeOp: 'store',
+			}],
+			depthStencilAttachment: {
+				view: this.depthTexture.createView(),
+				depthClearValue: 1.0,
+				depthLoadOp: 'clear',
+				depthStoreOp: 'store',
+			},
+			timestampWrites: {
+				querySet: this.querySet,
+				beginningOfPassWriteIndex: 0,
+				endOfPassWriteIndex: 1,
+			}
+		})
+
+		this.device.queue.writeBuffer(this.frameUniforms, 0, /** @type {Float32Array} */(camera.projection))
+		this.device.queue.writeBuffer(this.frameUniforms, 64, /** @type {Float32Array} */(camera.view))
+		this.device.queue.writeBuffer(this.frameUniforms, 128, /** @type {Float32Array} */(camera.entity.worldPosition))
+		this.device.queue.writeBuffer(this.frameUniforms, 144, new Float32Array(this.viewport))
+
+		this.objectUniformsOffset = 0
+
+		const viewProjectionMatrix = mat4.create()
+		mat4.multiply(viewProjectionMatrix, camera.projection, camera.view)
+		this.drawLevel(level, viewProjectionMatrix, renderPass)
+
+
+		renderPass.setPipeline(this.modelPipeline)
+		for (const e of Entity.all) {
+			if (e.model && e !== player) {
+				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0])
+				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, vec3.scale(vec3.create(), e.localScale, 1 / 32))
+				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
+				const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix)
+				this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass)
+			}
+			e.animationFrame++
+			if (e.animationFrame > 16) {
+				if (e.model == models['fatta']) {
+					e.model = models['fatta']
+				} else if (e.model == models['fattb']) {
+					e.model = models['fattc']
+				} else if (e.model == models['fattc']) {
+					e.model = models['fattd']
+				} else if (e.model == models['fattd']) {
+					e.model = models['fatta']
+				}
+				e.animationFrame = 0
+			}
+		}
+
+		this.device.queue.writeBuffer(this.objectUniforms, 0, this.transferBuffer, 0, this.objectUniformsOffset)
+
+		renderPass.end()
+		commandEncoder.resolveQuerySet(this.querySet, 0, 2, this.queryResolve, 0)
+		if (this.queryResult.mapState === 'unmapped') {
+			commandEncoder.copyBufferToBuffer(this.queryResolve, 0, this.queryResult, 0, this.queryResult.size)
+		}
+
+		this.device.queue.submit([commandEncoder.finish()])
+
+		if (this.queryResult.mapState === 'unmapped') {
+			await this.queryResult.mapAsync(GPUMapMode.READ)
+			const queryData = new BigUint64Array(this.queryResult.getMappedRange())
+			const delta = queryData[1] - queryData[0]
+			this.queryResult.unmap()
+			const frameTimeMs = Number(delta) / 1e6
+			this.frameTimes.push(frameTimeMs)
+			const now = performance.now()
+			if (now - this.lastTimePrint >= 1000) {
+				const sum = this.frameTimes.reduce((a, b) => a + b, 0)
+				const avgFrameTime = sum / this.frameTimes.length
+				console.log(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`)
+				this.frameTimes.length = 0
+				this.lastTimePrint = now
+			}
+		}
+	}
+
+	/**
+	* @param {Level} level
+	* @param {mat4} modelViewProjectionMatrix
+	* @param {GPURenderPassEncoder} renderPass
+	* @returns {void}
+	*/
+	drawLevel(level, modelViewProjectionMatrix, renderPass) {
+		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
+		floatView.set(modelViewProjectionMatrix, 0)
+		floatView.set(modelViewProjectionMatrix, 16)
+
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset, /** @type {Float32Array} */(mat4.create()))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 64, /** @type {Float32Array} */(modelViewProjectionMatrix))
+		this.device.queue.writeBuffer(this.objectUniforms, this.objectUniformsOffset + 128, /** @type {Float32Array} */(camera.entity.worldPosition))
+
+		if (!level.bindGroup) {
+			level.bindGroup = this.device.createBindGroup({
+				layout: this.bindGroupLayout,
+				entries: [
+					{
+						binding: 0,
+						resource: {
+							buffer: this.frameUniforms,
+							size: 256,
+						},
+					},
+					{
+						binding: 1,
+						resource: {
+							buffer: this.objectUniforms,
+							size: 256,
+						}
+					},
+					{
+						binding: 2,
+						resource: level.texture.createView()
+					},
+					{
+						binding: 3,
+						resource: this.paletteTexture.createView()
+					},
+					{
+						binding: 4,
+						resource: tileset.texture.createView()
+					},
+					{
+						binding: 5,
+						resource: this.tileSampler
+					}
+				],
+			})
+		}
+
+		renderPass.setPipeline(this.terrainPipeline)
+		renderPass.setBindGroup(0, level.bindGroup, [this.objectUniformsOffset])
+		renderPass.setVertexBuffer(0, level.rasterBuffer)
+		renderPass.draw(6, level.rasterBuffer.size / 4, 0, 0)
+
+		this.objectUniformsOffset += 256
+	}
+
+	/**
+	 * 
+	 * @param {Model} model 
+	 * @param {mat4} modelViewProjectionMatrix 
+	 * @param {mat4} modelMatrix 
+	 * @param {GPURenderPassEncoder} renderPass
+	 */
+	drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass) {
+		let floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset)
+		let uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset)
+
+		floatView.set(modelMatrix, 0)
+		floatView.set(modelViewProjectionMatrix, 16)
+
+		uintView[35] = model.paletteIndex
+
+		if (!model.bindGroup) {
 			model.bindGroup = this.device.createBindGroup({
 				layout: this.bindGroupLayout,
 				entries: [
@@ -2045,68 +2220,53 @@ const MessageType = {
 	ENTITY_UPDATE: 3,
 }
 
-class Net
-{
-	constructor()
-	{
+class Net {
+	constructor() {
 		this.peer = null
 		this.connections = []
 		this.isHost = false
 	}
 
-	host(id)
-	{
+	host(id) {
 		this.peer = new Peer(id)
 		this.isHost = true
 
-		this.peer.on('open', (id) =>
-		{
+		this.peer.on('open', (id) => {
 			console.log('Host ID:', id)
 		})
 
-		this.peer.on('connection', (conn) =>
-		{
+		this.peer.on('connection', (conn) => {
 			this.connections.push(conn)
-			conn.on('open', () =>
-			{
+			conn.on('open', () => {
 				conn.send('Hello!')
 			})
-			conn.on('data', (data) =>
-			{
+			conn.on('data', (data) => {
 				this.onData(conn, data)
 			})
 		})
 	}
 
-	join(hostid)
-	{
+	join(hostid) {
 		this.isHost = false
 		this.peer = new Peer()
-		this.peer.on('open', (id) =>
-		{
+		this.peer.on('open', (id) => {
 			console.log('Client ID:', id)
 			const conn = this.peer.connect(hostid)
-			conn.on('open', () =>
-			{
+			conn.on('open', () => {
 				conn.send({ msg: MessageType.PLAYER_JOIN })
 			})
-			conn.on('data', (data) =>
-			{
+			conn.on('data', (data) => {
 				this.onData(conn, data)
 			})
 		})
 	}
 
-	onData(conn, data)
-	{
-		switch (data.msg)
-		{
+	onData(conn, data) {
+		switch (data.msg) {
 			case MessageType.PLAYER_JOIN:
 				console.log('Player joined')
-				if (this.isHost)
-				{
-					for (const conn of this.connections)
-					{
+				if (this.isHost) {
+					for (const conn of this.connections) {
 						conn.send(data)
 					}
 				}
@@ -2116,12 +2276,9 @@ class Net
 			case MessageType.CHAT:
 				break
 			case MessageType.ENTITY_UPDATE:
-				if (!this.isHost)
-				{
-					for (const e of Entity.all)
-					{
-						if (e.id === data.id)
-						{
+				if (!this.isHost) {
+					for (const e of Entity.all) {
+						if (e.id === data.id) {
 							e.localPosition[0] = data.pos[0]
 							e.localPosition[1] = data.pos[1]
 							e.localPosition[2] = data.pos[2]
@@ -2137,19 +2294,14 @@ class Net
 		}
 	}
 
-	update()
-	{
-		if (!this.isHost)
-		{
+	update() {
+		if (!this.isHost) {
 			return
 		}
 
-		for (const e of Entity.all)
-		{
-			if (e.id > 0)
-			{
-				for (const conn of this.connections)
-				{
+		for (const e of Entity.all) {
+			if (e.id > 0) {
+				for (const conn of this.connections) {
 					conn.send({
 						msg: MessageType.ENTITY_UPDATE,
 						id: e.id,
@@ -2163,11 +2315,287 @@ class Net
 }
 
 
-function setupUI()
-{
+class Volume {
+	constructor(sizeX, sizeY, sizeZ, config = {}) {
+		this.sizeX = sizeX
+		this.sizeY = sizeY
+		this.sizeZ = sizeZ
+		this.emptyValue = config.emptyValue ?? 255
+		this.voxels = new (config.arrayType ?? Uint8Array)(sizeX * sizeY * sizeZ)
+		this.dirty = true
+	}
 
-	for (const button of document.getElementsByClassName('bind-button'))
-	{
+	/**
+	 * 
+	 * @param {*} x 
+	 * @param {*} y 
+	 * @param {*} z 
+	 * @returns number
+	 */
+	getVoxel(x, y, z) {
+		if (x < 0 || y < 0 || z < 0 ||
+			x >= this.sizeX || y >= this.sizeY || z >= this.sizeZ) {
+			return this.emptyValue
+		}
+		return this.voxels[z * this.sizeY * this.sizeX + y * this.sizeX + x]
+	}
+
+	getVoxelFloor(x, y, z) {
+		x = Math.floor(x)
+		y = Math.floor(y)
+		z = Math.floor(z)
+
+		if (x < 0 || y < 0 || z < 0 ||
+			x >= this.sizeX || y >= this.sizeY || z >= this.sizeZ) {
+			return this.emptyValue
+		}
+		return this.voxels[z * this.sizeY * this.sizeX + y * this.sizeX + x]
+	}
+
+	setVoxel(x, y, z, value) {
+		if (x < 0 || y < 0 || z < 0 ||
+			x >= this.sizeX || y >= this.sizeY || z >= this.sizeZ) {
+			return
+		}
+		this.voxels[z * this.sizeY * this.sizeX + y * this.sizeX + x] = value
+		this.dirty = true
+	}
+
+	/**
+	 * 
+	 * @param {*} x
+	 * @param {*} y
+	 * @param {*} z
+	 * @returns boolean
+	 */
+	isSurface(x, y, z) {
+		let sizeX = this.sizeX
+		let sizeY = this.sizeY
+		let sizeZ = this.sizeZ
+
+		const idx = z * sizeX * sizeY + y * sizeX + x
+		if (this.voxels[idx] === this.emptyValue) {
+			return false
+		}
+		const neighbors = [
+			[x - 1, y, z], [x + 1, y, z],
+			[x, y - 1, z], [x, y + 1, z],
+			[x, y, z - 1], [x, y, z + 1],
+		]
+		for (let i = 0; i < neighbors.length; i++) {
+			const [nx, ny, nz] = neighbors[i]
+			if (nx < 0 || nx >= sizeX || ny < 0 || ny >= sizeY || nz < 0 || nz >= sizeZ) {
+				return true
+			}
+			const nIdx = nz * sizeX * sizeY + ny * sizeX + nx
+			if (this.voxels[nIdx] === this.emptyValue) {
+				return true
+			}
+		}
+		return false
+	}
+
+
+	generateColumns() {
+		let sizeX = this.sizeX
+		let sizeY = this.sizeY
+		let sizeZ = this.sizeZ
+
+		const numColumns = sizeX * sizeY
+		const columnMap = new Uint32Array(numColumns)
+		const columnData = []
+		let currentOffset = 0
+		let totalVisible = 0
+
+		for (let y = 0; y < sizeY; y++) {
+			for (let x = 0; x < sizeX; x++) {
+				const colIndex = y * sizeX + x
+				columnMap[colIndex] = currentOffset
+
+				let z = 0
+				while (z < sizeZ) {
+					// Skip non-surface voxels
+					while (z < sizeZ && !this.isSurface(x, y, z)) {
+						z++
+					}
+					if (z >= sizeZ) break
+
+					// Found surface voxel, start interval
+					const start = z
+					const val = this.voxels[z * sizeX * sizeY + y * sizeX + x]
+
+					while (z < sizeZ &&
+						this.isSurface(x, y, z) &&
+						this.voxels[z * sizeX * sizeY + y * sizeX + x] === val) {
+						z++
+					}
+
+					// Store interval
+					columnData.push(start & 0xFF)        // start z
+					columnData.push((z - start) & 0xFF)  // length
+					totalVisible += z - start
+					currentOffset += 2
+				}
+			}
+		}
+		console.log('Encoded', columnData.length + numColumns * 4, 'bytes for', numColumns, 'columns', (columnData.length + numColumns * 4) / numColumns, 'bytes per column', totalVisible, 'visible voxels')
+
+		return {
+			columnMap,
+			columnData: new Uint8Array(columnData)
+		}
+	}
+
+	generateFaces() {
+		let sizeX = this.sizeX
+		let sizeY = this.sizeY
+		let sizeZ = this.sizeZ
+
+		const maxFaces = 4 * (
+			sizeX * sizeY * sizeZ
+		)
+
+		const faces = new Uint8Array(maxFaces * 6)
+		let faceCount = 0
+
+		for (let x = 0; x < sizeX; x++) {
+			for (let y = 0; y < sizeY; y++) {
+				for (let z = 0; z < sizeZ; z++) {
+					const idx = z * sizeY * sizeX + y * sizeX + x
+
+					if (this.voxels[idx] === this.emptyValue) continue
+
+					// Check -X face
+					if (x === 0 || this.voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === this.emptyValue) {
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 0
+						faceCount++
+					}
+					// Check +X face
+					if (x === sizeX - 1 || this.voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === this.emptyValue) {
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 1
+						faceCount++
+					}
+					// Check -Y face
+					if (y === 0 || this.voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === this.emptyValue) {
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 2
+						faceCount++
+					}
+					// Check +Y face
+					if (y === sizeY - 1 || this.voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === this.emptyValue) {
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 3
+						faceCount++
+					}
+					// Check -Z face
+					if (z === 0 || this.voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === this.emptyValue) {
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 4
+						faceCount++
+					}
+					// Check +Z face
+					if (z === sizeZ - 1 || this.voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === this.emptyValue) {
+
+						faces[faceCount * 4 + 0] = x
+						faces[faceCount * 4 + 1] = y
+						faces[faceCount * 4 + 2] = z
+						faces[faceCount * 4 + 3] = 5
+						faceCount++
+					}
+				}
+			}
+		}
+
+		return faces.subarray(0, faceCount * 4)
+	}
+
+	generateVisible() {
+		let sizeX = this.sizeX
+		let sizeY = this.sizeY
+		let sizeZ = this.sizeZ
+
+		const visible = new Uint8Array(sizeX * sizeY * sizeZ * 3)
+		let index = 0
+
+		for (let x = 0; x < sizeX; x++) {
+			for (let y = 0; y < sizeY; y++) {
+				for (let z = 0; z < sizeZ; z++) {
+					const idx = z * sizeY * sizeX + y * sizeX + x
+
+					if (this.voxels[idx] === this.emptyValue) continue
+
+					// Check -X face
+					if (x === 0 || this.voxels[z * sizeY * sizeX + y * sizeX + (x - 1)] === this.emptyValue) {
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +X face
+					if (x === sizeX - 1 || this.voxels[z * sizeY * sizeX + y * sizeX + (x + 1)] === this.emptyValue) {
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check -Y face
+					if (y === 0 || this.voxels[z * sizeY * sizeX + (y - 1) * sizeX + x] === this.emptyValue) {
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +Y face
+					if (y === sizeY - 1 || this.voxels[z * sizeY * sizeX + (y + 1) * sizeX + x] === this.emptyValue) {
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check -Z face
+					if (z === 0 || this.voxels[(z - 1) * sizeY * sizeX + y * sizeX + x] === this.emptyValue) {
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+					// Check +Z face
+					if (z === sizeZ - 1 || this.voxels[(z + 1) * sizeY * sizeX + y * sizeX + x] === this.emptyValue) {
+						visible[index] = x
+						visible[index + 1] = y
+						visible[index + 2] = z
+						index += 4
+						continue
+					}
+				}
+			}
+		}
+		return visible.subarray(0, index)
+	}
+}
+
+function setupUI() {
+
+	for (const button of document.getElementsByClassName('bind-button')) {
 		button.textContent = settings.keybinds[button.id]
 	}
 
@@ -2178,23 +2606,19 @@ function setupUI()
 
 	let activeBinding = null
 
-	menu.addEventListener('keyup', (event) =>
-	{
+	menu.addEventListener('keyup', (event) => {
 		event.stopPropagation()
 
-		if (activeBinding)
-		{
+		if (activeBinding) {
 			event.preventDefault()
 			activeBinding = null
 		}
 	})
 
-	menu.addEventListener('keydown', (event) =>
-	{
+	menu.addEventListener('keydown', (event) => {
 		event.stopPropagation()
 
-		if (!activeBinding)
-		{
+		if (!activeBinding) {
 			return
 		}
 		activeBinding.textContent = event.code
@@ -2203,10 +2627,8 @@ function setupUI()
 		localStorage.setItem('gameSettings', JSON.stringify(settings))
 	})
 
-	menu.addEventListener('blur', (event) =>
-	{
-		if (activeBinding && event.target == activeBinding)
-		{
+	menu.addEventListener('blur', (event) => {
+		if (activeBinding && event.target == activeBinding) {
 			activeBinding.textContent = settings.keybinds[activeBinding.id]
 			activeBinding.classList.remove('listening')
 			activeBinding = null
@@ -2214,118 +2636,96 @@ function setupUI()
 	}, true)
 
 
-	menu.addEventListener('click', (event) =>
-	{
+	menu.addEventListener('click', (event) => {
 		event.stopPropagation()
 
 		const button = /** @type {HTMLButtonElement} */ (event.target)
-		if (button.classList?.contains('bind-button'))
-		{
+		if (button.classList?.contains('bind-button')) {
 			activeBinding = button
 			activeBinding.classList.add('listening')
 			activeBinding.textContent = 'Press a key...'
 			return
 		}
 
-		if (button.id === 'close-menu')
-		{
+		if (button.id === 'close-menu') {
 			showingMenu = false
 			menu.hidden = true
 			//document.body.requestPointerLock()
 		}
 
-		if (button.id === 'host')
-		{
+		if (button.id === 'host') {
 			net.isHost = true
 			const hostId = /** @type {HTMLInputElement} */ (document.getElementById('hostid')).value
 			net.host(hostId)
 		}
 
-		if (button.id === 'join')
-		{
+		if (button.id === 'join') {
 			const hostId = /** @type {HTMLInputElement} */ (document.getElementById('hostid')).value
 			net.join(hostId)
 		}
 	})
 
-	if (showingMenu)
-	{
+	if (showingMenu) {
 		menu.hidden = false
 	}
 
 	document.addEventListener('keydown', onKeydown)
 
-	document.addEventListener('keyup', (event) =>
-	{
+	document.addEventListener('keyup', (event) => {
 		key_states.delete(event.code)
 	})
 
-	document.addEventListener('mousemove', (event) =>
-	{
-		if (document.pointerLockElement)
-		{
+	document.addEventListener('mousemove', (event) => {
+		if (document.pointerLockElement) {
 			mouseMoveX += event.movementX
 			mouseMoveY += event.movementY
 		}
 	})
 
-	document.addEventListener('click', (event) =>
-	{
-		if (event.target instanceof HTMLButtonElement)
-		{
-			if (event.target.id === 'toggle-menu')
-			{
+	document.addEventListener('click', (event) => {
+		if (event.target instanceof HTMLButtonElement) {
+			if (event.target.id === 'toggle-menu') {
 				showingMenu = !showingMenu
 				document.getElementById('main-menu').hidden = !showingMenu
-				if (showingMenu)
-				{
+				if (showingMenu) {
 					document.exitPointerLock()
-				} else
-				{
+				} else {
 					document.body.requestPointerLock()
 				}
 				return
 			}
 		}
 
-		if (!document.pointerLockElement)
-		{
+		if (!document.pointerLockElement) {
 			document.body.requestPointerLock()
 		}
-		if (showingMenu)
-		{
+		if (showingMenu) {
 			showingMenu = false
 			menu.hidden = true
 		}
 	})
 
-	document.addEventListener('visibilitychange', () =>
-	{
+	document.addEventListener('visibilitychange', () => {
 		lastTime = performance.now()
 	})
 
-	document.addEventListener('contextmenu', (event) =>
-	{
+	document.addEventListener('contextmenu', (event) => {
 		event.preventDefault()
 	})
 
-	document.addEventListener('pointerlockchange', () =>
-	{
-		if (!key_states.has('`'))
-		{
+	document.addEventListener('pointerlockchange', () => {
+		if (!key_states.has('`')) {
 			key_states.clear()
 		}
 	})
 
-	window.addEventListener('error', (event) =>
-	{
+	window.addEventListener('error', (event) => {
 		const debug = document.getElementById('debug')
 		debug.innerHTML = `${event.error} at ${event.filename}:${event.lineno}<br>${debug.innerHTML}`
 
 	})
 
-	window.addEventListener('unhandledrejection', (event) =>
-	{
+	window.addEventListener('unhandledrejection', (event) => {
 		const debug = document.getElementById('debug')
 
 		debug.innerHTML = `${event.reason}<br>${debug.innerHTML}`
@@ -2338,27 +2738,22 @@ function setupUI()
 	document.body.appendChild(timeLabel)
 }
 
-function onKeydown(event)
-{
+function onKeydown(event) {
 	key_states.add(event.code)
 
-	switch (event.code)
-	{
+	switch (event.code) {
 		case 'Backquote': {
 			showingMenu = !showingMenu
 			document.getElementById('main-menu').hidden = !showingMenu
-			if (showingMenu)
-			{
+			if (showingMenu) {
 				document.exitPointerLock()
-			} else
-			{
+			} else {
 				document.body.requestPointerLock()
 			}
 			break
 		}
 		case 'Escape': {
-			if (showingMenu)
-			{
+			if (showingMenu) {
 				showingMenu = false
 				document.getElementById('main-menu').hidden = true
 				setTimeout(() => document.body.requestPointerLock(), 150)
@@ -2379,8 +2774,7 @@ function onKeydown(event)
 	}
 }
 
-function processInput(elapsed)
-{
+function processInput(elapsed) {
 	const right = vec3.fromValues(1, 0, 0)
 	vec3.transformQuat(right, right, player.localRotation)
 
@@ -2392,48 +2786,38 @@ function processInput(elapsed)
 	const speed = 10
 
 
-	if (!godMode)
-	{
+	if (!godMode) {
 		forward[2] = 0
 		vec3.normalize(forward, forward)
 		right[2] = 0
 		vec3.normalize(right, right)
-	} else
-	{
+	} else {
 		player.vel[2] = 0
 	}
 
 	player.vel[0] = 0
 	player.vel[1] = 0
 
-	if (key_states.has(settings.keybinds.forward))
-	{
+	if (key_states.has(settings.keybinds.forward)) {
 		vec3.scaleAndAdd(player.vel, player.vel, forward, speed)
 	}
-	if (key_states.has(settings.keybinds.backward))
-	{
+	if (key_states.has(settings.keybinds.backward)) {
 		vec3.scaleAndAdd(player.vel, player.vel, forward, -speed)
 	}
-	if (key_states.has(settings.keybinds.left))
-	{
+	if (key_states.has(settings.keybinds.left)) {
 		vec3.scaleAndAdd(player.vel, player.vel, right, -speed)
 	}
-	if (key_states.has(settings.keybinds.right))
-	{
+	if (key_states.has(settings.keybinds.right)) {
 		vec3.scaleAndAdd(player.vel, player.vel, right, speed)
 	}
-	if (godMode && key_states.has(settings.keybinds.up))
-	{
+	if (godMode && key_states.has(settings.keybinds.up)) {
 		vec3.scaleAndAdd(player.vel, player.vel, up, speed)
 	}
-	if (godMode && key_states.has(settings.keybinds.down))
-	{
+	if (godMode && key_states.has(settings.keybinds.down)) {
 		vec3.scaleAndAdd(player.vel, player.vel, up, -speed)
 	}
-	if (key_states.has(settings.keybinds.jump))
-	{
-		if (player.gravity && !godMode && player.onGround(level))
-		{
+	if (key_states.has(settings.keybinds.jump)) {
+		if (player.gravity && !godMode && player.onGround(level)) {
 			player.vel[2] += 5
 		}
 		key_states.delete(settings.keybinds.jump)
@@ -2447,13 +2831,10 @@ function processInput(elapsed)
 
 
 	const angle = quat.getAxisAngle(vec3.create(), player.head.localRotation)
-	if (angle > Math.PI / 2)
-	{
-		if (dy > 0)
-		{
+	if (angle > Math.PI / 2) {
+		if (dy > 0) {
 			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), Math.PI / 2)
-		} else
-		{
+		} else {
 			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), -Math.PI / 2)
 		}
 	}
@@ -2465,8 +2846,7 @@ function processInput(elapsed)
 	mouseMoveY = 0
 }
 
-function loop()
-{
+function loop() {
 	const elapsed = performance.now() - lastTime
 	lastTime = performance.now()
 
@@ -2483,13 +2863,10 @@ function loop()
 
 	processInput(elapsed)
 
-	for (const e of Entity.all)
-	{
+	for (const e of Entity.all) {
 		e.update(elapsed)
-		if (e.gravity && !(e instanceof Player && godMode))
-		{
-			if (!e.onGround(level))
-			{
+		if (e.gravity && !(e instanceof Player && godMode)) {
+			if (!e.onGround(level)) {
 				e.vel[2] -= 9.8 * elapsed / 1000
 			}
 		}
@@ -2497,81 +2874,66 @@ function loop()
 
 		let speed = vec3.length(e.vel)
 		vec3.scaleAndAdd(e.localPosition, e.localPosition, e.vel, elapsed / 1000)
-		if (speed > 100)
-		{
+		if (speed > 100) {
 			speed = 100
 			vec3.normalize(e.vel, e.vel)
 			vec3.scale(e.vel, e.vel, speed)
 		}
-		if (speed > 0)
-		{
+		if (speed > 0) {
 			vec3.scaleAndAdd(e.localPosition, e.localPosition, e.vel, elapsed / 1000)
 			e.dirty = true
 		}
 
-		if (e instanceof Player && !godMode)
-		{
-			for (const ee of Entity.all)
-			{
-				if (e == ee)
-				{
+		if (e instanceof Player && !godMode) {
+			for (const ee of Entity.all) {
+				if (e == ee) {
 					continue
 				}
-				if (ee.spawn)
-				{
+				if (ee.spawn) {
 					continue
 				}
 
-				if (ee === e.head)
-				{
+				if (ee === e.head) {
 					continue
 				}
 				const s = vec3.sub(vec3.create(), ee.localPosition, e.localPosition)
 				const d = vec3.length(s)
 
-				if (d < e.radius + ee.radius)
-				{
+				if (d < e.radius + ee.radius) {
 					const pushback = e.radius + ee.radius - d
 					const t = vec3.add(vec3.create(), s, e.vel)
 					vec3.normalize(t, t)
 					vec3.scaleAndAdd(e.localPosition, e.localPosition, t, -pushback)
 					e.dirty = true
-					if (e.radius >= ee.radius)
-					{
+					if (e.radius >= ee.radius) {
 						vec3.scaleAndAdd(ee.localPosition, e.vel, t, pushback)
 						ee.dirty = true
 					}
 				}
 			}
 
-			if (level.getVoxel(e.localPosition[0] + e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2))
-			{
+			if (level.volume.getVoxelFloor(e.localPosition[0] + e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2)) {
 				e.localPosition[0] = Math.floor(e.localPosition[0] + e.radius) - e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.localPosition[0] - e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2))
-			{
+			if (level.volume.getVoxelFloor(e.localPosition[0] - e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2)) {
 				e.localPosition[0] = Math.ceil(e.localPosition[0] - e.radius) + e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.localPosition[0], e.localPosition[1] + e.radius, e.localPosition[2] + e.height / 2))
-			{
+			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1] + e.radius, e.localPosition[2] + e.height / 2)) {
 				e.localPosition[1] = Math.floor(e.localPosition[1] + e.radius) - e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.localPosition[0], e.localPosition[1] - e.radius, e.localPosition[2] + e.height / 2))
-			{
+			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1] - e.radius, e.localPosition[2] + e.height / 2)) {
 				e.localPosition[1] = Math.ceil(e.localPosition[1] - e.radius) + e.radius
 				e.dirty = true
 			}
-			if (level.getVoxel(e.localPosition[0], e.localPosition[1], e.localPosition[2] + e.height))
-			{
+			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1], e.localPosition[2] + e.height)) {
 				e.localPosition[2] = Math.floor(e.localPosition[2] + e.height) - e.height
 				e.vel[2] = 0
 				e.dirty = true
 			}
-			if (level.getVoxel(e.localPosition[0], e.localPosition[1], e.localPosition[2]))
-			{
+			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1], e.localPosition[2])) {
 				e.localPosition[2] = Math.ceil(e.localPosition[2])
 				e.vel[2] = 0
 				e.dirty = true
@@ -2579,10 +2941,8 @@ function loop()
 		}
 	}
 
-	for (const e of Entity.all)
-	{
-		if (!e.parent) 
-		{
+	for (const e of Entity.all) {
+		if (!e.parent) {
 			e.updateTransforms(null)
 		}
 	}
@@ -2593,13 +2953,11 @@ function loop()
 	requestAnimationFrame(loop)
 }
 
-async function main()
-{
+async function main() {
 	camera.entity = player.head
 
 	let savedState = localStorage.getItem('gameState')
-	if (savedState)
-	{
+	if (savedState) {
 		const state = JSON.parse(savedState)
 		player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2])
 		player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3])
@@ -2609,14 +2967,11 @@ async function main()
 	}
 
 	let savedSettings = localStorage.getItem('gameSettings')
-	if (savedSettings)
-	{
+	if (savedSettings) {
 		let obj = JSON.parse(savedSettings)
-		if (obj.version === settings.version)
-		{
+		if (obj.version === settings.version) {
 			settings = obj
-		} else
-		{
+		} else {
 			localStorage.setItem('gameSettings', JSON.stringify(settings))
 		}
 	}
