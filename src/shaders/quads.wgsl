@@ -18,9 +18,6 @@ struct ObjectUniforms {
 @group(0) @binding(4) var tiles: texture_2d_array<f32>;
 @group(0) @binding(5) var tileSampler: sampler;
 
-struct VertexInput {
-    @location(0) face: vec4u
-}
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -67,15 +64,6 @@ fn vs_main (@location(0) face: vec4u, @builtin(vertex_index) vertex_index: u32) 
             vec3f(0,1,1), vec3f(1,0,1), vec3f(1,1,1)   // tri 2
         )
     );
-
-	let faceColors = array<vec3f, 6>(
-		vec3f(0.0, 0.0, 1.0),  // -X blue
-		vec3f(0.0, 1.0, 1.0),  // +X cyan
-		vec3f(1.0, 1.0, 0.0),  // -Y yellow
-		vec3f(1.0, 0.0, 0.0),  // +y red
-		vec3f(0.0, 1.0, 0.0),  // -Z green
-		vec3f(1.0, 0.0, 1.0),  // +Z magenta
-	);
     
     let world_position = vec3f(position) + vertices[normal][vertex_index];
     output.position = object_uniforms.model_view_projection * vec4f(world_position, 1.0);
