@@ -144,7 +144,6 @@ class Camera {
 		mat4.perspective(this.projection, this.fov, this.aspect, this.near, this.far)
 		mat4.rotateX(this.projection, this.projection, -Math.PI / 2)
 		mat4.invert(this.view, this.entity.localToWorldTransform)
-
 	}
 }
 
@@ -365,7 +364,7 @@ class Level {
 }
 
 class Renderer {
-	/** @type {number} */ RENDERMODE = 1
+	/** @type {number} */ RENDERMODE = 0
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
@@ -579,6 +578,13 @@ class Renderer {
 				texture: {
 					sampleType: 'uint',
 					viewDimension: '3d',
+				}
+			},
+			{
+				binding: 7,
+				visibility: GPUShaderStage.FRAGMENT,
+				buffer: {
+					type: 'read-only-storage',
 				}
 			}]
 		}
@@ -796,6 +802,13 @@ class Renderer {
 				usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
 			})
 
+			const accelerationData2 = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ)
+			resources.accelerateBuffer = this.device.createBuffer({
+				size: accelerationData2.byteLength,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE,
+			})
+			this.device.queue.writeBuffer(resources.accelerateBuffer, 0, accelerationData2)
+
 			this.device.queue.writeTexture(
 				{ texture: resources.acceleration },
 				accelerationData,
@@ -809,6 +822,10 @@ class Renderer {
 					depthOrArrayLayers: regionSizeZ
 				}
 			)
+		}
+
+		if (model.url.includes('box_frame')) {
+			greedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue)
 		}
 
 		if (this.RENDERMODE == 1) {
@@ -843,6 +860,53 @@ class Renderer {
 						const bitIndex = localX + (localY * 4) + (localZ * 16)
 						const regionIndex = regionZ * regionSizeY * regionSizeX +
 							regionY * regionSizeX + regionX
+						data[regionIndex] |= 1 << bitIndex
+					}
+				}
+			}
+		}
+		return data
+	}
+
+	generateAccelerationDataZ(voxels, sizeX, sizeY, sizeZ) {
+		function expandBits(x) {
+			// Take a 10-bit number and spread its bits out to 30 bits
+			x = x & 0x3FF                   // Get lowest 10 bits
+			x = (x | (x << 16)) & 0xFF0000FF    // 0000 0000 1111 1111 0000 0000 1111 1111
+			x = (x | (x << 8)) & 0x0F00F00F    // 0000 1111 0000 0000 1111 0000 0000 1111
+			x = (x | (x << 4)) & 0xC30C30C3    // 1100 0011 0000 1100 0011 0000 1100 0011
+			x = (x | (x << 2)) & 0x49249249    // 0100 1001 0010 0100 1001 0010 0100 1001
+			return x
+		}
+
+
+		function mortonEncode(x, y, z) {
+			return (expandBits(x) |
+				(expandBits(y) << 1) |
+				(expandBits(z) << 2)) >>> 0
+		}
+
+		const regionSizeX = sizeX + 3 >> 2
+		const regionSizeY = sizeY + 3 >> 2
+		const regionSizeZ = sizeZ + 1 >> 1
+		const data = new Uint32Array(mortonEncode(regionSizeX - 1, regionSizeY - 1, regionSizeZ - 1))
+
+
+
+
+		for (let z = 0; z < sizeZ; z++) {
+			for (let y = 0; y < sizeY; y++) {
+				for (let x = 0; x < sizeX; x++) {
+					const voxel = voxels[z * sizeY * sizeX + y * sizeX + x]
+					if (voxel !== 255) {
+						const regionX = x >> 2
+						const regionY = y >> 2
+						const regionZ = z >> 1
+						const localX = x & 3
+						const localY = y & 3
+						const localZ = z & 1
+						const bitIndex = localX + (localY * 4) + (localZ * 16)
+						const regionIndex = mortonEncode(regionX, regionY, regionZ)
 						data[regionIndex] |= 1 << bitIndex
 					}
 				}
@@ -929,6 +993,13 @@ class Renderer {
 					depthOrArrayLayers: regionSizeZ
 				}
 			)
+
+			const accelerationData2 = this.generateAccelerationDataZ(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ)
+			resources.accelerateBuffer = this.device.createBuffer({
+				size: accelerationData.byteLength,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE,
+			})
+			this.device.queue.writeBuffer(resources.accelerateBuffer, 0, accelerationData2)
 		}
 
 		if (this.RENDERMODE == 1) {
@@ -1060,6 +1131,12 @@ class Renderer {
 					binding: 6,
 					resource: resources.acceleration.createView()
 				})
+				additionalEntries.push({
+					binding: 7,
+					resource: {
+						buffer: resources.accelerateBuffer,
+					}
+				})
 			}
 
 			resources.bindGroup = this.device.createBindGroup({
@@ -1172,6 +1249,12 @@ class Renderer {
 				descriptor.entries = [...descriptor.entries, {
 					binding: 6,
 					resource: resources.acceleration.createView()
+				},
+				{
+					binding: 7,
+					resource: {
+						buffer: resources.accelerateBuffer,
+					}
 				}]
 			}
 
@@ -1505,6 +1588,50 @@ class Volume {
 		}
 		return faces.subarray(0, faceCount * 4)
 	}
+
+
+}
+
+
+/**
+ * 
+ * @param {ArrayBufferLike} voxels 
+ * @param {number} sizeX 
+ * @param {number} sizeY 
+ * @param {number} sizeZ 
+ * @param {number} emptyValue 
+ */
+function greedyMesh(voxels, sizeX, sizeY, sizeZ, emptyValue = 255) {
+	let occupancyData = new BigUint64Array(sizeZ * sizeY * ((sizeX + 63) >> 6))
+
+	for (let z = 0; z < sizeZ; z++) {
+		for (let y = 0; y < sizeY; y++) {
+			for (let x = 0; x < sizeX; x++) {
+				if (voxels[z * sizeY * sizeX + y * sizeX + x] !== emptyValue) {
+					let maskIndex = z * sizeY + y + (x >> 6)
+					let bitIndex = x & 63
+					occupancyData[maskIndex] |= 1n << BigInt(bitIndex)
+				}
+			}
+		}
+	}
+
+	for (let z = 0; z < sizeZ; z++) {
+		for (let y = 0; y < sizeY; y++) {
+			let maskIndex = z * sizeY + y
+			let mask = occupancyData[maskIndex]
+			let left = ~(mask >> 1n) & mask
+			let right = ~(mask << 1n) & mask
+			if (z == 0) {
+				//console.log('mask: ', mask.toString(2).padStart(sizeX, '0'))
+				//console.log('left: ', left.toString(2).padStart(sizeX, '0'))
+				//console.log('right:', right.toString(2).padStart(sizeX, '0'))
+			}
+
+		}
+	}
+
+	return occupancyData
 }
 
 function setupUI() {

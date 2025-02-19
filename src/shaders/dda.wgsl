@@ -18,6 +18,7 @@ struct ObjectUniforms {
 @group(0) @binding(4) var tiles: texture_2d_array<f32>;
 @group(0) @binding(5) var tileSampler: sampler;
 @group(0) @binding(6) var acceleration: texture_3d<u32>;
+@group(0) @binding(7) var<storage> accelerationBuffer: array<u32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -91,6 +92,20 @@ struct Hit {
 	steps: u32,
 };
 
+
+fn expand_bits(v: u32) -> u32 {  
+	var vv = (v * 0x00010001) & 0xFF0000FF;
+	vv = (vv * 0x00000101) & 0x0F00F00F;
+	vv = (vv * 0x00000011) & 0xC30C30C3;
+	vv = (vv * 0x00000005) & 0x49249249;
+	return vv;
+}
+
+
+fn morton_encode(x: u32, y: u32, z: u32) -> u32 {
+    return expand_bits(x) | (expand_bits(y) << 1u) | (expand_bits(z) << 2u);
+}
+
 fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	var hit: Hit;
 	hit.val = empty;
@@ -129,7 +144,11 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 			return hit;
 		}
 
-		let region_bits = textureLoad(acceleration, region, 0).x;
+		//let index = morton_encode(u32(region.x), u32(region.y), u32(region.z));
+		//var region_bits = accelerationBuffer[index];
+		let region_bits = accelerationBuffer[region.x + region.y * region_dims.x + region.z * region_dims.x * region_dims.y];
+		//let region_bits = textureLoad(acceleration, region, 0).x;
+
 
 		if (region_bits != 0u) 
 		{
@@ -168,6 +187,8 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 		region += vec3i(mask) * step;
 	}
 }
+
+
 
 
 struct FragmentOutput {
