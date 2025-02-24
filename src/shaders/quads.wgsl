@@ -21,9 +21,8 @@ struct ObjectUniforms {
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
-    @location(1) uv: vec2f,
-    @location(2) @interpolate(flat) voxel: u32
+    @location(0) uv: vec2f,
+    @location(1) local_position: vec3f,
 }
 
 @vertex
@@ -101,17 +100,21 @@ fn vs_main (@location(0) face: vec4u, @builtin(vertex_index) vertex_index: u32) 
     }
 
 	let voxel = textureLoad(voxels, position, 0).r;
-	output.voxel = voxel;
-	output.color = vec4(textureLoad(palette, vec2<u32>(voxel, object_uniforms.palette_index), 0).rgb, 1);
+	//output.voxel = voxel;
+	//output.color = vec4(textureLoad(palette, vec2<u32>(voxel, object_uniforms.palette_index), 0).rgb, 1);
+    output.local_position = vec3f(position);
     return output;
 }
 
 @fragment
 fn fs_textured(in: VertexOutput) -> @location(0) vec4f {
-	return textureSample(tiles, tileSampler, in.uv, i32(in.voxel - 1));
+    let voxel = textureLoad(voxels, vec3u(in.local_position), 0).r;
+	return textureSample(tiles, tileSampler, in.uv, i32(voxel - 1));
 }
  
 @fragment
 fn fs_model(in: VertexOutput) -> @location(0) vec4f {
-	return in.color;
+    let voxel = textureLoad(voxels, vec3u(in.local_position), 0).r;
+    return vec4f(textureLoad(palette, vec2u(voxel, object_uniforms.palette_index), 0).rgb, 1); 
+	//return in.color;
 }

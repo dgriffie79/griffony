@@ -1039,7 +1039,7 @@
                  "visible":true,
                  "width":32,
                  "x":160,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1061,7 +1061,7 @@
                  "visible":true,
                  "width":32,
                  "x":192,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1083,7 +1083,7 @@
                  "visible":true,
                  "width":32,
                  "x":224,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1105,7 +1105,7 @@
                  "visible":true,
                  "width":32,
                  "x":256,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1127,7 +1127,7 @@
                  "visible":true,
                  "width":32,
                  "x":288,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1149,7 +1149,7 @@
                  "visible":true,
                  "width":32,
                  "x":128,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1171,7 +1171,7 @@
                  "visible":true,
                  "width":32,
                  "x":32,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1193,7 +1193,7 @@
                  "visible":true,
                  "width":32,
                  "x":64,
-                 "y":64
+                 "y":80
                 }, 
                 {
                  "height":32,
@@ -1215,29 +1215,7 @@
                  "visible":true,
                  "width":32,
                  "x":96,
-                 "y":64
-                }, 
-                {
-                 "height":32,
-                 "id":350,
-                 "name":"Wall",
-                 "properties":[
-                        {
-                         "name":"model_id",
-                         "type":"string",
-                         "value":"wall"
-                        }, 
-                        {
-                         "name":"rotation",
-                         "type":"int",
-                         "value":0
-                        }],
-                 "rotation":0,
-                 "type":"Decoration",
-                 "visible":true,
-                 "width":32,
-                 "x":32,
-                 "y":96
+                 "y":80
                 }, 
                 {
                  "height":32,

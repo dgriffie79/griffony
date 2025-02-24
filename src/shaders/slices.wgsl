@@ -36,7 +36,7 @@ fn vs_main (@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) i
 	);
 
 	let dims = textureDimensions(voxels);
-	
+/*	
 	// +x
 	if (n < dims.x) {
 		let p = vec3f(f32(dims.x) - f32(n), face[vertex_index].xy * vec2f(dims.yz));
@@ -57,6 +57,7 @@ fn vs_main (@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) i
 		return output;
 	}
 	n -= dims.x;
+	*/
 
 	// +y
 	if (n < dims.y) {
@@ -78,7 +79,7 @@ fn vs_main (@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) i
 		return output;
 	}
 	n -= dims.y;
-
+/*
 	// +z
 	if (n < dims.z) {
 		let p = vec3f(face[vertex_index].xy * vec2f(dims.xy), f32(dims.z) - f32(n));
@@ -90,13 +91,14 @@ fn vs_main (@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) i
 	n -= dims.z;
 
 	// -z
-	{
+	if (n < dims.z) {
 		let p = vec3f(face[vertex_index].yx * vec2f(dims.xy), f32(n));
 		output.position = object_uniforms.model_view_projection * vec4f(p, 1.0);
 		output.uvw = p;
 		return output;
 	}
-
+*/
+	return output;
 }
 
 @fragment

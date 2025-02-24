@@ -309,8 +309,6 @@ class Level {
 	buffer = null
 	bindGroup = null
 
-
-
 	constructor(url = '') {
 		this.url = url
 	}
@@ -364,7 +362,7 @@ class Level {
 }
 
 class Renderer {
-	/** @type {number} */ RENDERMODE = 0
+	/** @type {number} */ RENDERMODE = 1
     /** @type {GPUDevice} */ device = null;
     /** @type {GPUCanvasContext} */ context = null;
     /** @type {number[]} */ viewport = [0, 0];
@@ -384,6 +382,8 @@ class Renderer {
     /** @type {Uint32Array} */ uintView = null;
 	/** @type {number} */ nextPaletteIndex = 0;
 	/** @type {GPUSampler} */ tileSampler = null;
+	/** @type {GPUBuffer} */ occupancyBuffer = null;
+
 	resourceMap = new Map()
 
 	async init() {
@@ -456,6 +456,12 @@ class Renderer {
 			addressModeW: 'repeat',
 		})
 
+		this.occupancyBuffer = this.device.createBuffer({
+			size: 1 << 20,
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+		})
+		this.occupancyBump = 0
+
 		this.frameTimes = []
 		this.lastTimePrint = performance.now()
 		this.querySet = this.device.createQuerySet({
@@ -470,8 +476,10 @@ class Renderer {
 			size: 16,
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
 		})
+
 		await this.compileShaders()
 		const shader = this.shaders[['dda', 'quads', 'slices'][this.RENDERMODE]]
+
 
 		this.createBindGroupLayout()
 		this.createPipelines(shader)
@@ -803,11 +811,17 @@ class Renderer {
 			})
 
 			const accelerationData2 = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ)
+			this.device.queue.writeBuffer(this.occupancyBuffer, this.occupancyBump, accelerationData2)
+			resources.occupancyBump = this.occupancyBump
+			resources.occupancySize = (accelerationData2.byteLength + 255) & ~255
+			this.occupancyBump += resources.occupancySize
+
 			resources.accelerateBuffer = this.device.createBuffer({
 				size: accelerationData2.byteLength,
-				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE,
+				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
 			})
 			this.device.queue.writeBuffer(resources.accelerateBuffer, 0, accelerationData2)
+
 
 			this.device.queue.writeTexture(
 				{ texture: resources.acceleration },
@@ -845,6 +859,7 @@ class Renderer {
 		const regionSizeY = sizeY + 3 >> 2
 		const regionSizeZ = sizeZ + 1 >> 1
 		const data = new Uint32Array(regionSizeX * regionSizeY * regionSizeZ)
+		let totalFilled = 0
 
 		for (let z = 0; z < sizeZ; z++) {
 			for (let y = 0; y < sizeY; y++) {
@@ -861,59 +876,16 @@ class Renderer {
 						const regionIndex = regionZ * regionSizeY * regionSizeX +
 							regionY * regionSizeX + regionX
 						data[regionIndex] |= 1 << bitIndex
+						totalFilled++
 					}
 				}
 			}
 		}
+		console.log(`Filled ${totalFilled} voxels out of ${regionSizeX * regionSizeY * regionSizeZ} bricks`, 'Average:', totalFilled / (regionSizeX * regionSizeY * regionSizeZ))
 		return data
 	}
 
-	generateAccelerationDataZ(voxels, sizeX, sizeY, sizeZ) {
-		function expandBits(x) {
-			// Take a 10-bit number and spread its bits out to 30 bits
-			x = x & 0x3FF                   // Get lowest 10 bits
-			x = (x | (x << 16)) & 0xFF0000FF    // 0000 0000 1111 1111 0000 0000 1111 1111
-			x = (x | (x << 8)) & 0x0F00F00F    // 0000 1111 0000 0000 1111 0000 0000 1111
-			x = (x | (x << 4)) & 0xC30C30C3    // 1100 0011 0000 1100 0011 0000 1100 0011
-			x = (x | (x << 2)) & 0x49249249    // 0100 1001 0010 0100 1001 0010 0100 1001
-			return x
-		}
 
-
-		function mortonEncode(x, y, z) {
-			return (expandBits(x) |
-				(expandBits(y) << 1) |
-				(expandBits(z) << 2)) >>> 0
-		}
-
-		const regionSizeX = sizeX + 3 >> 2
-		const regionSizeY = sizeY + 3 >> 2
-		const regionSizeZ = sizeZ + 1 >> 1
-		const data = new Uint32Array(mortonEncode(regionSizeX - 1, regionSizeY - 1, regionSizeZ - 1))
-
-
-
-
-		for (let z = 0; z < sizeZ; z++) {
-			for (let y = 0; y < sizeY; y++) {
-				for (let x = 0; x < sizeX; x++) {
-					const voxel = voxels[z * sizeY * sizeX + y * sizeX + x]
-					if (voxel !== 255) {
-						const regionX = x >> 2
-						const regionY = y >> 2
-						const regionZ = z >> 1
-						const localX = x & 3
-						const localY = y & 3
-						const localZ = z & 1
-						const bitIndex = localX + (localY * 4) + (localZ * 16)
-						const regionIndex = mortonEncode(regionX, regionY, regionZ)
-						data[regionIndex] |= 1 << bitIndex
-					}
-				}
-			}
-		}
-		return data
-	}
 
 	/**
 	 * @param {Tileset} tileset
@@ -993,13 +965,6 @@ class Renderer {
 					depthOrArrayLayers: regionSizeZ
 				}
 			)
-
-			const accelerationData2 = this.generateAccelerationDataZ(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ)
-			resources.accelerateBuffer = this.device.createBuffer({
-				size: accelerationData.byteLength,
-				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE,
-			})
-			this.device.queue.writeBuffer(resources.accelerateBuffer, 0, accelerationData2)
 		}
 
 		if (this.RENDERMODE == 1) {
@@ -1063,6 +1028,7 @@ class Renderer {
 		renderPass.setPipeline(this.modelPipeline)
 		for (const e of Entity.all) {
 			if (e.model && e !== player) {
+				let dist = vec3.distance(e.worldPosition, camera.entity.worldPosition)
 				const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0])
 				const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, vec3.scale(vec3.create(), e.localScale, 1 / 32))
 				mat4.multiply(modelMatrix, modelMatrix, offsetMatrix)
@@ -1254,6 +1220,9 @@ class Renderer {
 					binding: 7,
 					resource: {
 						buffer: resources.accelerateBuffer,
+						//buffer: this.occupancyBuffer,
+						//offset: resources.occupancyBump,
+						//size: resources.occupancySize,
 					}
 				}]
 			}
@@ -1604,11 +1573,15 @@ class Volume {
 function greedyMesh(voxels, sizeX, sizeY, sizeZ, emptyValue = 255) {
 	let occupancyData = new BigUint64Array(sizeZ * sizeY * ((sizeX + 63) >> 6))
 
+	let sizeMaskX = sizeX + 63 >> 6
+	let sizeMaskY = sizeY + 63 >> 6
+	let sizeMaskZ = sizeZ + 63 >> 6
+
 	for (let z = 0; z < sizeZ; z++) {
 		for (let y = 0; y < sizeY; y++) {
 			for (let x = 0; x < sizeX; x++) {
 				if (voxels[z * sizeY * sizeX + y * sizeX + x] !== emptyValue) {
-					let maskIndex = z * sizeY + y + (x >> 6)
+					let maskIndex = z * sizeY * sizeMaskX + y * sizeMaskX + (x >> 6)
 					let bitIndex = x & 63
 					occupancyData[maskIndex] |= 1n << BigInt(bitIndex)
 				}
@@ -1618,18 +1591,15 @@ function greedyMesh(voxels, sizeX, sizeY, sizeZ, emptyValue = 255) {
 
 	for (let z = 0; z < sizeZ; z++) {
 		for (let y = 0; y < sizeY; y++) {
-			let maskIndex = z * sizeY + y
-			let mask = occupancyData[maskIndex]
-			let left = ~(mask >> 1n) & mask
-			let right = ~(mask << 1n) & mask
-			if (z == 0) {
-				//console.log('mask: ', mask.toString(2).padStart(sizeX, '0'))
-				//console.log('left: ', left.toString(2).padStart(sizeX, '0'))
-				//console.log('right:', right.toString(2).padStart(sizeX, '0'))
-			}
+			for (let x = 0; x < sizeMaskX; x++) {
+				let mask = occupancyData[z * sizeY * sizeMaskX + y * sizeMaskX + x]
+				let left = ~(mask >> 1n) & mask
+				let right = ~(mask << 1n) & mask
 
+			}
 		}
 	}
+
 
 	return occupancyData
 }

@@ -93,18 +93,7 @@ struct Hit {
 };
 
 
-fn expand_bits(v: u32) -> u32 {  
-	var vv = (v * 0x00010001) & 0xFF0000FF;
-	vv = (vv * 0x00000101) & 0x0F00F00F;
-	vv = (vv * 0x00000011) & 0xC30C30C3;
-	vv = (vv * 0x00000005) & 0x49249249;
-	return vv;
-}
 
-
-fn morton_encode(x: u32, y: u32, z: u32) -> u32 {
-    return expand_bits(x) | (expand_bits(y) << 1u) | (expand_bits(z) << 2u);
-}
 
 fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	var hit: Hit;
@@ -144,11 +133,7 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 			return hit;
 		}
 
-		//let index = morton_encode(u32(region.x), u32(region.y), u32(region.z));
-		//var region_bits = accelerationBuffer[index];
-		let region_bits = accelerationBuffer[region.x + region.y * region_dims.x + region.z * region_dims.x * region_dims.y];
-		//let region_bits = textureLoad(acceleration, region, 0).x;
-
+		let region_bits = textureLoad(acceleration, region, 0).x;
 
 		if (region_bits != 0u) 
 		{
@@ -188,6 +173,53 @@ fn march(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
 	}
 }
 
+fn march2(raypos: vec3f, raydir: vec3f, empty: u32) -> Hit {
+	var hit: Hit;
+	hit.val = empty;
+	hit.steps = 0;
+
+	let step = vec3i(sign(raydir));
+	let eps = raydir * 1e-4;
+	
+	let voxel_dims = vec3i(textureDimensions(voxels));
+	let region_dims = vec3i(textureDimensions(acceleration));
+	const region_size = vec3i(4, 4, 2);
+
+	let tdelta = abs(1.0 / raydir);
+
+	let t1 = -raypos / raydir;
+	let t2 = (vec3f(voxel_dims) - raypos) / raydir;
+	let t_min = min(t1, t2);
+	let t_near = max(max(t_min.x, t_min.y), t_min.z);
+
+	let start = raypos + max(0, t_near) * raydir;
+
+	hit.voxel = vec3i(floor(start + eps));
+	let bounds = vec3f(hit.voxel + max(step, vec3i(0)));
+	var tnext = abs((bounds - start) / raydir);
+	var tprev = 0.0;
+
+	var prev_region = vec3i(-1);
+	var region_bits = 0u;
+
+	loop {
+		hit.steps++;
+		if (any(hit.voxel < vec3i(0)) || any(hit.voxel >= voxel_dims)) {
+			return hit;
+		}
+
+		hit.val = textureLoad(voxels, hit.voxel, 0).x; 
+		hit.pos = start + tprev * raydir;
+		if (hit.val != empty) {
+			return hit;
+		}
+
+		tprev = min(tnext.x, min(tnext.y, tnext.z));
+		let mask = tnext == vec3f(tprev);
+		tnext += vec3f(mask) * tdelta;
+		hit.voxel += vec3i(mask) * step;
+	}
+}
 
 
 
