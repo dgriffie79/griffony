@@ -21,9 +21,9 @@ class Entity {
 	worldToLocalTransform = mat4.create()
 
 	/** @type {Model} */ model = null
-	model_id = -1
+	modelId = -1
 	frame = 0
-	frame_time = 0
+	frameTime = 0
 	animationFrame = 0
 
 	height = 0
@@ -94,11 +94,11 @@ class Entity {
 					entity.radius = property.value
 					break
 				case 'model_id':
-					entity.model_id = property.value
+					entity.modelId = property.value
 					break
 			}
 		}
-		entity.model = models[entity.model_id]
+		entity.model = models[entity.modelId]
 		return entity
 	}
 
