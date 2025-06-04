@@ -7,17 +7,21 @@
     "start": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src/**/*.js"
+    "lint": "eslint src/**/*.{js,ts}",
+    "type-check": "tsc --noEmit",
+    "type-check:watch": "tsc --noEmit --watch"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@eslint/js": "^9.18.0",
-    "@webgpu/types": "^0.1.53",
+    "@types/node": "^22.15.29",
+    "@webgpu/types": "^0.1.61",
     "eslint": "^9.18.0",
     "eslint-plugin-jsdoc": "^50.6.1",
     "globals": "^15.14.0",
     "sharp": "^0.33.5",
+    "typescript": "^5.8.3",
     "vite": "^6.0.6"
   },
   "dependencies": {

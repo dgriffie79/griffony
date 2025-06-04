@@ -1,2 +1,1 @@
-This is a javascript project. Do not suggest typescript code.
-Prefer classes over factory functions.
+Terminal commands are done in powershell so dont use &&
