@@ -5,8 +5,6 @@ import type { Level } from './Level';
 import { greedyMesh } from './utils';
 
 export class Renderer {
-  RENDERMODE: number = 1; // Only quads rendering is used
-
   device!: GPUDevice;
   context!: GPUCanvasContext;
   viewport: [number, number] = [0, 0];
@@ -18,22 +16,18 @@ export class Renderer {
   depthTexture!: GPUTexture;
   
   frameTimes: number[] = [];
-  lastTimePrint: number = 0;
-  querySet!: GPUQuerySet;
+  lastTimePrint: number = 0;  querySet!: GPUQuerySet;
   queryResolve!: GPUBuffer;
   queryResult!: GPUBuffer;
-  occupancyBump: number = 0;
   
   frameUniforms!: GPUBuffer;
   objectUniforms!: GPUBuffer;
   objectUniformsOffset: number = 0;
   paletteTexture!: GPUTexture;
   transferBuffer!: ArrayBuffer;
-  floatView!: Float32Array;
-  uintView!: Uint32Array;
+  floatView!: Float32Array;  uintView!: Uint32Array;
   nextPaletteIndex: number = 0;
   tileSampler!: GPUSampler;
-  occupancyBuffer!: GPUBuffer;
 
   resourceMap = new Map<Model | Level, any>();
 
@@ -102,20 +96,13 @@ export class Renderer {
       size: [256, 256, 1],
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
-    
-    this.tileSampler = this.device.createSampler({
+      this.tileSampler = this.device.createSampler({
       magFilter: 'nearest',
       minFilter: 'nearest',
       addressModeU: 'repeat',
       addressModeV: 'repeat',
       addressModeW: 'repeat',
     });
-
-    this.occupancyBuffer = this.device.createBuffer({
-      size: 1 << 20,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-    this.occupancyBump = 0;
 
     this.frameTimes = [];
     this.lastTimePrint = performance.now();
@@ -136,7 +123,7 @@ export class Renderer {
     });
 
     await this.compileShaders();
-    const shader = this.shaders[['dda', 'quads', 'slices'][this.RENDERMODE]];
+    const shader = this.shaders['quads']; // Always use quads shader
     this.createBindGroupLayout();
     this.createPipelines(shader);
   }
@@ -213,156 +200,81 @@ export class Renderer {
           binding: 5,
           visibility: GPUShaderStage.FRAGMENT,
           sampler: { type: 'non-filtering' }
-        },
-      ]
+        },      ]
     };
-
-    if (this.RENDERMODE === 0) {
-      bindGroupDescriptor.entries = [...bindGroupDescriptor.entries, 
-        {
-          binding: 6,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: 'uint', viewDimension: '3d' }
-        },
-        {
-          binding: 7,
-          visibility: GPUShaderStage.FRAGMENT,
-          buffer: { type: 'read-only-storage' }
-        }
-      ];
-    }
 
     this.bindGroupLayout = this.device.createBindGroupLayout(bindGroupDescriptor);
   }
-
   createPipelines(shader: GPUShaderModule): void {
-    let terrainPipelineDescriptor: GPURenderPipelineDescriptor;
-    let modelPipelineDescriptor: GPURenderPipelineDescriptor;
-
-    switch (this.RENDERMODE) {
-      case 0:
-      case 2:
-        terrainPipelineDescriptor = {
-          layout: this.device.createPipelineLayout({
-            bindGroupLayouts: [this.bindGroupLayout]
-          }),
-          vertex: {
-            module: shader,
-            entryPoint: 'vs_main',
-          },
-          fragment: {
-            module: shader,
-            entryPoint: 'fs_textured',
-            targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-          },
-          primitive: {
-            topology: 'triangle-list',
-            cullMode: 'back',
-          },
-          depthStencil: {
-            format: 'depth24plus',
-            depthWriteEnabled: true,
-            depthCompare: 'less',
-          },
-        };
-        
-        modelPipelineDescriptor = {
-          layout: this.device.createPipelineLayout({
-            bindGroupLayouts: [this.bindGroupLayout]
-          }),
-          vertex: {
-            module: shader,
-            entryPoint: 'vs_main',
-          },
-          fragment: {
-            module: shader,
-            entryPoint: 'fs_model',
-            targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-          },
-          primitive: {
-            topology: 'triangle-list',
-            cullMode: 'back',
-          },
-          depthStencil: {
-            format: 'depth24plus',
-            depthWriteEnabled: true,
-            depthCompare: 'less',
-          },
-        };
-        break;
-        
-      case 1:
-        terrainPipelineDescriptor = {
-          label: 'terrain-cubes',
-          layout: this.device.createPipelineLayout({
-            bindGroupLayouts: [this.bindGroupLayout]
-          }),
-          vertex: {
-            module: shader,
-            entryPoint: 'vs_main',
-            buffers: [{
-              arrayStride: 4,
-              stepMode: 'instance',
-              attributes: [{
-                shaderLocation: 0,
-                offset: 0,
-                format: 'uint8x4'
-              }]
-            }]
-          },
-          fragment: {
-            module: shader,
-            entryPoint: 'fs_textured',
-            targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-          },
-          primitive: {
-            topology: 'triangle-list',
-            cullMode: 'back',
-            frontFace: 'ccw',
-          },
-          depthStencil: {
-            format: this.depthTexture.format,
-            depthWriteEnabled: true,
-            depthCompare: 'less',
-          },
-        };
-        
-        modelPipelineDescriptor = {
-          label: 'model-cubes',
-          layout: this.device.createPipelineLayout({
-            bindGroupLayouts: [this.bindGroupLayout]
-          }),
-          vertex: {
-            module: shader,
-            entryPoint: 'vs_main',
-            buffers: [{
-              arrayStride: 4,
-              stepMode: 'instance',
-              attributes: [{
-                shaderLocation: 0,
-                offset: 0,
-                format: 'uint8x4'
-              }]
-            }],
-          },
-          fragment: {
-            module: shader,
-            entryPoint: 'fs_model',
-            targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-          },
-          primitive: {
-            topology: 'triangle-list',
-            cullMode: 'back',
-            frontFace: 'ccw',
-          },
-          depthStencil: {
-            format: this.depthTexture.format,
-            depthWriteEnabled: true,
-            depthCompare: 'less',
-          },
-        };
-        break;
-    }
+    const terrainPipelineDescriptor: GPURenderPipelineDescriptor = {
+      label: 'terrain-cubes',
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this.bindGroupLayout]
+      }),
+      vertex: {
+        module: shader,
+        entryPoint: 'vs_main',
+        buffers: [{
+          arrayStride: 4,
+          stepMode: 'instance',
+          attributes: [{
+            shaderLocation: 0,
+            offset: 0,
+            format: 'uint8x4'
+          }]
+        }]
+      },
+      fragment: {
+        module: shader,
+        entryPoint: 'fs_textured',
+        targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
+      },
+      primitive: {
+        topology: 'triangle-list',
+        cullMode: 'back',
+        frontFace: 'ccw',
+      },
+      depthStencil: {
+        format: this.depthTexture.format,
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+      },
+    };
+    
+    const modelPipelineDescriptor: GPURenderPipelineDescriptor = {
+      label: 'model-cubes',
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this.bindGroupLayout]
+      }),
+      vertex: {
+        module: shader,
+        entryPoint: 'vs_main',
+        buffers: [{
+          arrayStride: 4,
+          stepMode: 'instance',
+          attributes: [{
+            shaderLocation: 0,
+            offset: 0,
+            format: 'uint8x4'
+          }]
+        }],
+      },
+      fragment: {
+        module: shader,
+        entryPoint: 'fs_model',
+        targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
+      },
+      primitive: {
+        topology: 'triangle-list',
+        cullMode: 'back',
+        frontFace: 'ccw',
+      },
+      depthStencil: {
+        format: this.depthTexture.format,
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+      },
+    };
 
     this.terrainPipeline = this.device.createRenderPipeline(terrainPipelineDescriptor!);
     this.modelPipeline = this.device.createRenderPipeline(modelPipelineDescriptor!);
@@ -388,9 +300,7 @@ export class Renderer {
         rowsPerImage: volume.sizeY
       },
       [volume.sizeX, volume.sizeY, volume.sizeZ]
-    );
-
-    this.device.queue.writeTexture(
+    );    this.device.queue.writeTexture(
       {
         texture: this.paletteTexture,
         aspect: 'all',
@@ -403,92 +313,20 @@ export class Renderer {
     );
     resources.paletteIndex = this.nextPaletteIndex++;
 
-    if (this.RENDERMODE === 0) {
-      const accelerationData = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ);
-      const regionSizeX = (volume.sizeX + 3) >> 2;
-      const regionSizeY = (volume.sizeY + 3) >> 2;
-      const regionSizeZ = (volume.sizeZ + 1) >> 1;
-
-      resources.acceleration = this.device.createTexture({
-        size: [regionSizeX, regionSizeY, regionSizeZ],
-        dimension: '3d',
-        format: 'r32uint',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-      });
-
-      const accelerationData2 = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ);
-      this.device.queue.writeBuffer(this.occupancyBuffer, this.occupancyBump, accelerationData2);
-      resources.occupancyBump = this.occupancyBump;
-      resources.occupancySize = (accelerationData2.byteLength + 255) & ~255;
-      this.occupancyBump += resources.occupancySize;
-
-      resources.accelerateBuffer = this.device.createBuffer({
-        size: accelerationData2.byteLength,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-      });
-      this.device.queue.writeBuffer(resources.accelerateBuffer, 0, accelerationData2);
-
-      this.device.queue.writeTexture(
-        { texture: resources.acceleration },
-        accelerationData,
-        {
-          bytesPerRow: regionSizeX * 4,
-          rowsPerImage: regionSizeY,
-        },
-        {
-          width: regionSizeX,
-          height: regionSizeY,
-          depthOrArrayLayers: regionSizeZ
-        }
-      );
-    }
-
     if (model.url.includes('box_frame')) {
       greedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
-    }
-
-    if (this.RENDERMODE === 1) {
+    }    // Generate faces for quad rendering
       const faces = model.volume.generateFaces();
       resources.rasterBuffer = this.device.createBuffer({
         size: faces.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
       this.device.queue.writeBuffer(resources.rasterBuffer, 0, faces);
-    }
 
     this.resourceMap.set(model, resources);
   }
 
-  generateAccelerationData(voxels: Uint8Array | Uint16Array | Uint32Array, sizeX: number, sizeY: number, sizeZ: number): Uint32Array {
-    const regionSizeX = (sizeX + 3) >> 2;
-    const regionSizeY = (sizeY + 3) >> 2;
-    const regionSizeZ = (sizeZ + 1) >> 1;
-    const data = new Uint32Array(regionSizeX * regionSizeY * regionSizeZ);
-    let totalFilled = 0;
-
-    for (let z = 0; z < sizeZ; z++) {
-      for (let y = 0; y < sizeY; y++) {
-        for (let x = 0; x < sizeX; x++) {
-          const voxel = voxels[z * sizeY * sizeX + y * sizeX + x];
-          if (voxel !== 255) {
-            const regionX = x >> 2;
-            const regionY = y >> 2;
-            const regionZ = z >> 1;
-            const localX = x & 3;
-            const localY = y & 3;
-            const localZ = z & 1;
-            const bitIndex = localX + (localY * 4) + (localZ * 16);
-            const regionIndex = regionZ * regionSizeY * regionSizeX + regionY * regionSizeX + regionX;
-            data[regionIndex] |= 1 << bitIndex;
-            totalFilled++;
-          }
-        }
-      }
-    }
-    
-    console.log(`Filled ${totalFilled} voxels out of ${regionSizeX * regionSizeY * regionSizeZ} bricks`, 'Average:', totalFilled / (regionSizeX * regionSizeY * regionSizeZ));
-    return data;
-  }
+    // Removed generateAccelerationData method as it's no longer needed
 
   registerTileset(tileset: Tileset): void {
     const width = tileset.tileWidth;
@@ -524,8 +362,7 @@ export class Renderer {
       format: 'r16uint',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
     });
-    
-    this.device.queue.writeTexture(
+      this.device.queue.writeTexture(
       { texture: resources.texture },
       volume.voxels,
       {
@@ -533,44 +370,13 @@ export class Renderer {
         rowsPerImage: volume.sizeY
       },
       [volume.sizeX, volume.sizeY, volume.sizeZ]
-    );
-
-    if (this.RENDERMODE === 0) {
-      const accelerationData = this.generateAccelerationData(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ);
-      const regionSizeX = (volume.sizeX + 3) >> 2;
-      const regionSizeY = (volume.sizeY + 3) >> 2;
-      const regionSizeZ = (volume.sizeZ + 1) >> 1;
-
-      resources.acceleration = this.device.createTexture({
-        size: [regionSizeX, regionSizeY, regionSizeZ],
-        dimension: '3d',
-        format: 'r32uint',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-      });
-
-      this.device.queue.writeTexture(
-        { texture: resources.acceleration },
-        accelerationData,
-        {
-          bytesPerRow: regionSizeX * 4,
-          rowsPerImage: regionSizeY,
-        },
-        {
-          width: regionSizeX,
-          height: regionSizeY,
-          depthOrArrayLayers: regionSizeZ
-        }
-      );
-    }
-
-    if (this.RENDERMODE === 1) {
+    );    // Generate faces for quad rendering
       const faces = volume.generateFaces();
       resources.rasterBuffer = this.device.createBuffer({
         size: faces.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
       this.device.queue.writeBuffer(resources.rasterBuffer, 0, faces);
-    }
 
     this.resourceMap.set(level, resources);
   }
@@ -679,21 +485,7 @@ export class Renderer {
     const resources = this.resourceMap.get(level);
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
     floatView.set(modelViewProjectionMatrix, 0);
-    floatView.set(modelViewProjectionMatrix, 16);
-
-    if (!resources.bindGroup) {
-      const additionalEntries: GPUBindGroupEntry[] = [];
-      if (this.RENDERMODE === 0) {
-        additionalEntries.push({
-          binding: 6,
-          resource: resources.acceleration.createView()
-        });
-        additionalEntries.push({
-          binding: 7,
-          resource: { buffer: resources.accelerateBuffer }
-        });
-      }
-
+    floatView.set(modelViewProjectionMatrix, 16);    if (!resources.bindGroup) {
       resources.bindGroup = this.device.createBindGroup({
         layout: this.bindGroupLayout,
         entries: [
@@ -720,23 +512,16 @@ export class Renderer {
           {
             binding: 5,
             resource: this.tileSampler
-          },
-          ...additionalEntries
+          }
         ],
       });
     }
 
     renderPass.setPipeline(this.terrainPipeline);
     renderPass.setBindGroup(0, resources.bindGroup, [this.objectUniformsOffset]);
-
-    switch (this.RENDERMODE) {
-      case 0:
-        break;
-      case 1:
-        renderPass.setVertexBuffer(0, resources.rasterBuffer);
-        renderPass.draw(6, resources.rasterBuffer.size / 4, 0, 0);
-        break;
-    }
+    
+    renderPass.setVertexBuffer(0, resources.rasterBuffer);
+    renderPass.draw(6, resources.rasterBuffer.size / 4, 0, 0);
     this.objectUniformsOffset += 256;
   }
 
@@ -747,9 +532,7 @@ export class Renderer {
 
     floatView.set(modelMatrix, 0);
     floatView.set(modelViewProjectionMatrix, 16);
-    uintView[35] = resources.paletteIndex;
-
-    if (!resources.bindGroup) {
+    uintView[35] = resources.paletteIndex;    if (!resources.bindGroup) {
       const descriptor: GPUBindGroupDescriptor = {
         label: 'model',
         layout: this.bindGroupLayout,
@@ -780,37 +563,14 @@ export class Renderer {
           }
         ],
       };
-      
-      if (this.RENDERMODE === 0) {
-        descriptor.entries = [...descriptor.entries,
-          {
-            binding: 6,
-            resource: resources.acceleration.createView()
-          },
-          {
-            binding: 7,
-            resource: { buffer: resources.accelerateBuffer }
-          }
-        ];
-      }
 
       resources.bindGroup = this.device.createBindGroup(descriptor);
     }
 
     renderPass.setBindGroup(0, resources.bindGroup, [this.objectUniformsOffset]);
-
-    switch (this.RENDERMODE) {
-      case 0:
-        renderPass.draw(36, 1, 0, 0);
-        break;
-      case 1:
-        renderPass.setVertexBuffer(0, resources.rasterBuffer);
-        renderPass.draw(6, resources.rasterBuffer.size / 4, 0, 0);
-        break;
-      case 2:
-        renderPass.draw(6, 2 * model.volume.sizeX + 2 * model.volume.sizeY + 2 * model.volume.sizeZ);
-        break;
-    }
+    
+    renderPass.setVertexBuffer(0, resources.rasterBuffer);
+    renderPass.draw(6, resources.rasterBuffer.size / 4, 0, 0);
 
     this.objectUniformsOffset += 256;
   }

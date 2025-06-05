@@ -773,9 +773,6 @@ async function main(): Promise<void> {
 	combatSystem.initializeCombatStats(player, 100, 5); // 100 HP, 5 defense
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
 
-	// Initialize some enemy entities for testing
-	initializeTestEntities();
-
 	requestAnimationFrame(loop);
 }
 
@@ -788,24 +785,4 @@ main().catch(error => {
 	}
 });
 
-function initializeTestEntities(): void {
-	// Create some test entities to fight
-	for (let i = 0; i < 3; i++) {
-		const enemy = new Entity();
-		enemy.localPosition = vec3.fromValues(
-			player.localPosition[0] + (Math.random() - 0.5) * 10,
-			player.localPosition[1] + (Math.random() - 0.5) * 10,
-			player.localPosition[2] + 1
-		);
-		enemy.height = 0.5;
-		enemy.radius = 0.3;
-		enemy.gravity = true;
-		enemy.model = models['fatta']; // Use one of the existing models
-		enemy.dirty = true;
 
-		// Initialize combat stats for enemy
-		combatSystem.initializeCombatStats(enemy, 50, 2); // 50 HP, 2 defense
-		
-		console.log(`Created enemy ${enemy.id} at position`, enemy.localPosition);
-	}
-}

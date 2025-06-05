@@ -83,9 +83,6 @@ export interface ModelData {
   palette: number[][];
 }
 
-// Renderer constants
-export const RENDERMODE = 1; // Only quads rendering is used
-
 // Network message types
 export const MessageType = {
   PLAYER_JOIN: 0,
