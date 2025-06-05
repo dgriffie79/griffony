@@ -162,11 +162,11 @@ function playHitSound(): void {
 (globalThis as any).playAttackSound = playAttackSound;
 (globalThis as any).playHitSound = playHitSound;
 
-function setupUI(): void {
-	// Set up keybind buttons
+function setupUI(): void {	// Set up keybind buttons
 	for (const button of document.getElementsByClassName('bind-button')) {
 		const bindButton = button as HTMLButtonElement;
-		bindButton.textContent = settings.keybinds[bindButton.id as keyof typeof settings.keybinds];
+		const binding = settings.keybinds[bindButton.id as keyof typeof settings.keybinds];
+		bindButton.textContent = binding || '';
 	}
 
 	// Set up mouse invert checkbox
@@ -179,13 +179,19 @@ function setupUI(): void {
 	if (!menu) return;
 	let activeBinding: HTMLButtonElement | null = null;
 	let bindingJustCompleted = false;
-
 	menu.addEventListener('keyup', (event) => {
 		event.stopPropagation();
 		if (activeBinding) {
 			event.preventDefault();
 		}
-	});	menu.addEventListener('keydown', (event) => {
+		
+		// If we just completed a binding, ignore this keyup to prevent re-activation
+		if (bindingJustCompleted) {
+			bindingJustCompleted = false;
+			event.preventDefault();
+			return;
+		}
+	});menu.addEventListener('keydown', (event) => {
 		event.stopPropagation();
 		if (!activeBinding) return;
 
@@ -211,7 +217,11 @@ function setupUI(): void {
 		settings.keybinds[activeBinding.id as keyof typeof settings.keybinds] = event.code;
 		localStorage.setItem('gameSettings', JSON.stringify(settings));
 		activeBinding = null;
-	});	menu.addEventListener('mousedown', (event) => {
+		bindingJustCompleted = true;
+
+		// Prevent the key from activating the button
+		event.preventDefault();
+	});menu.addEventListener('mousedown', (event) => {
 		event.stopPropagation();
 		if (!activeBinding) return;
 
@@ -252,10 +262,10 @@ function setupUI(): void {
 
 		// Prevent the subsequent click event
 		event.preventDefault();
-	});
-	menu.addEventListener('blur', (event) => {
+	});	menu.addEventListener('blur', (event) => {
 		if (activeBinding && event.target === activeBinding) {
-			activeBinding.textContent = settings.keybinds[activeBinding.id as keyof typeof settings.keybinds];
+			const currentBinding = settings.keybinds[activeBinding.id as keyof typeof settings.keybinds];
+			activeBinding.textContent = currentBinding || '';
 			activeBinding.classList.remove('listening');
 			activeBinding = null;
 		}
@@ -269,12 +279,11 @@ function setupUI(): void {
 			bindingJustCompleted = false;
 			return;
 		}
-
 		const button = event.target as HTMLButtonElement;
 		if (button.classList?.contains('bind-button')) {
 			activeBinding = button;
 			activeBinding.classList.add('listening');
-			activeBinding.textContent = 'Press key or click mouse...';
+			// Don't change textContent - CSS will show "Press key..." via ::before
 			return;
 		}
 

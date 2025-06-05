@@ -16,9 +16,7 @@
             padding: 0;
             overflow: hidden;
             background-color: rgb(0, 0, 0);
-        }
-
-        form {
+        }        form {
             background-color: rgb(38, 30, 13);
             padding: 1rem;
             display: flex;
@@ -29,6 +27,10 @@
             transform: translate(-50%, -50%);
             font-size: 2em;
             color: white;
+            max-height: 90vh;
+            min-width: 600px;
+            width: auto;
+            overflow-y: auto;
         }
 
         .menu-button {
@@ -131,23 +133,47 @@
             gap: 8px;
             align-items: center;
             margin-bottom: 8px;
-        }
-
-        .bind-button {
+        }        .bind-button {
             width: 100%;
             text-align: center;
-            padding: 4px 8px;
+            padding: 8px 12px;
+            min-height: 1.8em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            position: relative;
+        }
+
+        .bind-button:empty::before {
+            content: "Unbound";
+            opacity: 0.5;
+            font-style: italic;
+            color: rgba(255, 255, 255, 0.6);
         }
 
         .bind-button.listening {
             background-color: rgb(88, 80, 63);
         }
 
-
-        @media (max-width: 768px) {
+        .bind-button.listening::after {
+            content: "Press key...";
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            background-color: rgb(88, 80, 63);
+            color: rgba(255, 255, 255, 0.9);
+            font-style: italic;
+        }        @media (max-width: 768px) {
             form {
                 width: 100%;
                 height: 100%;
+                min-width: unset;
                 overflow-y: auto;
                 font-size: 1.5rem;
             }
@@ -156,7 +182,6 @@
                 display: block;
                 /* Show on mobile */
             }
-
         }
 
         #debug {
@@ -207,8 +232,7 @@
                         <input type="checkbox" name="invert" id="invert-mouse" checked>Invert
                     </label>
                 </div>
-            </fieldset>
-            <fieldset>
+            </fieldset>            <fieldset>
                 <legend>Keybindings</legend>
                 <div class="keybind-row">
                     <label for="forward">Forward</label>
