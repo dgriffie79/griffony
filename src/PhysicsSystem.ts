@@ -494,15 +494,14 @@ export class PhysicsSystem {
   
   /**
    * Log debug information periodically
-   */
-  private logDebugInfo(): void {
+   */  private logDebugInfo(): void {
     if (!this.debugEnabled) return;
     
     this.frameCount++;
     
     // Report stats every second
     if (performance.now() - this.lastReportTime > 1000) {
-      console.log(this.getDebugStatus());
+      console.debug(this.getDebugStatus());
       this.frameCount = 0;
       this.lastReportTime = performance.now();
     }
@@ -1011,10 +1010,8 @@ export class PhysicsSystem {
         config.spatialOptimization = true;
         this.gridCellSize = 3; // Smaller cells = more checks but more accurate
         this.useGridOptimization = true;
-        break;
-    }
-    
-    this.updateConfig(config);
+        break;    }
+      this.updateConfig(config);
     console.log(`Physics quality set to ${level}`);
   }
   
@@ -1045,10 +1042,8 @@ export class PhysicsSystem {
       entity._tempGravity = entity.gravity;
       entity._tempCollision = entity.collision;
       entity.gravity = false;
-      entity.collision = false;
-    }
-    
-    if (this.debugEnabled) {
+      entity.collision = false;    }
+      if (this.debugEnabled) {
       console.log(`Limited active physics entities to ${maxEntities}/${physicsEntities.length}`);
     }
   }

@@ -470,11 +470,10 @@ export class Renderer {
       this.queryResult.unmap();
       const frameTimeMs = Number(delta) / 1e6;
       this.frameTimes.push(frameTimeMs);
-      const now = performance.now();
-      if (now - this.lastTimePrint >= 1000) {
+      const now = performance.now();      if (now - this.lastTimePrint >= 1000) {
         const sum = this.frameTimes.reduce((a, b) => a + b, 0);
         const avgFrameTime = sum / this.frameTimes.length;
-        console.log(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`);
+        console.debug(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`);
         this.frameTimes.length = 0;
         this.lastTimePrint = now;
       }

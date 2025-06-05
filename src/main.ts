@@ -491,8 +491,7 @@ function onKeydown(event: KeyboardEvent): void {
 			physicsSystem.setDebug(isEnabled);
 			console.log(`Physics debugging ${isEnabled ? 'enabled' : 'disabled'}`);
 			break;
-		}
-		case 'KeyB': {
+		}		case 'KeyB': {
 			// Toggle bounce factor
 			const config = physicsSystem.getConfig();
 			config.collisionBounce = config.collisionBounce > 0 ? 0 : 0.5;
@@ -550,8 +549,7 @@ function onKeydown(event: KeyboardEvent): void {
 					case 'high':
 					default:
 						newQuality = 'low';
-						break;
-				}
+						break;				}
 				
 				physicsSystem.setQualityLevel(newQuality);
 				console.log(`Physics quality set to ${newQuality}`);
