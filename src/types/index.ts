@@ -1,5 +1,6 @@
 // WebGPU and gl-matrix type extensions
 import type { mat4, quat, vec3 } from 'gl-matrix';
+import type { Entity } from '../Entity';
 
 // Global types
 export interface GameSettings {
@@ -15,6 +16,9 @@ export interface GameSettings {
     jump: string;
     respawn: string;
     godMode: string;
+    attack: string;
+    block: string;
+    switchWeapon: string;
   };
 }
 
@@ -115,4 +119,59 @@ export interface EntityUpdateMessage extends NetworkMessage {
     rotation: quat;
     headRotation: quat;
   };
+}
+
+// Combat System Types
+export interface WeaponData {
+  id: string;
+  name: string;
+  damage: number;
+  range: number;
+  attackSpeed: number; // attacks per second
+  swingDuration: number; // milliseconds for full swing
+  modelName: string;
+}
+
+export interface CombatStats {
+  health: number;
+  maxHealth: number;
+  defense: number;
+  lastDamageTime: number;
+  isDead: boolean;
+}
+
+export interface AttackInfo {
+  damage: number;
+  source: Entity;
+  direction: vec3;
+  position: vec3;
+  weaponId?: string;
+}
+
+export interface WeaponSwing {
+  isSwinging: boolean;
+  startTime: number;
+  duration: number;
+  progress: number; // 0-1
+  hasHit: boolean;
+  targetPosition: vec3;
+}
+
+// Weapon Types
+export enum WeaponType {
+  SWORD = 'sword',
+  AXE = 'axe',
+  HAMMER = 'hammer',
+  BOW = 'bow',
+  STAFF = 'staff'
+}
+
+// Combat Events
+export interface CombatEvent {
+  type: 'attack' | 'hit' | 'death' | 'heal';
+  source?: Entity;
+  target?: Entity;
+  damage?: number;
+  position?: vec3;
+  weaponId?: string;
 }
