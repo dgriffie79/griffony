@@ -183,15 +183,19 @@ export class CombatSystem {
   // Handle entity death
   private onEntityDeath(entity: Entity, killer?: Entity): void {
     console.log(`Entity ${entity.id} has died!`);
-    
     // Remove weapon on death
     this.unequipWeapon(entity);
-    
     // For players, trigger respawn logic
     if (entity instanceof Player) {
       setTimeout(() => {
         this.respawnPlayer(entity);
       }, 3000); // 3 second respawn delay
+    } else {
+      // Remove non-player entity from Entity.all
+      const idx = Entity.all.indexOf(entity);
+      if (idx !== -1) {
+        Entity.all.splice(idx, 1);
+      }
     }
   }
 

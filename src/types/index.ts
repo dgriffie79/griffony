@@ -172,3 +172,16 @@ export interface CombatEvent {
   position?: vec3;
   weaponId?: string;
 }
+
+// Physics System Types
+export interface CollisionEvent {
+  type: 'entity' | 'terrain';
+  entity: Entity;
+  otherEntity?: Entity;
+  position: vec3;
+  normal: vec3;
+  velocity: vec3;
+  force: number;
+}
+
+export type CollisionCallback = (event: CollisionEvent) => void;

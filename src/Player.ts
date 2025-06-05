@@ -3,6 +3,7 @@ import { Entity } from './Entity';
 
 export class Player extends Entity {
   gravity: boolean = true;
+  collision: boolean = true;
   height: number = 0.5;
   radius: number = 0.25;
   head: Entity = new Entity();

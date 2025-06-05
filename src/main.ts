@@ -1,5 +1,5 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
-import { Entity } from './Entity.js';
+import { Entity, PhysicsLayer } from './Entity.js';
 import { Camera } from './Camera.js';
 import { Player } from './Player.js';
 import { Model } from './Model.js';
@@ -8,9 +8,11 @@ import { Level } from './Level.js';
 import { Renderer } from './Renderer.js';
 import { Net } from './Net.js';
 import { combatSystem } from './CombatSystem.js';
+import { physicsSystem } from './PhysicsSystem.js';
 import { WeaponConfigs } from './Weapon.js';
 import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
+import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 
 // Message types for networking
 export const MessageType = {
@@ -50,6 +52,9 @@ let mouseMoveY = 0;
 let showingMenu = false;
 let godMode = true;
 
+// Make godMode available to the physics system
+(globalThis as any).godMode = godMode;
+
 // Game objects
 const models: Record<string, Model> = Object.fromEntries(
 	[
@@ -87,6 +92,7 @@ declare global {
 	var camera: Camera;
 	var Entity: typeof Entity;
 	var greedyMesh: any; // Will be defined later in the file
+	var physicsSystem: typeof physicsSystem;
 }
 
 globalThis.models = models;
@@ -98,6 +104,7 @@ globalThis.net = net;
 globalThis.camera = camera;
 globalThis.Entity = Entity;
 globalThis.greedyMesh = greedyMesh;
+globalThis.physicsSystem = physicsSystem;
 
 function triggerAttackFlash(): void {
 	const flash = document.getElementById('attack-flash');
@@ -478,9 +485,34 @@ function onKeydown(event: KeyboardEvent): void {
 				setTimeout(() => document.body.requestPointerLock(), 150);
 			}
 			break;
+		}		case 'KeyP': {
+			// Toggle physics debugging
+			const isEnabled = !physicsSystem.isDebugEnabled();
+			physicsSystem.setDebug(isEnabled);
+			console.log(`Physics debugging ${isEnabled ? 'enabled' : 'disabled'}`);
+			break;
+		}
+		case 'KeyB': {
+			// Toggle bounce factor
+			const config = physicsSystem.getConfig();
+			config.collisionBounce = config.collisionBounce > 0 ? 0 : 0.5;
+			physicsSystem.updateConfig(config);
+			console.log(`Bounce factor set to ${config.collisionBounce}`);
+			break;
+		}
+		case 'KeyO': {
+			// Apply explosion force at player position (for testing)
+			if (event.shiftKey) {
+				physicsSystem.applyRadialForce(player.worldPosition, 5, 10);
+				console.log('Applied explosion force!');
+			}
+			break;
 		}
 		case settings.keybinds.godMode: {
 			godMode = !godMode;
+			// Synchronize with global scope for physics system
+			(globalThis as any).godMode = godMode;
+			console.log(`God Mode ${godMode ? 'enabled' : 'disabled'}`);
 			break;
 		}
 		case settings.keybinds.respawn: {
@@ -501,6 +533,31 @@ function onKeydown(event: KeyboardEvent): void {
 			}
 			break;
 		}
+		case 'KeyQ': {
+			if (event.ctrlKey) {
+				// Cycle through physics quality settings
+				const currentConfig = physicsSystem.getConfig();
+				const currentQuality = currentConfig.qualityLevel;
+				
+				let newQuality: 'low' | 'medium' | 'high';
+				switch (currentQuality) {
+					case 'low':
+						newQuality = 'medium';
+						break;
+					case 'medium':
+						newQuality = 'high';
+						break;
+					case 'high':
+					default:
+						newQuality = 'low';
+						break;
+				}
+				
+				physicsSystem.setQualityLevel(newQuality);
+				console.log(`Physics quality set to ${newQuality}`);
+			}
+			break;
+		}
 	}
 }
 
@@ -516,38 +573,41 @@ function processInput(elapsed: number): void {
 	const speed = 10;
 
 	if (!godMode) {
+		// For non-god mode, movement is restricted to the horizontal plane
 		forward[2] = 0;
 		vec3.normalize(forward, forward);
 		right[2] = 0;
 		vec3.normalize(right, right);
 	} else {
-		player.vel[2] = 0;
+		player.vel[2] = 0; // Reset vertical velocity for god mode
 	}
 
+	// Reset horizontal velocity for new input
 	player.vel[0] = 0;
 	player.vel[1] = 0;
 
+	// Apply movement input using the physics system
 	if (key_states.has(settings.keybinds.forward)) {
-		vec3.scaleAndAdd(player.vel, player.vel, forward, speed);
+		physicsSystem.applyMovement(player, forward, speed);
 	}
 	if (key_states.has(settings.keybinds.backward)) {
-		vec3.scaleAndAdd(player.vel, player.vel, forward, -speed);
+		physicsSystem.applyMovement(player, forward, -speed);
 	}
 	if (key_states.has(settings.keybinds.left)) {
-		vec3.scaleAndAdd(player.vel, player.vel, right, -speed);
+		physicsSystem.applyMovement(player, right, -speed);
 	}
 	if (key_states.has(settings.keybinds.right)) {
-		vec3.scaleAndAdd(player.vel, player.vel, right, speed);
+		physicsSystem.applyMovement(player, right, speed);
 	}
 	if (godMode && key_states.has(settings.keybinds.up)) {
-		vec3.scaleAndAdd(player.vel, player.vel, up, speed);
+		physicsSystem.applyMovement(player, up, speed);
 	}
 	if (godMode && key_states.has(settings.keybinds.down)) {
-		vec3.scaleAndAdd(player.vel, player.vel, up, -speed);
+		physicsSystem.applyMovement(player, up, -speed);
 	}
 	if (key_states.has(settings.keybinds.jump)) {
-		if (player.gravity && !godMode && player.onGround(level)) {
-			player.vel[2] += 5;
+		if (!godMode) {
+			physicsSystem.jump(player);
 		}
 		key_states.delete(settings.keybinds.jump);
 	}
@@ -594,10 +654,50 @@ function processInput(elapsed: number): void {
 	mouseMoveY = 0;
 }
 
+/**
+ * Perform a raycast from the player's position in the view direction
+ */
+function performRaycast(): void {
+	if (!player || !camera.entity) return;
+	
+	// Get forward vector from camera
+	const forward = vec3.fromValues(0, 1, 0);
+	vec3.transformQuat(forward, forward, camera.entity.worldRotation);
+	
+	// Perform raycast
+	const origin = vec3.clone(camera.entity.worldPosition);
+	const result = physicsSystem.raycast(origin, forward, 20, { 
+		ignoreEntity: player 
+	});
+	
+	// Show result
+	if (result.hit) {
+		console.log('Raycast hit:', {
+			position: [
+				result.position[0].toFixed(2),
+				result.position[1].toFixed(2),
+				result.position[2].toFixed(2)
+			],
+			distance: result.distance.toFixed(2),
+			entity: result.entity ? `Entity #${result.entity.id}` : 'terrain'
+		});
+		
+		// Flash the crosshair red
+		const crosshair = document.getElementById('crosshair');
+		if (crosshair) {
+			const lines = crosshair.getElementsByTagName('div');
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i] as HTMLElement;
+				line.style.background = '#FF0000';
+				setTimeout(() => line.style.background = '#FFFFFF', 200);
+			}
+		}
+	}
+}
+
 function loop(): void {
 	const elapsed = performance.now() - lastTime;
 	lastTime = performance.now();
-
 	// Save game state
 	const gameState: GameState = {
 		playerPos: Array.from(player.localPosition) as [number, number, number],
@@ -606,7 +706,12 @@ function loop(): void {
 		showingMenu,
 		godMode
 	};
-	localStorage.setItem('gameState', JSON.stringify(gameState));	// Update UI
+	localStorage.setItem('gameState', JSON.stringify(gameState));
+	
+	// Ensure globalThis.godMode is always in sync
+	if ((globalThis as any).godMode !== godMode) {
+		(globalThis as any).godMode = godMode;
+	}// Update UI
 	if (timeLabel) {
 		const playerStats = combatSystem.getCombatStats(player);
 		const currentWeapon = combatSystem.getWeapon(player);
@@ -616,11 +721,20 @@ function loop(): void {
 			`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING! (${Math.round(currentWeapon.swing.progress * 100)}%)</span>` : 
 			`<span style="color: #888888;">Ready to attack</span>`;
 		
+		// Get physics info
+		const physicsInfo = physicsSystem.getDebugStatus();
+		const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
+		const groundedInfo = physicsSystem.isEntityOnGround(player) ? 
+			'<span style="color: #4ECDC4;">On Ground</span>' : 
+			'<span style="color: #FF6B6B;">Airborne</span>';
+		
 		timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity?.worldPosition[0].toFixed(2)}, ${camera.entity?.worldPosition[1].toFixed(2)}, ${camera.entity?.worldPosition[2].toFixed(2)}<br>
 			${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
 			<span style="color: #FF6B6B;">${healthInfo}</span><br>
 			<span style="color: #4ECDC4;">${weaponInfo}</span><br>
-			${attackInfo}</span>`;
+			${attackInfo}</span><br>
+			<span style="color: #AAFFAA;">${velocityInfo} | ${groundedInfo}</span><br>
+			<span style="color: #AAAAFF; font-size: 0.9em;">${physicsInfo}</span>`;
 
 		// Update crosshair color based on attack state
 		const crosshair = document.getElementById('crosshair');
@@ -634,82 +748,13 @@ function loop(): void {
 	}
 
 	processInput(elapsed);
-
-	// Update combat system
+	// Update systems
 	combatSystem.update(elapsed);
-
-	// Update all entities
+	physicsSystem.update(elapsed);
+	
+	// Update all entities (gameplay logic only, physics handled separately)
 	for (const e of Entity.all) {
 		e.update(elapsed);
-		
-		// Apply gravity
-		if (e.gravity && !(e instanceof Player && godMode)) {
-			if (!e.onGround(level)) {
-				e.vel[2] -= 9.8 * elapsed / 1000;
-			}
-		}
-
-		// Apply velocity
-		const speed = vec3.length(e.vel);
-		if (speed > 100) {
-			vec3.normalize(e.vel, e.vel);
-			vec3.scale(e.vel, e.vel, 100);
-		}
-		if (speed > 0) {
-			vec3.scaleAndAdd(e.localPosition, e.localPosition, e.vel, elapsed / 1000);
-			e.dirty = true;
-		}
-
-		// Collision detection for players
-		if (e instanceof Player && !godMode) {
-			// Entity-entity collision
-			for (const ee of Entity.all) {
-				if (e === ee || ee.spawn || ee === e.head) continue;
-
-				const s = vec3.sub(vec3.create(), ee.localPosition, e.localPosition);
-				const d = vec3.length(s);
-
-				if (d < e.radius + ee.radius) {
-					const pushback = e.radius + ee.radius - d;
-					const t = vec3.add(vec3.create(), s, e.vel);
-					vec3.normalize(t, t);
-					vec3.scaleAndAdd(e.localPosition, e.localPosition, t, -pushback);
-					e.dirty = true;
-					if (e.radius >= ee.radius) {
-						vec3.scaleAndAdd(ee.localPosition, e.vel, t, pushback);
-						ee.dirty = true;
-					}
-				}
-			}
-
-			// Terrain collision
-			if (level.volume.getVoxelFloor(e.localPosition[0] + e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2)) {
-				e.localPosition[0] = Math.floor(e.localPosition[0] + e.radius) - e.radius;
-				e.dirty = true;
-			}
-			if (level.volume.getVoxelFloor(e.localPosition[0] - e.radius, e.localPosition[1], e.localPosition[2] + e.height / 2)) {
-				e.localPosition[0] = Math.ceil(e.localPosition[0] - e.radius) + e.radius;
-				e.dirty = true;
-			}
-			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1] + e.radius, e.localPosition[2] + e.height / 2)) {
-				e.localPosition[1] = Math.floor(e.localPosition[1] + e.radius) - e.radius;
-				e.dirty = true;
-			}
-			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1] - e.radius, e.localPosition[2] + e.height / 2)) {
-				e.localPosition[1] = Math.ceil(e.localPosition[1] - e.radius) + e.radius;
-				e.dirty = true;
-			}
-			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1], e.localPosition[2] + e.height)) {
-				e.localPosition[2] = Math.floor(e.localPosition[2] + e.height) - e.height;
-				e.vel[2] = 0;
-				e.dirty = true;
-			}
-			if (level.volume.getVoxelFloor(e.localPosition[0], e.localPosition[1], e.localPosition[2])) {
-				e.localPosition[2] = Math.ceil(e.localPosition[2]);
-				e.vel[2] = 0;
-				e.dirty = true;
-			}
-		}
 	}
 
 	// Update transforms
@@ -734,9 +779,10 @@ async function main(): Promise<void> {
 		try {
 			const state: GameState = JSON.parse(savedState);
 			player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2]);
-			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);
-			player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
+			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);			player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
 			godMode = state.godMode;
+			// Make sure godMode is synchronized with global scope
+			(globalThis as any).godMode = godMode;
 			showingMenu = state.showingMenu;
 		} catch (error) {
 			console.warn('Failed to load saved game state:', error);
@@ -768,10 +814,58 @@ async function main(): Promise<void> {
 		level.load(),
 		...Object.values(models).map((model) => model.load())
 	]);
+	// Initialize physics system with configuration
+	physicsSystem.setLevel(level);
+	physicsSystem.updateConfig({
+		gravity: 9.8,
+		maxVelocity: 100,
+		jumpForce: 5,
+		friction: 0.2,
+		airResistance: 0.01,
+		collisionBounce: 0.3,
+		entityCollisionEnabled: true,
+		terrainCollisionEnabled: true
+	});
+	
+	// Enable physics debugging
+	physicsSystem.setDebug(true);
+		// Configure player physics properties
+	physicsSystem.configureEntity(player, {
+		hasGravity: true,
+		hasCollision: true,
+		radius: 0.25,
+		height: 0.5,
+		layer: PhysicsLayer.Player,
+		collidesWith: PhysicsLayer.All & ~PhysicsLayer.Trigger // Collide with everything except triggers
+	});
 
 	// Initialize combat system
 	combatSystem.initializeCombatStats(player, 100, 5); // 100 HP, 5 defense
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
+
+	// Create a demo trigger volume
+	const demoTrigger = new TriggerVolume(TriggerShape.Box, vec3.fromValues(2, 2, 2));
+	demoTrigger.localPosition = vec3.fromValues(5, 5, 1);
+	demoTrigger.setCallback({
+		onEnter: (entity) => {
+			if (entity === player) {
+				console.log('Player entered trigger zone!');
+				// Example: Boost player speed temporarily
+				physicsSystem.updateConfig({
+					maxVelocity: 20
+				});
+			}
+		},
+		onExit: (entity) => {
+			if (entity === player) {
+				console.log('Player exited trigger zone!');
+				// Reset player speed
+				physicsSystem.updateConfig({
+					maxVelocity: 10
+				});
+			}
+		}
+	});
 
 	requestAnimationFrame(loop);
 }

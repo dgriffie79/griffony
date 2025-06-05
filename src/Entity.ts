@@ -1,6 +1,18 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import type { Model } from './Model';
 import type { Level } from './Level';
+import type { Player } from './Player';
+
+export enum PhysicsLayer {
+  Default = 0b00000001,
+  Player = 0b00000010, 
+  Enemy = 0b00000100,
+  Projectile = 0b00001000,
+  Pickup = 0b00010000,
+  Trigger = 0b00100000,
+  Static = 0b01000000,
+  All = 0b11111111
+}
 
 export class Entity {
   static all: Entity[] = [];
@@ -10,6 +22,7 @@ export class Entity {
   parent: Entity | null = null;
   children: Entity[] = [];
 
+  // Transform properties
   dirty: boolean = true;
   localPosition: vec3 = vec3.create();
   localRotation: quat = quat.create();
@@ -21,20 +34,32 @@ export class Entity {
   worldScale: vec3 = vec3.fromValues(1, 1, 1);
   worldToLocalTransform: mat4 = mat4.create();
 
+  // Visual properties
   model: Model | null = null;
   modelId: number = -1;
   frame: number = 0;
   frameTime: number = 0;
   animationFrame: number = 0;
 
+  // Physics properties
   height: number = 0;
   radius: number = 0;
   vel: vec3 = vec3.create();
-  gravity: boolean = false;
-  collision: boolean = false;
-  spawn: boolean = false;
+  gravity: boolean = false;    // Whether this entity is affected by gravity
+  collision: boolean = false;  // Whether this entity collides with others
+  spawn: boolean = false;      // Whether this is a spawn point
+
+  // Physics layer properties
+  physicsLayer: PhysicsLayer = PhysicsLayer.Default;
+  collidesWith: PhysicsLayer = PhysicsLayer.All;
+  
+  // Physics optimization properties
+  _tempGravity?: boolean;
+  _tempCollision?: boolean;
 
   constructor() {
+    // Generate entity ID and add to global list
+    this.id = Entity.nextId++;
     Entity.all.push(this);
   }
 
@@ -116,5 +141,19 @@ export class Entity {
 
   update(elapsed: number): void {
     // Base implementation - can be overridden by subclasses
+  }  /**
+   * Check if this entity can collide with another entity based on layers
+   * and godMode status
+   */
+  canCollideWith(other: Entity): boolean {
+    // Check if either entity is a player in godMode
+    // Use head property as a way to identify players since we can't use instanceof
+    if (((globalThis as any).godMode && 'head' in this) || 
+        ((globalThis as any).godMode && 'head' in other)) {
+      return false;
+    }
+    
+    return (this.physicsLayer & other.collidesWith) !== 0 && 
+           (other.physicsLayer & this.collidesWith) !== 0;
   }
 }

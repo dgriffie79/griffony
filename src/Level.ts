@@ -47,12 +47,27 @@ export class Level {
         }
       } else if (layer.type === 'objectgroup') {
         if (layer.objects) {
-          for (const object of layer.objects) {
-            for (let i = 0; i < 1; i++) {
+          for (const object of layer.objects) {            for (let i = 0; i < 1; i++) {
               const entity = Entity.deserialize(object);
               if (entity) {
                 entity.localPosition[1] = sizeY - entity.localPosition[1];
                 entity.localPosition[0] += 0.5 + 2 * i;
+                
+                // Enable basic physics for non-spawn entities
+                if (!entity.spawn) {
+                  // Enable collision for all entities except specific types
+                  entity.collision = true;
+                  
+                  // Enable gravity for movable entities
+                  if (object.type?.toLowerCase() !== 'static') {
+                    entity.gravity = true;
+                  }
+                  
+                  // Initialize combat stats for entities
+                  if ((globalThis as any).combatSystem) {
+                    (globalThis as any).combatSystem.initializeCombatStats(entity);
+                  }
+                }
               }
             }
           }
