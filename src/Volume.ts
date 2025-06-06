@@ -1,4 +1,5 @@
 import type { VolumeOptions } from './types';
+import { greedyMesh } from './utils';
 
 export class Volume {
   sizeX: number;
@@ -201,5 +202,7 @@ export class Volume {
     }
 
     return faces.subarray(0, faceCount * 4);
+  } generateFacesGreedy(): Uint8Array {
+    return greedyMesh(this.voxels, this.sizeX, this.sizeY, this.sizeZ, this.emptyValue);
   }
 }

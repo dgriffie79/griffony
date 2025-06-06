@@ -25,10 +25,13 @@ export const MessageType = {
 // Global game state
 let lastTime = 0;
 let timeLabel: HTMLDivElement;
+let useGreedyMesh = false; // Toggle for testing greedy mesh vs original algorithm
+let physicsStarted = false; // Track when physics starts for the first time
 
 let settings: GameSettings = {
 	version: 1,
 	invertMouse: true,
+	useGreedyMesh: false,
 	keybinds: {
 		forward: 'KeyW',
 		backward: 'KeyS',
@@ -36,12 +39,12 @@ let settings: GameSettings = {
 		right: 'KeyD',
 		up: 'KeyE',
 		down: 'KeyQ',
-		jump: 'Space',
-		respawn: 'KeyR',
+		jump: 'Space', respawn: 'KeyR',
 		godMode: 'KeyG',
 		attack: 'Mouse0',
 		block: 'Mouse2',
 		switchWeapon: 'KeyX',
+		toggleMesh: 'KeyM',
 	}
 };
 
@@ -92,7 +95,8 @@ declare global {
 	var camera: Camera;
 	var Entity: typeof Entity;
 	var greedyMesh: any; // Will be defined later in the file
-	var physicsSystem: typeof physicsSystem;
+	var physicsSystem: any; // Use 'any' to avoid circular reference
+	var useGreedyMesh: boolean;
 }
 
 globalThis.models = models;
@@ -105,6 +109,7 @@ globalThis.camera = camera;
 globalThis.Entity = Entity;
 globalThis.greedyMesh = greedyMesh;
 globalThis.physicsSystem = physicsSystem;
+globalThis.useGreedyMesh = useGreedyMesh;
 
 function triggerAttackFlash(): void {
 	const flash = document.getElementById('attack-flash');
@@ -121,17 +126,17 @@ function playAttackSound(): void {
 		const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 		const oscillator = audioContext.createOscillator();
 		const gainNode = audioContext.createGain();
-		
+
 		oscillator.connect(gainNode);
 		gainNode.connect(audioContext.destination);
-		
+
 		// Quick metallic sound effect
 		oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
 		oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.1);
-		
+
 		gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
 		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-		
+
 		oscillator.start(audioContext.currentTime);
 		oscillator.stop(audioContext.currentTime + 0.1);
 	} catch (e) {
@@ -145,17 +150,17 @@ function playHitSound(): void {
 		const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
 		const oscillator = audioContext.createOscillator();
 		const gainNode = audioContext.createGain();
-		
+
 		oscillator.connect(gainNode);
 		gainNode.connect(audioContext.destination);
-		
+
 		// Impact sound effect
 		oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
 		oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.15);
-		
+
 		gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
 		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-		
+
 		oscillator.start(audioContext.currentTime);
 		oscillator.stop(audioContext.currentTime + 0.15);
 	} catch (e) {
@@ -168,6 +173,8 @@ function playHitSound(): void {
 (globalThis as any).triggerAttackFlash = triggerAttackFlash;
 (globalThis as any).playAttackSound = playAttackSound;
 (globalThis as any).playHitSound = playHitSound;
+
+// ...existing code...
 
 function setupUI(): void {	// Set up keybind buttons
 	for (const button of document.getElementsByClassName('bind-button')) {
@@ -191,27 +198,27 @@ function setupUI(): void {	// Set up keybind buttons
 		if (activeBinding) {
 			event.preventDefault();
 		}
-		
+
 		// If we just completed a binding, ignore this keyup to prevent re-activation
 		if (bindingJustCompleted) {
 			bindingJustCompleted = false;
 			event.preventDefault();
 			return;
 		}
-	});menu.addEventListener('keydown', (event) => {
+	}); menu.addEventListener('keydown', (event) => {
 		event.stopPropagation();
 		if (!activeBinding) return;
 
 		// Check if this key is already bound to another action
-		const existingBinding = Object.entries(settings.keybinds).find(([key, value]) => 
+		const existingBinding = Object.entries(settings.keybinds).find(([key, value]) =>
 			value === event.code && key !== activeBinding!.id
 		);
-		
+
 		if (existingBinding) {
 			// Clear the old binding
 			const [oldActionKey] = existingBinding;
 			settings.keybinds[oldActionKey as keyof typeof settings.keybinds] = '';
-			
+
 			// Update the UI for the old binding
 			const oldButton = document.getElementById(oldActionKey) as HTMLButtonElement;
 			if (oldButton) {
@@ -228,7 +235,7 @@ function setupUI(): void {	// Set up keybind buttons
 
 		// Prevent the key from activating the button
 		event.preventDefault();
-	});menu.addEventListener('mousedown', (event) => {
+	}); menu.addEventListener('mousedown', (event) => {
 		event.stopPropagation();
 		if (!activeBinding) return;
 
@@ -244,15 +251,15 @@ function setupUI(): void {	// Set up keybind buttons
 		}
 
 		// Check if this mouse button is already bound to another action
-		const existingBinding = Object.entries(settings.keybinds).find(([key, value]) => 
+		const existingBinding = Object.entries(settings.keybinds).find(([key, value]) =>
 			value === mouseButton && key !== activeBinding!.id
 		);
-		
+
 		if (existingBinding) {
 			// Clear the old binding
 			const [oldActionKey] = existingBinding;
 			settings.keybinds[oldActionKey as keyof typeof settings.keybinds] = '';
-			
+
 			// Update the UI for the old binding
 			const oldButton = document.getElementById(oldActionKey) as HTMLButtonElement;
 			if (oldButton) {
@@ -269,7 +276,7 @@ function setupUI(): void {	// Set up keybind buttons
 
 		// Prevent the subsequent click event
 		event.preventDefault();
-	});	menu.addEventListener('blur', (event) => {
+	}); menu.addEventListener('blur', (event) => {
 		if (activeBinding && event.target === activeBinding) {
 			const currentBinding = settings.keybinds[activeBinding.id as keyof typeof settings.keybinds];
 			activeBinding.textContent = currentBinding || '';
@@ -280,7 +287,7 @@ function setupUI(): void {	// Set up keybind buttons
 
 	menu.addEventListener('click', (event) => {
 		event.stopPropagation();
-		
+
 		// If we just completed a binding, ignore this click
 		if (bindingJustCompleted) {
 			bindingJustCompleted = false;
@@ -424,7 +431,7 @@ function setupUI(): void {	// Set up keybind buttons
 	timeLabel.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
 	timeLabel.style.borderRadius = '5px';
 	timeLabel.style.fontFamily = 'monospace';
-	timeLabel.style.fontSize = '14px';	timeLabel.style.lineHeight = '1.4';
+	timeLabel.style.fontSize = '14px'; timeLabel.style.lineHeight = '1.4';
 	document.body.appendChild(timeLabel);
 
 	// Create crosshair
@@ -437,7 +444,7 @@ function setupUI(): void {	// Set up keybind buttons
 	crosshair.style.width = '20px';
 	crosshair.style.height = '20px';
 	crosshair.style.pointerEvents = 'none';
-	crosshair.style.zIndex = '1000';	crosshair.innerHTML = `
+	crosshair.style.zIndex = '1000'; crosshair.innerHTML = `
 		<div style="position: absolute; top: 50%; left: 0; right: 0; height: 2px; background: white; transform: translateY(-50%);"></div>
 		<div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; transform: translateX(-50%);"></div>
 	`;
@@ -485,13 +492,13 @@ function onKeydown(event: KeyboardEvent): void {
 				setTimeout(() => document.body.requestPointerLock(), 150);
 			}
 			break;
-		}		case 'KeyP': {
+		} case 'KeyP': {
 			// Toggle physics debugging
 			const isEnabled = !physicsSystem.isDebugEnabled();
 			physicsSystem.setDebug(isEnabled);
 			console.log(`Physics debugging ${isEnabled ? 'enabled' : 'disabled'}`);
 			break;
-		}		case 'KeyB': {
+		} case 'KeyB': {
 			// Toggle bounce factor
 			const config = physicsSystem.getConfig();
 			config.collisionBounce = config.collisionBounce > 0 ? 0 : 0.5;
@@ -513,9 +520,17 @@ function onKeydown(event: KeyboardEvent): void {
 			(globalThis as any).godMode = godMode;
 			console.log(`God Mode ${godMode ? 'enabled' : 'disabled'}`);
 			break;
-		}
-		case settings.keybinds.respawn: {
+		} case settings.keybinds.respawn: {
 			player.respawn();
+			break;
+		} case settings.keybinds.toggleMesh: {
+			useGreedyMesh = !useGreedyMesh;
+			settings.useGreedyMesh = useGreedyMesh;
+			(globalThis as any).useGreedyMesh = useGreedyMesh;
+			localStorage.setItem('gameSettings', JSON.stringify(settings));
+			console.log(`Mesh algorithm switched to: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
+			console.log('Reload models to see the change...');
+			// TODO: Could add live model reloading here
 			break;
 		}
 		case settings.keybinds.switchWeapon: {
@@ -523,7 +538,7 @@ function onKeydown(event: KeyboardEvent): void {
 			const currentWeapon = combatSystem.getWeapon(player);
 			if (currentWeapon) {
 				const weaponTypes = Object.keys(WeaponConfigs) as Array<keyof typeof WeaponConfigs>;
-				const currentIndex = weaponTypes.findIndex(type => 
+				const currentIndex = weaponTypes.findIndex(type =>
 					WeaponConfigs[type].id === currentWeapon.weaponData.id
 				);
 				const nextIndex = (currentIndex + 1) % weaponTypes.length;
@@ -537,7 +552,7 @@ function onKeydown(event: KeyboardEvent): void {
 				// Cycle through physics quality settings
 				const currentConfig = physicsSystem.getConfig();
 				const currentQuality = currentConfig.qualityLevel;
-				
+
 				let newQuality: 'low' | 'medium' | 'high';
 				switch (currentQuality) {
 					case 'low':
@@ -549,8 +564,9 @@ function onKeydown(event: KeyboardEvent): void {
 					case 'high':
 					default:
 						newQuality = 'low';
-						break;				}
-				
+						break;
+				}
+
 				physicsSystem.setQualityLevel(newQuality);
 				console.log(`Physics quality set to ${newQuality}`);
 			}
@@ -617,7 +633,7 @@ function processInput(elapsed: number): void {
 		const attackTarget = vec3.create();
 		vec3.scaleAndAdd(attackTarget, player.worldPosition, forward, attackRange);
 		attackTarget[2] += player.height * 0.7; // Attack at chest height
-		
+
 		combatSystem.tryAttack(player, attackTarget);
 		key_states.delete(settings.keybinds.attack); // Single attack per press
 	}
@@ -657,17 +673,17 @@ function processInput(elapsed: number): void {
  */
 function performRaycast(): void {
 	if (!player || !camera.entity) return;
-	
+
 	// Get forward vector from camera
 	const forward = vec3.fromValues(0, 1, 0);
 	vec3.transformQuat(forward, forward, camera.entity.worldRotation);
-	
+
 	// Perform raycast
 	const origin = vec3.clone(camera.entity.worldPosition);
-	const result = physicsSystem.raycast(origin, forward, 20, { 
-		ignoreEntity: player 
+	const result = physicsSystem.raycast(origin, forward, 20, {
+		ignoreEntity: player
 	});
-	
+
 	// Show result
 	if (result.hit) {
 		console.log('Raycast hit:', {
@@ -679,7 +695,7 @@ function performRaycast(): void {
 			distance: result.distance.toFixed(2),
 			entity: result.entity ? `Entity #${result.entity.id}` : 'terrain'
 		});
-		
+
 		// Flash the crosshair red
 		const crosshair = document.getElementById('crosshair');
 		if (crosshair) {
@@ -695,8 +711,7 @@ function performRaycast(): void {
 
 function loop(): void {
 	const elapsed = performance.now() - lastTime;
-	lastTime = performance.now();
-	// Save game state
+	lastTime = performance.now();	// Save game state
 	const gameState: GameState = {
 		playerPos: Array.from(player.localPosition) as [number, number, number],
 		playerOrientation: Array.from(player.localRotation) as [number, number, number, number],
@@ -705,27 +720,35 @@ function loop(): void {
 		godMode
 	};
 	localStorage.setItem('gameState', JSON.stringify(gameState));
-	
+
 	// Ensure globalThis.godMode is always in sync
 	if ((globalThis as any).godMode !== godMode) {
 		(globalThis as any).godMode = godMode;
+	}
+
+	// Monitor for fall-through (player falling below reasonable level)
+	if (player.localPosition[2] < -2 && !godMode) {
+		console.warn(`⚠️ Potential fall-through detected! Player Z position: ${player.localPosition[2].toFixed(2)}`);
+		console.warn(`Current mesh algorithm: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
+		console.warn(`Player velocity: [${player.vel[0].toFixed(2)}, ${player.vel[1].toFixed(2)}, ${player.vel[2].toFixed(2)}]`);
+		console.warn(`On ground: ${physicsSystem.isEntityOnGround(player)}`);
 	}// Update UI
 	if (timeLabel) {
 		const playerStats = combatSystem.getCombatStats(player);
 		const currentWeapon = combatSystem.getWeapon(player);
 		const healthInfo = playerStats ? `HP: ${Math.ceil(playerStats.health)}/${playerStats.maxHealth}` : '';
 		const weaponInfo = currentWeapon ? `Weapon: ${currentWeapon.weaponData.name}` : '';
-		const attackInfo = currentWeapon?.swing.isSwinging ? 
-			`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING! (${Math.round(currentWeapon.swing.progress * 100)}%)</span>` : 
+		const attackInfo = currentWeapon?.swing.isSwinging ?
+			`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING! (${Math.round(currentWeapon.swing.progress * 100)}%)</span>` :
 			`<span style="color: #888888;">Ready to attack</span>`;
-		
+
 		// Get physics info
 		const physicsInfo = physicsSystem.getDebugStatus();
 		const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
-		const groundedInfo = physicsSystem.isEntityOnGround(player) ? 
-			'<span style="color: #4ECDC4;">On Ground</span>' : 
+		const groundedInfo = physicsSystem.isEntityOnGround(player) ?
+			'<span style="color: #4ECDC4;">On Ground</span>' :
 			'<span style="color: #FF6B6B;">Airborne</span>';
-		
+
 		timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity?.worldPosition[0].toFixed(2)}, ${camera.entity?.worldPosition[1].toFixed(2)}, ${camera.entity?.worldPosition[2].toFixed(2)}<br>
 			${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
 			<span style="color: #FF6B6B;">${healthInfo}</span><br>
@@ -743,16 +766,29 @@ function loop(): void {
 				(lines[i] as HTMLElement).style.background = color;
 			}
 		}
+	}	// CRITICAL: Only process input after level is fully loaded to prevent race condition
+	// Input processing can modify entity velocities, which should only happen after terrain is ready
+	if (level.isFullyLoaded) {
+		processInput(elapsed);
 	}
 
-	processInput(elapsed);
 	// Update systems
 	combatSystem.update(elapsed);
-	physicsSystem.update(elapsed);
-	
+	// CRITICAL: Only run physics after level is fully loaded to prevent race condition
+	// Greedy mesh takes longer to generate, so physics must wait for terrain data
+	if (level.isFullyLoaded) {
+		if (!physicsStarted) {
+			console.log('🎮 Physics system started - level fully loaded and terrain collision data ready');
+			physicsStarted = true;
+		}
+		physicsSystem.update(elapsed);
+	}
 	// Update all entities (gameplay logic only, physics handled separately)
-	for (const e of Entity.all) {
-		e.update(elapsed);
+	// Wait for level to be fully loaded before running entity updates to prevent race conditions
+	if (level.isFullyLoaded) {
+		for (const e of Entity.all) {
+			e.update(elapsed);
+		}
 	}
 
 	// Update transforms
@@ -777,7 +813,7 @@ async function main(): Promise<void> {
 		try {
 			const state: GameState = JSON.parse(savedState);
 			player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2]);
-			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);			player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
+			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]); player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
 			godMode = state.godMode;
 			// Make sure godMode is synchronized with global scope
 			(globalThis as any).godMode = godMode;
@@ -786,7 +822,6 @@ async function main(): Promise<void> {
 			console.warn('Failed to load saved game state:', error);
 		}
 	}
-
 	// Load saved settings
 	const savedSettings = localStorage.getItem('gameSettings');
 	if (savedSettings) {
@@ -794,6 +829,9 @@ async function main(): Promise<void> {
 			const obj: GameSettings = JSON.parse(savedSettings);
 			if (obj.version === settings.version) {
 				settings = obj;
+				// Synchronize the useGreedyMesh variable with loaded settings
+				useGreedyMesh = settings.useGreedyMesh;
+				(globalThis as any).useGreedyMesh = useGreedyMesh;
 			} else {
 				localStorage.setItem('gameSettings', JSON.stringify(settings));
 			}
@@ -801,17 +839,33 @@ async function main(): Promise<void> {
 			console.warn('Failed to load saved settings:', error);
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
 		}
+	} else {
+		// No saved settings, save the defaults
+		localStorage.setItem('gameSettings', JSON.stringify(settings));
 	}
+
+	// Ensure useGreedyMesh is synchronized with global state
+	useGreedyMesh = settings.useGreedyMesh;
+	(globalThis as any).useGreedyMesh = useGreedyMesh;
 
 	setupUI();
 	await renderer.init();
-
 	// Load all game assets
 	await Promise.all([
 		tileset.load(),
 		level.load(),
-		...Object.values(models).map((model) => model.load())
-	]);
+		...Object.values(models).map((model) => model.load())]);
+	// Wait for GPU operations to complete before starting physics
+	// The greedy mesh algorithm takes longer, so we need to ensure all resources are uploaded
+	console.log('Waiting for GPU resource upload to complete...');
+	await new Promise(resolve => requestAnimationFrame(resolve));
+	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh
+
+	// Wait for level to be fully loaded and registered
+	while (!level.isFullyLoaded) {
+		await new Promise(resolve => setTimeout(resolve, 10));
+	}
+	console.log('Level fully loaded, starting physics...');
 	// Initialize physics system with configuration
 	physicsSystem.setLevel(level);
 	physicsSystem.updateConfig({
@@ -824,10 +878,10 @@ async function main(): Promise<void> {
 		entityCollisionEnabled: true,
 		terrainCollisionEnabled: true
 	});
-	
+
 	// Enable physics debugging
 	physicsSystem.setDebug(true);
-		// Configure player physics properties
+	// Configure player physics properties
 	physicsSystem.configureEntity(player, {
 		hasGravity: true,
 		hasCollision: true,

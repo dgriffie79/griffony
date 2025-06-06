@@ -10,7 +10,7 @@ export class CombatSystem {
   private weapons = new Map<number, Weapon>(); // entity id -> weapon
   private lastAttackTime = new Map<number, number>(); // entity id -> timestamp
 
-  private constructor() {}
+  private constructor() { }
 
   static getInstance(): CombatSystem {
     if (!CombatSystem.instance) {
@@ -30,10 +30,10 @@ export class CombatSystem {
     };
 
     this.combatEntities.set(entity.id, stats);
-    
+
     // Add combat stats to entity for easy access
     (entity as any).combatStats = stats;
-    
+
     return stats;
   }
 
@@ -41,13 +41,13 @@ export class CombatSystem {
   equipWeapon(entity: Entity, weaponConfigName: keyof typeof WeaponConfigs): Weapon {
     const config = WeaponConfigs[weaponConfigName];
     const weapon = new Weapon(config);
-    
+
     // Remove existing weapon if any
     this.unequipWeapon(entity);
-    
+
     weapon.attachToEntity(entity);
     this.weapons.set(entity.id, weapon);
-    
+
     return weapon;
   }
 
@@ -75,7 +75,7 @@ export class CombatSystem {
     const success = weapon.startSwing(targetPosition);
     if (success) {
       this.lastAttackTime.set(attacker.id, now);
-      
+
       // Dispatch attack event
       this.dispatchCombatEvent({
         type: 'attack',
@@ -109,7 +109,7 @@ export class CombatSystem {
     if (stats.health <= 0 && !stats.isDead) {
       stats.isDead = true;
       this.onEntityDeath(target, attackInfo.source);
-      
+
       this.dispatchCombatEvent({
         type: 'death',
         source: attackInfo.source,
@@ -137,7 +137,7 @@ export class CombatSystem {
 
     const oldHealth = stats.health;
     stats.health = Math.min(stats.maxHealth, stats.health + amount);
-    
+
     if (stats.health > oldHealth) {
       this.dispatchCombatEvent({
         type: 'heal',
@@ -209,10 +209,10 @@ export class CombatSystem {
     }
 
     player.respawn();
-    
+
     // Re-equip default weapon
     this.equipWeapon(player, 'IRON_SWORD');
-    
+
     console.log(`Player ${player.id} has respawned!`);
   }  // Dispatch combat events for UI/effects
   private dispatchCombatEvent(event: CombatEvent): void {
@@ -243,7 +243,7 @@ export class CombatSystem {
         console.log(`💚 ${event.target?.constructor.name || 'Entity'} ${event.target?.id} has been healed!`);
         break;
     }
-    
+
     // Could dispatch to event system if we had one
     // EventSystem.getInstance().dispatch('combat', event);
   }
@@ -251,16 +251,16 @@ export class CombatSystem {
   // Get all entities within attack range of a position
   getEntitiesInRange(position: vec3, range: number, excludeEntity?: Entity): Entity[] {
     const inRange: Entity[] = [];
-    
+
     for (const entity of Entity.all) {
       if (entity === excludeEntity) continue;
-      
+
       const distance = vec3.distance(position, entity.worldPosition);
       if (distance <= range) {
         inRange.push(entity);
       }
     }
-    
+
     return inRange;
   }
 

@@ -310,13 +310,57 @@ export class Renderer {
       model.palette!,
       { bytesPerRow: 256 * 4 },
       [255, 1, 1]
-    );
-    resources.paletteIndex = this.nextPaletteIndex++;
-
-    if (model.url.includes('box_frame')) {
-      greedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
-    }    // Generate faces for quad rendering
-      const faces = model.volume.generateFaces();
+    );    resources.paletteIndex = this.nextPaletteIndex++;    // Generate faces for quad rendering
+    let faces: Uint8Array;
+    const useGreedy = (globalThis as any).useGreedyMesh || false;
+      if (model.url.includes('box_frame')) {
+      // Always test both algorithms on box_frame model for comparison
+      const greedyFaces = greedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
+      const originalFaces = model.volume.generateFaces();
+        console.log(`Box frame model - Original faces: ${originalFaces.length / 4}, Greedy mesh faces: ${greedyFaces.length / 4}`);
+      
+      // Debug face details for both algorithms
+      if (originalFaces.length > 0) {
+        console.log('Original first 5 faces:');
+        for (let i = 0; i < Math.min(20, originalFaces.length); i += 4) {
+          console.log(`  Face ${i/4}: [${originalFaces[i]}, ${originalFaces[i+1]}, ${originalFaces[i+2]}] normal=${originalFaces[i+3]}`);
+        }
+      }
+      
+      if (greedyFaces.length > 0) {
+        console.log('Greedy first 5 faces:');
+        for (let i = 0; i < Math.min(20, greedyFaces.length); i += 4) {
+          console.log(`  Face ${i/4}: [${greedyFaces[i]}, ${greedyFaces[i+1]}, ${greedyFaces[i+2]}] normal=${greedyFaces[i+3]}`);
+        }
+      }
+      
+      // Count faces by direction
+      const normalNames = ['-X', '+X', '-Y', '+Y', '-Z', '+Z'];
+      
+      const originalCounts = [0, 0, 0, 0, 0, 0];
+      for (let i = 0; i < originalFaces.length; i += 4) {
+        originalCounts[originalFaces[i + 3]]++;
+      }
+      console.log('Original face counts by direction:', originalCounts.map((count, i) => `${normalNames[i]}: ${count}`).join(', '));
+      
+      const greedyCounts = [0, 0, 0, 0, 0, 0];
+      for (let i = 0; i < greedyFaces.length; i += 4) {
+        greedyCounts[greedyFaces[i + 3]]++;
+      }
+      console.log('Greedy face counts by direction:', greedyCounts.map((count, i) => `${normalNames[i]}: ${count}`).join(', '));
+        // Respect the toggle for box_frame too
+      faces = useGreedy ? greedyFaces : originalFaces;
+    } else {
+      const meshStartTime = performance.now();
+      if (useGreedy) {
+        console.log(`Using greedy mesh for model: ${model.url}`);
+        faces = greedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
+      } else {
+        faces = model.volume.generateFaces();
+      }
+      const meshEndTime = performance.now();
+      console.log(`Model ${model.url} mesh generation took ${meshEndTime - meshStartTime}ms (${useGreedy ? 'greedy' : 'original'})`);
+    }
       resources.rasterBuffer = this.device.createBuffer({
         size: faces.byteLength,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -369,16 +413,31 @@ export class Renderer {
         bytesPerRow: volume.sizeX * 2,
         rowsPerImage: volume.sizeY
       },
-      [volume.sizeX, volume.sizeY, volume.sizeZ]
-    );    // Generate faces for quad rendering
-      const faces = volume.generateFaces();
-      resources.rasterBuffer = this.device.createBuffer({
-        size: faces.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      });
-      this.device.queue.writeBuffer(resources.rasterBuffer, 0, faces);
+      [volume.sizeX, volume.sizeY, volume.sizeZ]    );    // Generate faces for quad rendering
+    let faces: Uint8Array;
+    const useGreedy = (globalThis as any).useGreedyMesh || false;
+    
+    const meshStartTime = performance.now();
+    if (useGreedy) {
+      console.log('Using greedy mesh for level terrain');
+      faces = greedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
+    } else {
+      faces = volume.generateFaces();
+    }
+    const meshEndTime = performance.now();
+    console.log(`Level mesh generation took ${meshEndTime - meshStartTime}ms (${useGreedy ? 'greedy' : 'original'})`);
+    console.log(`Generated ${faces.length / 4} faces for level terrain`);
+    
+    const bufferStartTime = performance.now();
+    resources.rasterBuffer = this.device.createBuffer({
+      size: faces.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+    this.device.queue.writeBuffer(resources.rasterBuffer, 0, faces);
+    const bufferEndTime = performance.now();    console.log(`Buffer creation and upload took ${bufferEndTime - bufferStartTime}ms`);
 
     this.resourceMap.set(level, resources);
+    console.log('Level terrain mesh registered with renderer');
   }
 
   createDepthTexture(): void {

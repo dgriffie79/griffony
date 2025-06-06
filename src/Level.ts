@@ -5,6 +5,7 @@ import type { LevelData } from './types';
 export class Level {
   url: string;
   volume!: Volume;
+  isFullyLoaded: boolean = false;
 
   constructor(url: string = '') {
     this.url = url;
@@ -73,12 +74,13 @@ export class Level {
           }
         }
       }
-    }
-
-    // Note: renderer will be imported where needed
+    }    // Note: renderer will be imported where needed
     const renderer = (globalThis as any).renderer;
     if (renderer) {
       renderer.registerLevel(this);
     }
+    
+    this.isFullyLoaded = true;
+    console.log('Level fully loaded and registered with renderer');
   }
 }

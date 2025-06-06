@@ -6,6 +6,7 @@ import type { Entity } from '../Entity';
 export interface GameSettings {
   version: number;
   invertMouse: boolean;
+  useGreedyMesh: boolean;
   keybinds: {
     forward: string;
     backward: string;
@@ -19,6 +20,7 @@ export interface GameSettings {
     attack: string;
     block: string;
     switchWeapon: string;
+    toggleMesh: string;
   };
 }
 

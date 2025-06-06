@@ -128,7 +128,8 @@ export class Entity {
     const r = 0.85 * this.radius;
     const x = this.worldPosition[0];
     const y = this.worldPosition[1];
-    const z = this.worldPosition[2] - Number.EPSILON;
+    // Use small vertical offset to check just below entity for ground contact
+    const z = this.worldPosition[2] - 0.1;
 
     return !!(
       terrain.volume.getVoxelFloor(x, y, z) ||
