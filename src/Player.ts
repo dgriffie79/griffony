@@ -1,5 +1,6 @@
 import { vec3, quat } from 'gl-matrix';
 import { Entity } from './Entity';
+import { FirstPersonWeapon } from './FirstPersonWeapon';
 
 export class Player extends Entity {
   gravity: boolean = true;
@@ -7,6 +8,7 @@ export class Player extends Entity {
   height: number = 0.5;
   radius: number = 0.25;
   head: Entity = new Entity();
+  fpWeapon: FirstPersonWeapon;
 
   constructor(id: number = Entity.nextId++) {
     super();
@@ -16,6 +18,9 @@ export class Player extends Entity {
     this.head.parent = this;
     this.head.localPosition = vec3.fromValues(0, 0, 0.8 * this.height);
     this.children.push(this.head);
+    
+    // Create first-person weapon view
+    this.fpWeapon = new FirstPersonWeapon(this);
   }
 
   respawn(): void {

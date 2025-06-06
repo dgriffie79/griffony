@@ -481,8 +481,7 @@ function onKeydown(event: KeyboardEvent): void {
 				document.body.requestPointerLock();
 			}
 			break;
-		}
-		case 'Escape': {
+		}		case 'Escape': {
 			if (showingMenu) {
 				showingMenu = false;
 				const mainMenu = document.getElementById('main-menu');
@@ -490,27 +489,6 @@ function onKeydown(event: KeyboardEvent): void {
 					mainMenu.hidden = true;
 				}
 				setTimeout(() => document.body.requestPointerLock(), 150);
-			}
-			break;
-		} case 'KeyP': {
-			// Toggle physics debugging
-			const isEnabled = !physicsSystem.isDebugEnabled();
-			physicsSystem.setDebug(isEnabled);
-			console.log(`Physics debugging ${isEnabled ? 'enabled' : 'disabled'}`);
-			break;
-		} case 'KeyB': {
-			// Toggle bounce factor
-			const config = physicsSystem.getConfig();
-			config.collisionBounce = config.collisionBounce > 0 ? 0 : 0.5;
-			physicsSystem.updateConfig(config);
-			console.log(`Bounce factor set to ${config.collisionBounce}`);
-			break;
-		}
-		case 'KeyO': {
-			// Apply explosion force at player position (for testing)
-			if (event.shiftKey) {
-				physicsSystem.applyRadialForce(player.worldPosition, 5, 10);
-				console.log('Applied explosion force!');
 			}
 			break;
 		}
@@ -544,31 +522,6 @@ function onKeydown(event: KeyboardEvent): void {
 				const nextIndex = (currentIndex + 1) % weaponTypes.length;
 				combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
 				console.log(`Switched to ${WeaponConfigs[weaponTypes[nextIndex]].name}`);
-			}
-			break;
-		}
-		case 'KeyQ': {
-			if (event.ctrlKey) {
-				// Cycle through physics quality settings
-				const currentConfig = physicsSystem.getConfig();
-				const currentQuality = currentConfig.qualityLevel;
-
-				let newQuality: 'low' | 'medium' | 'high';
-				switch (currentQuality) {
-					case 'low':
-						newQuality = 'medium';
-						break;
-					case 'medium':
-						newQuality = 'high';
-						break;
-					case 'high':
-					default:
-						newQuality = 'low';
-						break;
-				}
-
-				physicsSystem.setQualityLevel(newQuality);
-				console.log(`Physics quality set to ${newQuality}`);
 			}
 			break;
 		}

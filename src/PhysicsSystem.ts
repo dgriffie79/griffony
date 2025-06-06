@@ -811,7 +811,8 @@ export class PhysicsSystem {
     distance: number,
     entity: Entity | undefined,
     voxelValue: number | undefined
-  } {    if (!this.level) {
+  } {
+    if (!this.level) {
       return {
         hit: false,
         position: vec3.create(),
@@ -1108,7 +1109,8 @@ export class PhysicsSystem {
   /**
    * Reset temporary physics limitations
    */
-  resetEntityLimits(): void {    for (const entity of Entity.all) {
+  resetEntityLimits(): void {
+    for (const entity of Entity.all) {
       if ('_tempGravity' in entity && entity._tempGravity !== undefined) {
         entity.gravity = entity._tempGravity;
         delete entity._tempGravity;

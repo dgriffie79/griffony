@@ -488,15 +488,29 @@ export class Renderer {
 
     renderPass.setPipeline(this.modelPipeline);
     const player = globalThis.player;
+      // First render the player's first-person weapon view if it has a model
+    if (player.fpWeapon && player.fpWeapon.model) {
+      const fpWeapon = player.fpWeapon;
+      // Scale for first-person view - larger than regular entities to be visible
+      const weaponScale = [1/24, 1/24, 1/24]; 
+      const offsetMatrix = mat4.fromTranslation(mat4.create(), [-fpWeapon.model.volume.sizeX / 2, -fpWeapon.model.volume.sizeY / 2, 0]);      const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeapon.worldRotation, fpWeapon.worldPosition, weaponScale);
+      mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
+      const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
+      this.drawModel(fpWeapon.model, modelViewProjectionMatrix, modelMatrix, renderPass);
+    }
+      // Then render all other entities except the player
     for (const e of globalThis.Entity.all) {
-      if (e.model && e !== player) {
+      // Don't render the player (first-person view) or entities without models
+      // Make sure to render the weapon even if it's a child of the player
+      if (e.model && (e !== player || e === player.fpWeapon)) {
         const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0]);
-        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.localRotation, e.localPosition, [1/32, 1/32, 1/32]);
+        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.worldRotation, e.worldPosition, [1/32, 1/32, 1/32]);
         mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
         const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
         this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass);
       }
-        e.animationFrame++;
+      // Always update animation frames
+      e.animationFrame++;
       if (e.animationFrame > 16) {
         const models = globalThis.models;
         if (e.model === models['fatta']) {

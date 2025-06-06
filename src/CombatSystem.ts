@@ -47,6 +47,11 @@ export class CombatSystem {
 
     weapon.attachToEntity(entity);
     this.weapons.set(entity.id, weapon);
+    
+    // Update first person weapon model if this is the player
+    if (entity instanceof Player) {
+      entity.fpWeapon.updateWeaponModel(weapon);
+    }
 
     return weapon;
   }
@@ -57,6 +62,11 @@ export class CombatSystem {
     if (existingWeapon) {
       existingWeapon.detachFromEntity();
       this.weapons.delete(entity.id);
+      
+      // Update first person weapon if this is the player
+      if (entity instanceof Player) {
+        entity.fpWeapon.updateWeaponModel(null);
+      }
     }
   }
 
@@ -75,6 +85,11 @@ export class CombatSystem {
     const success = weapon.startSwing(targetPosition);
     if (success) {
       this.lastAttackTime.set(attacker.id, now);
+      
+      // Start first-person weapon animation if attacker is the player
+      if (attacker instanceof Player) {
+        attacker.fpWeapon.startAttackAnimation();
+      }
 
       // Dispatch attack event
       this.dispatchCombatEvent({
