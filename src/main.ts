@@ -13,6 +13,7 @@ import { WeaponConfigs } from './Weapon.js';
 import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
+import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
 
 // Message types for networking
 export const MessageType = {
@@ -45,6 +46,7 @@ let settings: GameSettings = {
 		block: 'Mouse2',
 		switchWeapon: 'KeyX',
 		toggleMesh: 'KeyM',
+		adjustWeapon: 'KeyJ', // New keybind for weapon position adjuster
 	}
 };
 
@@ -225,11 +227,16 @@ function setupUI(): void {	// Set up keybind buttons
 				oldButton.textContent = '';
 			}
 		}
-
 		activeBinding.textContent = event.code;
 		activeBinding.classList.remove('listening');
 		settings.keybinds[activeBinding.id as keyof typeof settings.keybinds] = event.code;
 		localStorage.setItem('gameSettings', JSON.stringify(settings));
+		
+		// Update weapon position adjuster if this is the adjustWeapon keybinding
+		if (activeBinding.id === 'adjustWeapon') {
+			WeaponPositionAdjuster.getInstance().updateKeyBindString(event.code);
+		}
+		
 		activeBinding = null;
 		bindingJustCompleted = true;
 
@@ -266,11 +273,16 @@ function setupUI(): void {	// Set up keybind buttons
 				oldButton.textContent = '';
 			}
 		}
-
 		activeBinding.textContent = mouseButton;
 		activeBinding.classList.remove('listening');
 		settings.keybinds[activeBinding.id as keyof typeof settings.keybinds] = mouseButton;
 		localStorage.setItem('gameSettings', JSON.stringify(settings));
+		
+		// Update weapon position adjuster if this is the adjustWeapon keybinding
+		if (activeBinding.id === 'adjustWeapon') {
+			WeaponPositionAdjuster.getInstance().updateKeyBindString(mouseButton);
+		}
+		
 		activeBinding = null;
 		bindingJustCompleted = true;
 
@@ -465,6 +477,9 @@ function setupUI(): void {	// Set up keybind buttons
 	document.body.appendChild(attackFlash);
 }
 
+/**
+ * Create a UI button for activating the weapon adjuster
+ */
 function onKeydown(event: KeyboardEvent): void {
 	key_states.add(event.code);
 
@@ -510,8 +525,7 @@ function onKeydown(event: KeyboardEvent): void {
 			console.log('Reload models to see the change...');
 			// TODO: Could add live model reloading here
 			break;
-		}
-		case settings.keybinds.switchWeapon: {
+		}		case settings.keybinds.switchWeapon: {
 			// Cycle through available weapons
 			const currentWeapon = combatSystem.getWeapon(player);
 			if (currentWeapon) {
@@ -522,6 +536,16 @@ function onKeydown(event: KeyboardEvent): void {
 				const nextIndex = (currentIndex + 1) % weaponTypes.length;
 				combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
 				console.log(`Switched to ${WeaponConfigs[weaponTypes[nextIndex]].name}`);
+			}
+			break;
+		}		case settings.keybinds.adjustWeapon: {
+			// Toggle the weapon position adjuster with the current weapon model
+			console.log('Activating weapon position adjuster');
+			const currentWeapon = combatSystem.getWeapon(player);
+			if (currentWeapon) {
+				toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
+			} else {
+				toggleWeaponAdjuster();
 			}
 			break;
 		}
@@ -796,7 +820,6 @@ async function main(): Promise<void> {
 		// No saved settings, save the defaults
 		localStorage.setItem('gameSettings', JSON.stringify(settings));
 	}
-
 	// Ensure useGreedyMesh is synchronized with global state
 	useGreedyMesh = settings.useGreedyMesh;
 	(globalThis as any).useGreedyMesh = useGreedyMesh;
@@ -843,10 +866,12 @@ async function main(): Promise<void> {
 		layer: PhysicsLayer.Player,
 		collidesWith: PhysicsLayer.All & ~PhysicsLayer.Trigger // Collide with everything except triggers
 	});
-
 	// Initialize combat system
 	combatSystem.initializeCombatStats(player, 100, 5); // 100 HP, 5 defense
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
+	
+	// Initialize weapon position adjuster
+	WeaponPositionAdjuster.getInstance().init(settings.keybinds.adjustWeapon);
 
 	// Create a demo trigger volume
 	const demoTrigger = new TriggerVolume(TriggerShape.Box, vec3.fromValues(2, 2, 2));

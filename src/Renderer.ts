@@ -491,18 +491,40 @@ export class Renderer {
       // First render the player's first-person weapon view if it has a model
     if (player.fpWeapon && player.fpWeapon.model) {
       const fpWeapon = player.fpWeapon;
-      // Scale for first-person view - larger than regular entities to be visible
-      const weaponScale = [1/24, 1/24, 1/24]; 
-      const offsetMatrix = mat4.fromTranslation(mat4.create(), [-fpWeapon.model.volume.sizeX / 2, -fpWeapon.model.volume.sizeY / 2, 0]);      const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeapon.worldRotation, fpWeapon.worldPosition, weaponScale);
+      // Scale for first-person view - use weapon-specific scale
+      const baseScale = 1/24;
+      const weaponSpecificScale = fpWeapon.getWeaponScale();
+      const weaponScale = [baseScale * weaponSpecificScale, baseScale * weaponSpecificScale, baseScale * weaponSpecificScale]; 
+      
+      const offsetMatrix = mat4.fromTranslation(mat4.create(), [-fpWeapon.model.volume.sizeX / 2, -fpWeapon.model.volume.sizeY / 2, 0]);      
+      const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeapon.worldRotation, fpWeapon.worldPosition, weaponScale);
       mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
       const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
       this.drawModel(fpWeapon.model, modelViewProjectionMatrix, modelMatrix, renderPass);
-    }
-      // Then render all other entities except the player
-    for (const e of globalThis.Entity.all) {
-      // Don't render the player (first-person view) or entities without models
-      // Make sure to render the weapon even if it's a child of the player
-      if (e.model && (e !== player || e === player.fpWeapon)) {
+    }    // Then render all other entities except:
+    // - The player (first-person view)
+    // - The first-person weapon (already rendered above)
+    // - Any weapon attached to the player (would be inside the player model)
+    for (const e of globalThis.Entity.all) {      // Helper function to check if an entity is a child of another entity (directly or indirectly)
+      const isChildOf = (entity: Entity, potentialParent: Entity): boolean => {
+        let current = entity.parent;
+        while (current) {
+          if (current === potentialParent) return true;
+          current = current.parent;
+        }
+        return false;
+      };
+        // Skip entities:
+      // - Without models
+      // - That are the player itself
+      // - That are the first-person weapon
+      // - That are any entity parented to the player (like third-person weapons)
+      const isWeaponAttachedToPlayer = e.parent === player || isChildOf(e, player);
+      
+      if (e.model && 
+          e !== player && 
+          e !== player.fpWeapon && 
+          !isWeaponAttachedToPlayer) {
         const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0]);
         const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.worldRotation, e.worldPosition, [1/32, 1/32, 1/32]);
         mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);

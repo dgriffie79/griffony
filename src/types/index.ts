@@ -21,6 +21,7 @@ export interface GameSettings {
     block: string;
     switchWeapon: string;
     toggleMesh: string;
+    adjustWeapon: string;
   };
 }
 

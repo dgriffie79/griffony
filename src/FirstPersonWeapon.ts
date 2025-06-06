@@ -3,6 +3,52 @@ import { Entity } from './Entity';
 import type { Player } from './Player';
 import type { Weapon } from './Weapon';
 import type { Model } from './Model';
+import type { WeaponType } from './types/index';
+
+/**
+ * Default weapon positioning configurations for first-person view
+ * Use this to adjust how each weapon appears from the first-person perspective
+ */
+export const WeaponPositionConfigs: Record<string, {
+  position: [number, number, number],
+  restRotation: [number, number, number],
+  attackStartRotation: [number, number, number],
+  attackEndRotation: [number, number, number],
+  scale?: number
+}> = {
+  // Default configuration used when no weapon-specific one is available
+  DEFAULT: {
+    position: [0.3, 0.3, -0.15], // Position on screen (right, forward, down)
+    restRotation: [-20, 230, 0], // Euler angles (pitch, yaw, roll)
+    attackStartRotation: [-30, 180, 20], // Wind-up animation
+    attackEndRotation: [50, 270, -40], // Swing animation
+    scale: 1.0
+  },
+  // Sword-specific configuration
+   sword: {
+    position: [0.16, 0.19, -0.20],
+    restRotation: [-10, 0, 25],
+    attackStartRotation: [-120, 0, 25],
+    attackEndRotation: [-10, 0, 25],
+    scale: 1.00
+  },
+  // Axe-specific configuration
+  axe: {
+    position: [0.16, 0.19, -0.20],
+    restRotation: [-10, 0, 25],
+    attackStartRotation: [-120, 0, 25],
+    attackEndRotation: [-10, 0, 25],
+    scale: .25
+  },
+  // Hammer-specific configuration
+  hammer: {
+    position: [0.16, 0.19, -0.20],
+    restRotation: [-10, 0, 25],
+    attackStartRotation: [-120, 0, 25],
+    attackEndRotation: [-10, 0, 25],
+    scale: .75
+  }
+};
 
 /**
  * Represents a weapon model displayed in first person view
@@ -14,30 +60,60 @@ export class FirstPersonWeapon extends Entity {
   isAttacking: boolean = false;
   attackStartTime: number = 0;
   attackDuration: number = 400; // Default, will be set from weapon config
-  // First-person view positioning - adjusted for better visibility
-  private fpRightHandPosition = vec3.fromValues(0.3, 0.3, -0.15); // Position on screen (right, forward, down)
-  private fpRestRotation = quat.fromEuler(quat.create(), -20, 230, 0); // Resting rotation
-  private fpAttackStartRotation = quat.fromEuler(quat.create(), -30, 180, 20); // Wind-up animation
-  private fpAttackEndRotation = quat.fromEuler(quat.create(), 50, 270, -40); // Swing animation
-    constructor(player: Player) {
+  currentWeaponType: string = 'DEFAULT';
+  weaponScale: number = 1.0;
+  
+  // First-person view positioning - set from WeaponPositionConfigs
+  private fpRightHandPosition = vec3.fromValues(0.3, 0.3, -0.15); // Default position
+  private fpRestRotation = quat.create();
+  private fpAttackStartRotation = quat.create();
+  private fpAttackEndRotation = quat.create();
+  constructor(player: Player) {
     super();
     this.player = player;
     this.parent = player.head; // Attach to player's head for first person view
     
-    // Set initial position and rotation
-    vec3.copy(this.localPosition, this.fpRightHandPosition);
-    quat.copy(this.localRotation, this.fpRestRotation);
-    this.dirty = true;
-      // Add to player's head as a child
+    // Apply default weapon position and rotation
+    this.applyWeaponPositionConfig('DEFAULT');
+    
+    // Add to player's head as a child
     player.head.children.push(this);
     
     // Add this to Entity.all to ensure it gets rendered and updated
     Entity.all.push(this);
   }
+    /**
+   * Applies position and rotation configuration for a specific weapon type
+   * This makes it easy to adjust weapons individually
+   */
+  public applyWeaponPositionConfig(weaponType: string): void {
+    // Get the configuration for this weapon, fall back to DEFAULT if not found
+    const config = WeaponPositionConfigs[weaponType] || WeaponPositionConfigs.DEFAULT;
+    
+    // Apply position
+    vec3.set(this.fpRightHandPosition, ...config.position);
+    vec3.copy(this.localPosition, this.fpRightHandPosition);
+    
+    // Apply rotations (convert from Euler angles)
+    quat.fromEuler(this.fpRestRotation, ...config.restRotation);
+    quat.fromEuler(this.fpAttackStartRotation, ...config.attackStartRotation);
+    quat.fromEuler(this.fpAttackEndRotation, ...config.attackEndRotation);
+    quat.copy(this.localRotation, this.fpRestRotation);
+    
+    // Store weapon scale
+    this.weaponScale = config.scale || 1.0;
+    
+    // Mark as dirty to update transforms
+    this.dirty = true;
+    
+    // Store current weapon type
+    this.currentWeaponType = weaponType;
+  }
   
   /**
    * Update the weapon model based on the player's equipped weapon
-   */  updateWeaponModel(weapon: Weapon | null): void {
+   */
+  updateWeaponModel(weapon: Weapon | null): void {
     if (!weapon) {
       this.weaponModel = null;
       this.model = null;
@@ -45,11 +121,16 @@ export class FirstPersonWeapon extends Entity {
     }
     
     // Set the model based on weapon type
-    this.model = globalThis.models?.[weapon.weaponData.modelName] || null;
+    const modelName = weapon.weaponData.modelName;
+    this.model = globalThis.models?.[modelName] || null;
     this.weaponModel = this.model;
     
     if (!this.model) {
-      console.warn(`First-person weapon: Model "${weapon.weaponData.modelName}" not found for ${weapon.weaponData.name}`);
+      console.warn(`First-person weapon: Model "${modelName}" not found for ${weapon.weaponData.name}`);
+    } else {
+      // Apply weapon-specific position configuration
+      this.applyWeaponPositionConfig(modelName);
+      console.log(`Applied ${modelName} first-person positioning configuration`);
     }
     
     // Update attack animation duration from weapon config
@@ -68,8 +149,7 @@ export class FirstPersonWeapon extends Entity {
   
   /**
    * Update the weapon animation
-   */
-  update(elapsed: number): void {
+   */  update(elapsed: number): void {
     super.update(elapsed);
     
     // Update attack animation if active
@@ -77,7 +157,8 @@ export class FirstPersonWeapon extends Entity {
       const now = performance.now();
       const progress = Math.min(1, (now - this.attackStartTime) / this.attackDuration);
       
-      // Update rotation based on attack progress using easing function      // Use different easing for different phases of the animation
+      // Update rotation based on attack progress using easing function
+      // Use different easing for different phases of the animation
       let targetRotation = quat.create();
       
       if (progress < 0.25) {
@@ -104,6 +185,14 @@ export class FirstPersonWeapon extends Entity {
         this.dirty = true;
       }
     }
+  }
+  
+  /**
+   * Gets the scale factor for this weapon
+   * Used by the renderer to properly scale the weapon model
+   */
+  getWeaponScale(): number {
+    return this.weaponScale;
   }
     /**
    * Easing functions for smooth animation
