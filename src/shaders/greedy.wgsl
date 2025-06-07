@@ -108,7 +108,9 @@ fn vs_main(@location(0) face: vec4u, @location(1) size: vec2u, @builtin(vertex_i
             world_offset = vec3f(0.0, 0.0, 0.0);
             output.uv = vec2f(0.0, 0.0);
         }
-    }let world_position = vec3f(position) + world_offset;
+    }
+	
+	let world_position = vec3f(position) + world_offset;
     output.position = object_uniforms.model_view_projection * vec4f(world_position, 1.0);
     output.local_position = world_position;
     output.voxel_position = vec3f(position);  // Pass the original voxel position
