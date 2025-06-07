@@ -4,6 +4,9 @@ export class Model {
   url: string;
   volume!: Volume;
   palette!: Uint8Array;
+  originalFaceCount: number = 0;
+  greedyFaceCount: number = 0;
+  facesBuffer: GPUBuffer | null = null;
 
   constructor(url: string = '') {
     this.url = url;
@@ -28,15 +31,30 @@ export class Model {
     this.volume = new Volume(sizeX, sizeY, sizeZ, { emptyValue: 255 });
 
     const numVoxels = sizeX * sizeY * sizeZ;
-    const sourceVoxels = new Uint8Array(dataView.buffer, 12, numVoxels);
-
-    // Transform from [x][y][z] to [z][y][x]
+    const sourceVoxels = new Uint8Array(dataView.buffer, 12, numVoxels);    // Transform from [x][y][z] to [z][y][x]
+    let voxelValueCounts = new Map<number, number>();
     for (let x = 0; x < sizeX; x++) {
       for (let y = 0; y < sizeY; y++) {
         for (let z = 0; z < sizeZ; z++) {
           const srcIdx = x * sizeY * sizeZ + y * sizeZ + z;
-          this.volume.setVoxel(x, sizeY - y - 1, sizeZ - z - 1, sourceVoxels[srcIdx]);
+          const voxelValue = sourceVoxels[srcIdx];
+          this.volume.setVoxel(x, sizeY - y - 1, sizeZ - z - 1, voxelValue);
+          
+          // Count voxel values for debugging
+          if (this.url.includes('fatta')) {
+            voxelValueCounts.set(voxelValue, (voxelValueCounts.get(voxelValue) || 0) + 1);
+          }
         }
+      }
+    }
+    
+    // Debug voxel value distribution for fatta model
+    if (this.url.includes('fatta')) {
+      console.log('🔍 FATTA MODEL VOXEL VALUES:');
+      console.log(`Empty value set to: ${this.volume.emptyValue}`);
+      const sortedValues = Array.from(voxelValueCounts.entries()).sort((a, b) => a[0] - b[0]);
+      for (const [value, count] of sortedValues) {
+        console.log(`  Voxel value ${value}: ${count} voxels ${value === this.volume.emptyValue ? '(EMPTY)' : ''}`);
       }
     }
 

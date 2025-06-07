@@ -187,13 +187,9 @@ export class PhysicsSystem {
         return; // Skip gravity application until terrain collision data is ready
       }
 
-      const onGround = this.isEntityOnGround(entity);
-      if (!onGround) {
+      const onGround = this.isEntityOnGround(entity);      if (!onGround) {
         const oldVel = entity.vel[2];
         entity.vel[2] -= this.config.gravity * dt;
-        if (this.debugEnabled && isPlayer) {
-          console.log(`⬇️ Gravity applied: ${oldVel.toFixed(3)} → ${entity.vel[2].toFixed(3)} (dt=${dt.toFixed(3)})`);
-        }
       } else if (entity.vel[2] < 0) {
         // Stop falling when on ground
         if (this.debugEnabled && isPlayer && entity.vel[2] < -0.1) {

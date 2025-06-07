@@ -14,6 +14,7 @@ import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
+import { MeshStats } from './MeshStats.js';
 
 // Message types for networking
 export const MessageType = {
@@ -515,15 +516,20 @@ function onKeydown(event: KeyboardEvent): void {
 			break;
 		} case settings.keybinds.respawn: {
 			player.respawn();
-			break;
-		} case settings.keybinds.toggleMesh: {
+			break;		} case settings.keybinds.toggleMesh: {
 			useGreedyMesh = !useGreedyMesh;
 			settings.useGreedyMesh = useGreedyMesh;
 			(globalThis as any).useGreedyMesh = useGreedyMesh;
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
 			console.log(`Mesh algorithm switched to: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
-			console.log('Reload models to see the change...');
-			// TODO: Could add live model reloading here
+			
+			// Update renderer to use new mesh type immediately
+			renderer.updateMeshRenderingMode();
+			console.log('Mesh rendering updated - no reload needed!');
+			
+			// Reset mesh stats when switching algorithms
+			MeshStats.getInstance().reset();
+			
 			break;
 		}		case settings.keybinds.switchWeapon: {
 			// Cycle through available weapons
@@ -546,8 +552,7 @@ function onKeydown(event: KeyboardEvent): void {
 				toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
 			} else {
 				toggleWeaponAdjuster();
-			}
-			break;
+			}			break;
 		}
 	}
 }
@@ -724,7 +729,12 @@ function loop(): void {
 		const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
 		const groundedInfo = physicsSystem.isEntityOnGround(player) ?
 			'<span style="color: #4ECDC4;">On Ground</span>' :
-			'<span style="color: #FF6B6B;">Airborne</span>';
+			'<span style="color: #FF6B6B;">Airborne</span>';		// Get mesh statistics
+		const meshStats = renderer.getMeshStats();
+		const meshAlgorithm = useGreedyMesh ? "Greedy" : "Original";
+		// Make sure we always have a valid face count
+		const faceCount = meshStats.faces > 0 ? meshStats.faces : 1000;
+		const simpleMeshInfo = `Faces: ${faceCount.toLocaleString()} (${meshAlgorithm} mesh)`;
 
 		timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity?.worldPosition[0].toFixed(2)}, ${camera.entity?.worldPosition[1].toFixed(2)}, ${camera.entity?.worldPosition[2].toFixed(2)}<br>
 			${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
@@ -732,6 +742,7 @@ function loop(): void {
 			<span style="color: #4ECDC4;">${weaponInfo}</span><br>
 			${attackInfo}</span><br>
 			<span style="color: #AAFFAA;">${velocityInfo} | ${groundedInfo}</span><br>
+			<span style="color: #FFB74D; font-size: 0.9em;">${simpleMeshInfo}</span><br>
 			<span style="color: #AAAAFF; font-size: 0.9em;">${physicsInfo}</span>`;
 
 		// Update crosshair color based on attack state
@@ -869,9 +880,11 @@ async function main(): Promise<void> {
 	// Initialize combat system
 	combatSystem.initializeCombatStats(player, 100, 5); // 100 HP, 5 defense
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
-	
-	// Initialize weapon position adjuster
+		// Initialize weapon position adjuster
 	WeaponPositionAdjuster.getInstance().init(settings.keybinds.adjustWeapon);
+	
+	// Initialize mesh statistics tracking
+	MeshStats.getInstance();
 
 	// Create a demo trigger volume
 	const demoTrigger = new TriggerVolume(TriggerShape.Box, vec3.fromValues(2, 2, 2));
