@@ -1,4 +1,9 @@
 import { Volume } from './Volume';
+import { Logger } from './Logger.js';
+import { getConfig } from './Config.js';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 export class Model {
   url: string;
@@ -47,18 +52,17 @@ export class Model {
         }
       }
     }
-    
-    // Debug voxel value distribution for fatta model
+      // Debug voxel value distribution for fatta model
     if (this.url.includes('fatta')) {
-      console.log('🔍 FATTA MODEL VOXEL VALUES:');
-      console.log(`Empty value set to: ${this.volume.emptyValue}`);
+      logger.debug('MODEL', '🔍 FATTA MODEL VOXEL VALUES:');
+      logger.debug('MODEL', `Empty value set to: ${this.volume.emptyValue}`);
       const sortedValues = Array.from(voxelValueCounts.entries()).sort((a, b) => a[0] - b[0]);
       for (const [value, count] of sortedValues) {
-        console.log(`  Voxel value ${value}: ${count} voxels ${value === this.volume.emptyValue ? '(EMPTY)' : ''}`);
+        logger.debug('MODEL', `  Voxel value ${value}: ${count} voxels ${value === this.volume.emptyValue ? '(EMPTY)' : ''}`);
       }
     }
 
-    this.palette = new Uint8Array(256 * 4);
+    this.palette = new Uint8Array(getConfig().getGPUConfig().paletteBufferStride);
 
     for (let i = 0; i < 256; i++) {
       this.palette[i * 4 + 0] = dataView.getUint8(12 + numVoxels + i * 3 + 0) << 2;

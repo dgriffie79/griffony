@@ -3,8 +3,12 @@ import type { Model } from './Model';
 import type { Tileset } from './Tileset';
 import type { Level } from './Level';
 import { greedyMesh, optimizedGreedyMesh } from './utils';
+import { Logger } from './Logger';
+import { getConfig } from './Config';
 
 export class Renderer {
+  private logger = Logger.getInstance();
+  private config = getConfig();
   device!: GPUDevice;
   context!: GPUCanvasContext;
   viewport: [number, number] = [0, 0];
@@ -85,17 +89,19 @@ export class Renderer {
     this.createDepthTexture();
     
     // Create buffers
+    const gpuConfig = this.config.getGPUConfig();
+    
     this.frameUniforms = this.device.createBuffer({
-      size: 256,
+      size: gpuConfig.uniformBufferSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     
     this.objectUniforms = this.device.createBuffer({
-      size: 256 * 100000,
+      size: gpuConfig.transferBufferSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     
-    this.transferBuffer = new ArrayBuffer(256 * 100000);
+    this.transferBuffer = new ArrayBuffer(gpuConfig.transferBufferSize);
     
     this.paletteTexture = this.device.createTexture({
       format: 'rgba8unorm',
@@ -142,17 +148,13 @@ export class Renderer {
       const module = this.device.createShaderModule({
         label: name,
         code: sources[name],
-      });
-      results.push(module.getCompilationInfo().then(info => {
-        for (const message of info.messages) {
-          console.log(message);
-        }
+      });      results.push(module.getCompilationInfo().then(info => {
+        this.logger.shaderCompilation(name, info.messages.length === 0, Array.from(info.messages));
       }));
       modules[name] = module;
     }
-    
-    await Promise.all(results);
-    console.log('All shader modules compiled');
+      await Promise.all(results);
+    this.logger.info('RENDERER', 'All shader modules compiled');
     this.shaders = modules;
   }  async loadShaderSources(): Promise<Record<string, string>> {
     const shaders: Record<string, string> = {};
@@ -370,8 +372,8 @@ export class Renderer {
     this.greedyTerrainPipeline = this.device.createRenderPipeline(greedyTerrainPipelineDescriptor!);
     this.greedyModelPipeline = this.device.createRenderPipeline(greedyModelPipelineDescriptor!);
   }
-
   registerModel(model: Model): void {
+    const gpuConfig = this.config.getGPUConfig();
     const volume = model.volume;
     const resources = this.resourceMap.get(model) || {};
 
@@ -400,7 +402,7 @@ export class Renderer {
         mipLevel: 0,
       },
       model.palette!,
-      { bytesPerRow: 256 * 4 },
+      { bytesPerRow: gpuConfig.paletteBufferStride },
       [255, 1, 1]
     );
     
@@ -420,74 +422,45 @@ export class Renderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     this.device.queue.writeBuffer(resources.greedyBuffer, 0, greedyFaces);
-    
-    // Set the active buffer based on current setting
+      // Set the active buffer based on current setting
     const useGreedy = (globalThis as any).useGreedyMesh || false;
-    resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;    // Log statistics for box_frame model
-    if (model.url.includes('box_frame')) {
-      console.log(`Box frame model - Original faces: ${originalFaces.length / 4}, Greedy mesh faces: ${greedyFaces.length / 8}`);
-      
-      // Debug face details for both algorithms
-      if (originalFaces.length > 0) {
-        console.log('Original first 5 faces:');
-        for (let i = 0; i < Math.min(20, originalFaces.length); i += 4) {
-          console.log(`  Face ${i/4}: [${originalFaces[i]}, ${originalFaces[i+1]}, ${originalFaces[i+2]}] normal=${originalFaces[i+3]}`);
-        }
-      }
-      
-      if (greedyFaces.length > 0) {        console.log('Greedy first 5 faces:');
-        for (let i = 0; i < Math.min(40, greedyFaces.length); i += 8) {
-          console.log(`  Face ${i/8}: [${greedyFaces[i]}, ${greedyFaces[i+1]}, ${greedyFaces[i+2]}] normal=${greedyFaces[i+3]} size=${greedyFaces[i+4]}x${greedyFaces[i+5]}`);
-        }
-      }
-    }
-    
-    // DETAILED DEBUG: Log statistics specifically for fatta model (the one with artifact)
-    if (model.url.includes('fatta')) {
-      console.log(`🔍 FATTA MODEL DEBUG - Original faces: ${originalFaces.length / 4}, Greedy mesh faces: ${greedyFaces.length / 8}`);
-      console.log(`Model dimensions: ${volume.sizeX}x${volume.sizeY}x${volume.sizeZ}`);
-      
-      // Debug face details for both algorithms - show more faces for fatta
-      if (originalFaces.length > 0) {
-        console.log('🟦 FATTA Original faces (first 10):');
-        for (let i = 0; i < Math.min(40, originalFaces.length); i += 4) {
-          console.log(`  Original Face ${i/4}: pos[${originalFaces[i]}, ${originalFaces[i+1]}, ${originalFaces[i+2]}] normal=${originalFaces[i+3]}`);
-        }
-      }
-        if (greedyFaces.length > 0) {
-        console.log('🟩 FATTA Greedy faces (first 10):');
-        for (let i = 0; i < Math.min(80, greedyFaces.length); i += 8) {
-          console.log(`  Greedy Face ${i/8}: pos[${greedyFaces[i]}, ${greedyFaces[i+1]}, ${greedyFaces[i+2]}] normal=${greedyFaces[i+3]} size[${greedyFaces[i+4]}x${greedyFaces[i+5]}]`);
-        }
-      }
-      
-      // Check for any unusual patterns in the greedy mesh
-      let maxWidth = 0, maxHeight = 0;
-      for (let i = 0; i < greedyFaces.length; i += 8) {
-        maxWidth = Math.max(maxWidth, greedyFaces[i+4]);
-        maxHeight = Math.max(maxHeight, greedyFaces[i+5]);
-      }
-      console.log(`🔍 FATTA max greedy quad size: ${maxWidth}x${maxHeight}`);
-    }
-    
-    // Count faces by direction
-    const normalNames = ['-X', '+X', '-Y', '+Y', '-Z', '+Z'];
-    
-    const originalCounts = [0, 0, 0, 0, 0, 0];
-    for (let i = 0; i < originalFaces.length; i += 4) {
-      originalCounts[originalFaces[i + 3]]++;
-    }
-    console.log('Original face counts by direction:', originalCounts.map((count, i) => `${normalNames[i]}: ${count}`).join(', '));
-    
-    const greedyCounts = [0, 0, 0, 0, 0, 0];
-    for (let i = 0; i < greedyFaces.length; i += 8) {
-      greedyCounts[greedyFaces[i + 3]]++;
-    }    console.log('Greedy face counts by direction:', greedyCounts.map((count, i) => `${normalNames[i]}: ${count}`).join(', '));
+    resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
+
+    // Log mesh statistics using centralized logger
+    this.logger.meshStats(model.url, originalFaces.length / 4, greedyFaces.length / 8, {
+      originalFaces: originalFaces.length / 4,
+      greedyFaces: greedyFaces.length / 8,
+      dimensions: `${volume.sizeX}x${volume.sizeY}x${volume.sizeZ}`
+    });
+
+    // Count faces by direction for debugging
+    this.logger.debug('RENDERER', 'Face distribution analysis', {
+      originalFaces: this.getFaceCountsByDirection(originalFaces, 4),
+      greedyFaces: this.getFaceCountsByDirection(greedyFaces, 8)
+    });
 
     this.resourceMap.set(model, resources);
-  }
+}
 
-    // Removed generateAccelerationData method as it's no longer needed
+// Helper method for analyzing face distribution by direction
+private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number): { [key: string]: number } {
+  const normalNames = ['-X', '+X', '-Y', '+Y', '-Z', '+Z'];
+  const counts = [0, 0, 0, 0, 0, 0];
+  
+  for (let i = 0; i < faces.length; i += stride) {
+    const normal = faces[i + 3];
+    if (normal >= 0 && normal < 6) {
+      counts[normal]++;
+    }
+  }
+  
+  const result: { [key: string]: number } = {};
+  normalNames.forEach((name, i) => {
+    result[name] = counts[i];
+  });
+  
+  return result;
+}
 
   registerTileset(tileset: Tileset): void {
     const width = tileset.tileWidth;
@@ -534,10 +507,8 @@ export class Renderer {
     const meshStartTime = performance.now();
     const originalFaces = volume.generateFaces();
     const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
-    const meshEndTime = performance.now();
-    
-    console.log(`Level mesh generation took ${meshEndTime - meshStartTime}ms`);
-    console.log(`Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces for level terrain`);
+    const meshEndTime = performance.now();    this.logger.performance('Level mesh generation', meshEndTime - meshStartTime, 
+      `Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces`);
     
     // Store both mesh types in resources
     const bufferStartTime = performance.now();
@@ -556,12 +527,11 @@ export class Renderer {
     // Set the active buffer based on current setting
     const useGreedy = (globalThis as any).useGreedyMesh || false;
     resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
-    
-    const bufferEndTime = performance.now();
-    console.log(`Buffer creation and upload took ${bufferEndTime - bufferStartTime}ms`);
+      const bufferEndTime = performance.now();
+    this.logger.performance('Buffer creation and upload', bufferEndTime - bufferStartTime);
 
     this.resourceMap.set(level, resources);
-    console.log('Level terrain mesh registered with renderer');
+    this.logger.info('RENDERER', 'Level terrain mesh registered with renderer');
   }
 
   createDepthTexture(): void {
@@ -645,21 +615,22 @@ export class Renderer {
         // Skip entities:
       // - Without models
       // - That are the player itself
-      // - That are the first-person weapon
-      // - That are any entity parented to the player (like third-person weapons)
+      // - That are the first-person weapon      // - That are any entity parented to the player (like third-person weapons)
       const isWeaponAttachedToPlayer = e.parent === player || isChildOf(e, player);
+      
+      // Get rendering configuration
+      const renderingConfig = this.config.getRenderingConfig();
       
       if (e.model && 
           e !== player && 
           e !== player.fpWeapon && 
-          !isWeaponAttachedToPlayer) {
-        const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0]);
-        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.worldRotation, e.worldPosition, [1/32, 1/32, 1/32]);
+          !isWeaponAttachedToPlayer) {const offsetMatrix = mat4.fromTranslation(mat4.create(), [-e.model.volume.sizeX / 2, -e.model.volume.sizeY / 2, 0]);
+        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.worldRotation, e.worldPosition, [renderingConfig.modelScale, renderingConfig.modelScale, renderingConfig.modelScale]);
         mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
         const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
         this.drawModel(e.model, modelViewProjectionMatrix, modelMatrix, renderPass);      }      // Update animation frames
       e.animationFrame++;
-      if (e.animationFrame > 16) {
+      if (e.animationFrame > renderingConfig.maxAnimationFrame) {
         const models = globalThis.models;
         if (e.model === models['fatta']) {
           e.model = models['fattb'];
@@ -694,12 +665,14 @@ export class Renderer {
       const now = performance.now();      if (now - this.lastTimePrint >= 1000) {
         const sum = this.frameTimes.reduce((a, b) => a + b, 0);
         const avgFrameTime = sum / this.frameTimes.length;
-        console.debug(`Average frame time over last ${this.frameTimes.length} frames: ${avgFrameTime.toFixed(7)} ms`);
+        this.logger.performance('Average frame time', avgFrameTime, 
+          `Over last ${this.frameTimes.length} frames`);
         this.frameTimes.length = 0;
         this.lastTimePrint = now;
       }
     }
   }  drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+    const gpuConfig = this.config.getGPUConfig();
     const resources = this.resourceMap.get(level);
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
     floatView.set(modelViewProjectionMatrix, 0);
@@ -718,11 +691,11 @@ export class Renderer {
           entries: [
             {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: 256 }
+              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: 256 }
+              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
@@ -748,19 +721,18 @@ export class Renderer {
       renderPass.setBindGroup(0, resources.greedyBindGroup, [this.objectUniformsOffset]);
     } else {
       resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
-      
-      // Create original bind group if needed
+        // Create original bind group if needed
       if (!resources.bindGroup) {
         resources.bindGroup = this.device.createBindGroup({
           layout: this.bindGroupLayout,
           entries: [
             {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: 256 }
+              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: 256 }
+              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
@@ -809,8 +781,8 @@ export class Renderer {
     
     renderPass.draw(6, levelFaceCount, 0, 0);
     this.objectUniformsOffset += 256;
-  }
-  drawModel(model: Model, modelViewProjectionMatrix: mat4, modelMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+  }  drawModel(model: Model, modelViewProjectionMatrix: mat4, modelMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+    const gpuConfig = this.config.getGPUConfig();
     const resources = this.resourceMap.get(model);
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
     const uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset);
@@ -827,17 +799,16 @@ export class Renderer {
       
       // Create greedy bind group if needed
       if (!resources.greedyBindGroup) {
-        resources.greedyBindGroup = this.device.createBindGroup({
-          label: 'greedy-model',
+        resources.greedyBindGroup = this.device.createBindGroup({          label: 'greedy-model',
           layout: this.greedyBindGroupLayout,
           entries: [
             {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: 256 }
+              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: 256 }
+              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
@@ -868,14 +839,13 @@ export class Renderer {
         const descriptor: GPUBindGroupDescriptor = {
           label: 'model',
           layout: this.bindGroupLayout,
-          entries: [
-            {
+          entries: [            {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: 256 }
+              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: 256 }
+              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
@@ -974,10 +944,9 @@ export class Renderer {
         }
       }
     }
-    
-    // Ensure we return at least 1 face if level is loaded
+      // Ensure we return at least 1 face if level is loaded
     if (totalFaces === 0 && globalThis.level) {
-      console.warn('No faces detected in getMeshStats, using default value');
+      this.logger.warn('RENDERER', 'No faces detected in getMeshStats, using default value');
       totalFaces = 1000; // Default fallback value
     }
     
@@ -994,7 +963,7 @@ export class Renderer {
    */
   updateMeshRenderingMode(): void {
     const useGreedy = (globalThis as any).useGreedyMesh || false;
-    console.log(`Switching to ${useGreedy ? 'greedy' : 'original'} mesh rendering`);
+    this.logger.info('RENDERER', `Switching to ${useGreedy ? 'greedy' : 'original'} mesh rendering`);
     
     // Update all models
     for (const [entity, resources] of this.resourceMap.entries()) {

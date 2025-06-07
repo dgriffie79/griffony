@@ -4,6 +4,11 @@ import type { Player } from './Player';
 import type { Weapon } from './Weapon';
 import type { Model } from './Model';
 import type { WeaponType } from './types/index';
+import { Logger } from './Logger.js';
+import { getConfig } from './Config.js';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 /**
  * Default weapon positioning configurations for first-person view
@@ -59,7 +64,7 @@ export class FirstPersonWeapon extends Entity {
   weaponModel: Model | null = null;
   isAttacking: boolean = false;
   attackStartTime: number = 0;
-  attackDuration: number = 400; // Default, will be set from weapon config
+  attackDuration: number = getConfig().getRenderingConfig().defaultAttackDuration; // From config
   currentWeaponType: string = 'DEFAULT';
   weaponScale: number = 1.0;
   
@@ -126,11 +131,11 @@ export class FirstPersonWeapon extends Entity {
     this.weaponModel = this.model;
     
     if (!this.model) {
-      console.warn(`First-person weapon: Model "${modelName}" not found for ${weapon.weaponData.name}`);
+      logger.warn('WEAPON', `First-person weapon: Model "${modelName}" not found for ${weapon.weaponData.name}`);
     } else {
       // Apply weapon-specific position configuration
       this.applyWeaponPositionConfig(modelName);
-      console.log(`Applied ${modelName} first-person positioning configuration`);
+      logger.debug('WEAPON', `Applied ${modelName} first-person positioning configuration`);
     }
     
     // Update attack animation duration from weapon config
@@ -157,21 +162,23 @@ export class FirstPersonWeapon extends Entity {
       const now = performance.now();
       const progress = Math.min(1, (now - this.attackStartTime) / this.attackDuration);
       
+      // Get animation timing config
+      const animConfig = getConfig().getRenderingConfig().attackAnimationPhases;
+      
       // Update rotation based on attack progress using easing function
-      // Use different easing for different phases of the animation
       let targetRotation = quat.create();
       
-      if (progress < 0.25) {
+      if (progress < animConfig.windupPhase) {
         // Wind up phase - slower start for anticipation
-        const t = this.easeIn(progress / 0.25);
+        const t = this.easeIn(progress / animConfig.windupPhase);
         quat.slerp(targetRotation, this.fpRestRotation, this.fpAttackStartRotation, t);
-      } else if (progress < 0.6) {
+      } else if (progress < animConfig.swingPhase) {
         // Swing phase - quick, snappy motion
-        const t = this.easeOut((progress - 0.25) / 0.35);
+        const t = this.easeOut((progress - animConfig.windupPhase) / (animConfig.swingPhase - animConfig.windupPhase));
         quat.slerp(targetRotation, this.fpAttackStartRotation, this.fpAttackEndRotation, t);
       } else {
         // Return to rest - more gradual
-        const t = this.easeInOut((progress - 0.6) / 0.4);
+        const t = this.easeInOut((progress - animConfig.swingPhase) / (1.0 - animConfig.swingPhase));
         quat.slerp(targetRotation, this.fpAttackEndRotation, this.fpRestRotation, t);
       }
       

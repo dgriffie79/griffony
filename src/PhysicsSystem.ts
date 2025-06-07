@@ -3,6 +3,11 @@ import { Entity, PhysicsLayer } from './Entity';
 import { Player } from './Player';
 import { Level } from './Level';
 import type { CollisionEvent, CollisionCallback } from './types/index';
+import { Logger } from './Logger.js';
+import { getConfig } from './Config';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 export interface PhysicsConfig {
   gravity: number;       // Gravity force in units per second squared
@@ -28,34 +33,37 @@ export interface PhysicsConfig {
  */
 export class PhysicsSystem {
   private static instance: PhysicsSystem | null = null;
-  private level: Level | null = null;
-  // Default physics configuration
-  private config: PhysicsConfig = {
-    gravity: 9.8,
-    maxVelocity: 100,
-    jumpForce: 5,
-    friction: 0.2,
-    airResistance: 0.01,
-    collisionBounce: 0.3,
-    entityCollisionEnabled: true,
-    terrainCollisionEnabled: true,
-    qualityLevel: 'medium',
-    maxEntities: 100,
-    spatialOptimization: true
-  };
-
-  private frameCount: number = 0;
+  private level: Level | null = null;  private frameCount: number = 0;
   private lastReportTime: number = 0;
   private debugEnabled: boolean = false;
-
   private collisionListeners: Map<Entity, CollisionCallback> = new Map();
   private globalCollisionListeners: CollisionCallback[] = [];
-
-  private spatialGrid: Map<string, Entity[]> = new Map();
-  private gridCellSize: number = 5;
+  // Optimized spatial grid with numeric keys and performance tracking
+  private spatialGrid: Map<number, Entity[]> = new Map();
+  private gridCellSize: number;
   private useGridOptimization: boolean = true;
-
-  private constructor() { }
+  private gridLastUpdate: number = 0;
+  
+  // Performance tracking
+  private performanceMetrics = {
+    collisionChecks: 0,
+    collisionHits: 0,
+    raycastCount: 0,
+    gridUpdateTime: 0,
+    lastResetTime: Date.now()
+  };
+    // Collision pair cache to avoid redundant checks
+  private collisionPairCache: Map<string, number> = new Map();
+  private collisionCacheTimeout: number;
+  private gridUpdateInterval: number;
+  private config = getConfig();
+  private constructor() {
+    // Initialize configuration values
+    const physicsConfig = this.config.getPhysicsConfig();
+    this.collisionCacheTimeout = physicsConfig.collisionCacheTimeout;
+    this.gridUpdateInterval = physicsConfig.gridUpdateInterval;
+    this.gridCellSize = physicsConfig.gridCellSize;
+  }
 
   static getInstance(): PhysicsSystem {
     if (!PhysicsSystem.instance) {
@@ -111,29 +119,36 @@ export class PhysicsSystem {
       }
     }
   }
-
   /**
    * Update physics configuration
    */
   updateConfig(config: Partial<PhysicsConfig>): void {
-    this.config = { ...this.config, ...config };
+    this.config.updatePhysicsConfig(config);
   }
 
   /**
    * Get current physics configuration
    */
   getConfig(): PhysicsConfig {
-    return { ...this.config };
+    return this.config.getPhysicsConfig();
   }
-
   /**
    * Main physics update function, called each frame
    */
   update(elapsed: number): void {
     const dt = elapsed / 1000; // Convert ms to seconds
 
-    // Update spatial grid for optimization
-    this.updateSpatialGrid();
+    // Update spatial grid for optimization (with throttling)
+    const now = Date.now();
+    if (now - this.gridLastUpdate > this.gridUpdateInterval) {
+      const gridStartTime = performance.now();
+      this.updateSpatialGrid();
+      this.performanceMetrics.gridUpdateTime = performance.now() - gridStartTime;
+      this.gridLastUpdate = now;
+    }
+
+    // Clean old collision cache entries
+    this.cleanCollisionCache(now);
 
     for (const entity of Entity.all) {
       this.updateEntity(entity, dt);
@@ -152,29 +167,33 @@ export class PhysicsSystem {
     this.applyGravity(entity, dt);
 
     // Apply friction and air resistance
-    this.applyFriction(entity, dt);
-
-    // Apply velocity constraints
+    this.applyFriction(entity, dt);    // Apply velocity constraints
     this.constrainVelocity(entity);
-
+    
     // Apply velocity to position
     this.applyVelocity(entity, dt);
+    
     // Handle collisions
     if (entity.collision) {
+      const physicsConfig = this.config.getPhysicsConfig();
+      
       // Entity-entity collisions
-      if (this.config.entityCollisionEnabled) {
+      if (physicsConfig.entityCollisionEnabled) {
         this.handleEntityCollisions(entity);
       }
 
       // Terrain collisions
-      if (this.config.terrainCollisionEnabled) {
+      if (physicsConfig.terrainCollisionEnabled) {
         this.handleTerrainCollisions(entity);
       }
     }
-  }  /**
+  }
+
+  /**
    * Apply gravity to an entity
    */
   private applyGravity(entity: Entity, dt: number): void {
+    const physicsConfig = this.config.getPhysicsConfig();
     // Skip gravity for godMode players - 'head' property identifies a player since we can't use instanceof
     const isPlayer = 'head' in entity;
     if (entity.gravity && !(isPlayer && (globalThis as any).godMode)) {
@@ -182,28 +201,28 @@ export class PhysicsSystem {
       // During level loading, isEntityOnGround returns false, causing entities to accumulate downward velocity
       if (!this.level || !this.level.isFullyLoaded) {
         if (this.debugEnabled && isPlayer) {
-          console.log('🛡️ Gravity skipped - level not fully loaded (preventing race condition)');
+          logger.debug('PHYSICS', '🛡️ Gravity skipped - level not fully loaded (preventing race condition)');
         }
         return; // Skip gravity application until terrain collision data is ready
       }
 
       const onGround = this.isEntityOnGround(entity);      if (!onGround) {
         const oldVel = entity.vel[2];
-        entity.vel[2] -= this.config.gravity * dt;
+        entity.vel[2] -= physicsConfig.gravity * dt;
       } else if (entity.vel[2] < 0) {
         // Stop falling when on ground
         if (this.debugEnabled && isPlayer && entity.vel[2] < -0.1) {
-          console.log(`🛑 Landing - velocity stopped: ${entity.vel[2].toFixed(3)} → 0`);
+          logger.debug('PHYSICS', `🛑 Landing - velocity stopped: ${entity.vel[2].toFixed(3)} → 0`);
         }
         entity.vel[2] = 0;
       }
     }
   }
-
   /**
    * Apply friction and air resistance to an entity
    */
   private applyFriction(entity: Entity, dt: number): void {
+    const physicsConfig = this.config.getPhysicsConfig();
     // Skip if no velocity
     const speed = vec3.length(entity.vel);
     if (speed <= 0.001) {
@@ -215,7 +234,7 @@ export class PhysicsSystem {
     const onGround = this.isEntityOnGround(entity);
 
     // Apply appropriate resistance based on ground contact
-    const resistanceFactor = onGround ? this.config.friction : this.config.airResistance;
+    const resistanceFactor = onGround ? physicsConfig.friction : physicsConfig.airResistance;
 
     // Calculate resistance force
     const resistanceStrength = resistanceFactor * dt;
@@ -234,15 +253,15 @@ export class PhysicsSystem {
       }
     }
   }
-
   /**
    * Apply velocity constraints (max speed)
    */
   private constrainVelocity(entity: Entity): void {
+    const physicsConfig = this.config.getPhysicsConfig();
     const speed = vec3.length(entity.vel);
-    if (speed > this.config.maxVelocity) {
+    if (speed > physicsConfig.maxVelocity) {
       vec3.normalize(entity.vel, entity.vel);
-      vec3.scale(entity.vel, entity.vel, this.config.maxVelocity);
+      vec3.scale(entity.vel, entity.vel, physicsConfig.maxVelocity);
     }
   }
 
@@ -255,17 +274,18 @@ export class PhysicsSystem {
       vec3.scaleAndAdd(entity.localPosition, entity.localPosition, entity.vel, dt);
       entity.dirty = true;
     }
-  }
-  /**
-   * Handle entity-entity collisions
-   */  private handleEntityCollisions(entity: Entity): void {
+  }  /**
+   * Handle entity-entity collisions with optimized distance calculations and caching
+   */
+  private handleEntityCollisions(entity: Entity): void {
     // Skip entity collision for players in godMode - 'head' property identifies a player
     const isPlayer = 'head' in entity;
     if (isPlayer && (globalThis as any).godMode) return;
 
     const potentialColliders = this.getPotentialCollisionCandidates(entity);
 
-    for (const otherEntity of potentialColliders) {      // Skip self, non-collidable entities, and parent/children
+    for (const otherEntity of potentialColliders) {
+      // Skip self, non-collidable entities, and parent/children
       if (
         entity === otherEntity ||
         otherEntity.parent === entity ||
@@ -279,14 +299,34 @@ export class PhysicsSystem {
         continue;
       }
 
-      const displacement = vec3.sub(vec3.create(), otherEntity.localPosition, entity.localPosition);
-      const distance = vec3.length(displacement);
-      const minDistance = entity.radius + otherEntity.radius;
+      // Check collision cache to avoid redundant calculations
+      const pairKey = this.getEntityPairKey(entity, otherEntity);
+      const now = Date.now();
+      const lastCheck = this.collisionPairCache.get(pairKey);
+      if (lastCheck && (now - lastCheck) < this.collisionCacheTimeout) {
+        continue; // Skip if recently checked
+      }
 
-      // Check for collision
-      if (distance < minDistance) {
+      // Update performance metrics
+      this.performanceMetrics.collisionChecks++;
+
+      const displacement = vec3.sub(vec3.create(), otherEntity.localPosition, entity.localPosition);
+      
+      // Use distance-squared comparison to avoid expensive sqrt operation
+      const distanceSquared = vec3.squaredLength(displacement);
+      const minDistance = entity.radius + otherEntity.radius;
+      const minDistanceSquared = minDistance * minDistance;
+
+      // Check for collision using squared distance
+      if (distanceSquared < minDistanceSquared) {
+        // Only calculate actual distance when we know there's a collision
+        const distance = Math.sqrt(distanceSquared);
+        this.performanceMetrics.collisionHits++;
         this.resolveEntityCollision(entity, otherEntity, displacement, distance, minDistance);
       }
+
+      // Cache this collision check
+      this.collisionPairCache.set(pairKey, now);
     }
   }  /**
    * Resolve a collision between two entities
@@ -298,6 +338,7 @@ export class PhysicsSystem {
     distance: number,
     minDistance: number
   ): void {
+    const physicsConfig = this.config.getPhysicsConfig();
     // Calculate penetration depth
     const penetration = minDistance - distance;
 
@@ -317,10 +358,8 @@ export class PhysicsSystem {
 
     // Calculate relative velocity and impact force
     let relativeVelocity = 0;
-    let impulse = 0;
-
-    // Apply bounce effect if configured
-    if (this.config.collisionBounce > 0) {
+    let impulse = 0;    // Apply bounce effect if configured
+    if (physicsConfig.collisionBounce > 0) {
       // Only apply bounce if entities have velocity
       if (entity.vel && otherEntity.vel) {
         // Calculate relative velocity along normal
@@ -332,7 +371,7 @@ export class PhysicsSystem {
         if (v1 <= v2) return;
 
         // Calculate impulse with elasticity (bounce)
-        const bounce = this.config.collisionBounce;
+        const bounce = physicsConfig.collisionBounce;
         impulse = (1 + bounce) * relativeVelocity / 2; // Simplified for equal mass
 
         // Apply impulse in opposite directions
@@ -368,8 +407,11 @@ export class PhysicsSystem {
     });
   }  /**
    * Handle entity-terrain collisions
-   */  private handleTerrainCollisions(entity: Entity): void {
+   */
+  private handleTerrainCollisions(entity: Entity): void {
     if (!this.level || !this.level.isFullyLoaded) return;
+
+    const physicsConfig = this.config.getPhysicsConfig();
 
     // Skip terrain collision for players in godMode - 'head' property identifies a player
     const isPlayer = 'head' in entity;
@@ -380,11 +422,9 @@ export class PhysicsSystem {
     const pos = entity.localPosition;
     // X-axis collision (left)
     if (this.level.volume.getVoxelFloor(pos[0] - r, pos[1], pos[2] + h / 2)) {
-      pos[0] = Math.ceil(pos[0] - r) + r;
-
-      // Apply bounce if configured and moving leftward
-      if (this.config.collisionBounce > 0 && entity.vel[0] < 0) {
-        entity.vel[0] = -entity.vel[0] * this.config.collisionBounce;
+      pos[0] = Math.ceil(pos[0] - r) + r;      // Apply bounce if configured and moving leftward
+      if (physicsConfig.collisionBounce > 0 && entity.vel[0] < 0) {
+        entity.vel[0] = -entity.vel[0] * physicsConfig.collisionBounce;
       } else {
         entity.vel[0] = 0;
       }
@@ -394,11 +434,9 @@ export class PhysicsSystem {
 
     // X-axis collision (right)
     if (this.level.volume.getVoxelFloor(pos[0] + r, pos[1], pos[2] + h / 2)) {
-      pos[0] = Math.floor(pos[0] + r) - r;
-
-      // Apply bounce if configured and moving rightward
-      if (this.config.collisionBounce > 0 && entity.vel[0] > 0) {
-        entity.vel[0] = -entity.vel[0] * this.config.collisionBounce;
+      pos[0] = Math.floor(pos[0] + r) - r;      // Apply bounce if configured and moving rightward
+      if (physicsConfig.collisionBounce > 0 && entity.vel[0] > 0) {
+        entity.vel[0] = -entity.vel[0] * physicsConfig.collisionBounce;
       } else {
         entity.vel[0] = 0;
       }
@@ -408,11 +446,9 @@ export class PhysicsSystem {
 
     // Y-axis collision (back)
     if (this.level.volume.getVoxelFloor(pos[0], pos[1] - r, pos[2] + h / 2)) {
-      pos[1] = Math.ceil(pos[1] - r) + r;
-
-      // Apply bounce if configured and moving backward
-      if (this.config.collisionBounce > 0 && entity.vel[1] < 0) {
-        entity.vel[1] = -entity.vel[1] * this.config.collisionBounce;
+      pos[1] = Math.ceil(pos[1] - r) + r;      // Apply bounce if configured and moving backward
+      if (physicsConfig.collisionBounce > 0 && entity.vel[1] < 0) {
+        entity.vel[1] = -entity.vel[1] * physicsConfig.collisionBounce;
       } else {
         entity.vel[1] = 0;
       }
@@ -422,11 +458,9 @@ export class PhysicsSystem {
 
     // Y-axis collision (front)
     if (this.level.volume.getVoxelFloor(pos[0], pos[1] + r, pos[2] + h / 2)) {
-      pos[1] = Math.floor(pos[1] + r) - r;
-
-      // Apply bounce if configured and moving forward
-      if (this.config.collisionBounce > 0 && entity.vel[1] > 0) {
-        entity.vel[1] = -entity.vel[1] * this.config.collisionBounce;
+      pos[1] = Math.floor(pos[1] + r) - r;      // Apply bounce if configured and moving forward
+      if (physicsConfig.collisionBounce > 0 && entity.vel[1] > 0) {
+        entity.vel[1] = -entity.vel[1] * physicsConfig.collisionBounce;
       } else {
         entity.vel[1] = 0;
       }
@@ -438,11 +472,9 @@ export class PhysicsSystem {
       const impactForce = Math.abs(entity.vel[2]);
       const collisionPoint = vec3.fromValues(pos[0], pos[1], Math.floor(pos[2]));
 
-      pos[2] = Math.ceil(pos[2]);
-
-      // Apply bounce if configured and moving downward
-      if (this.config.collisionBounce > 0 && entity.vel[2] < 0) {
-        entity.vel[2] = -entity.vel[2] * this.config.collisionBounce;
+      pos[2] = Math.ceil(pos[2]);      // Apply bounce if configured and moving downward
+      if (physicsConfig.collisionBounce > 0 && entity.vel[2] < 0) {
+        entity.vel[2] = -entity.vel[2] * physicsConfig.collisionBounce;
 
         // Stop if bounce is very small
         if (Math.abs(entity.vel[2]) < 0.1) {
@@ -467,11 +499,9 @@ export class PhysicsSystem {
 
     // Z-axis collision (top)
     if (this.level.volume.getVoxelFloor(pos[0], pos[1], pos[2] + h)) {
-      pos[2] = Math.floor(pos[2] + h) - h;
-
-      // Apply bounce if configured and moving upward
-      if (this.config.collisionBounce > 0 && entity.vel[2] > 0) {
-        entity.vel[2] = -entity.vel[2] * this.config.collisionBounce;
+      pos[2] = Math.floor(pos[2] + h) - h;      // Apply bounce if configured and moving upward
+      if (physicsConfig.collisionBounce > 0 && entity.vel[2] > 0) {
+        entity.vel[2] = -entity.vel[2] * physicsConfig.collisionBounce;
       } else {
         entity.vel[2] = 0;
       }
@@ -480,7 +510,8 @@ export class PhysicsSystem {
     }
   }  /**
    * Check if an entity is on the ground
-   */  isEntityOnGround(entity: Entity): boolean {
+   */
+  isEntityOnGround(entity: Entity): boolean {
     // Always return false for godMode players so they can fly - 'head' property identifies a player
     const isPlayer = 'head' in entity;
     if (isPlayer && (globalThis as any).godMode) {
@@ -488,13 +519,13 @@ export class PhysicsSystem {
     }
     return this.level && this.level.isFullyLoaded ? entity.onGround(this.level) : false;
   }
-
   /**
    * Make entity jump if on ground
    */
   jump(entity: Entity): boolean {
+    const physicsConfig = this.config.getPhysicsConfig();
     if (entity.gravity && this.isEntityOnGround(entity)) {
-      entity.vel[2] += this.config.jumpForce;
+      entity.vel[2] += physicsConfig.jumpForce;
       return true;
     }
     return false;
@@ -545,14 +576,15 @@ export class PhysicsSystem {
 
   /**
    * Log debug information periodically
-   */  private logDebugInfo(): void {
+   */
+  private logDebugInfo(): void {
     if (!this.debugEnabled) return;
 
     this.frameCount++;
 
     // Report stats every second
     if (performance.now() - this.lastReportTime > 1000) {
-      console.debug(this.getDebugStatus());
+      logger.debug('PHYSICS', this.getDebugStatus());
       this.frameCount = 0;
       this.lastReportTime = performance.now();
     }
@@ -717,11 +749,10 @@ export class PhysicsSystem {
     for (const globalListener of this.globalCollisionListeners) {
       globalListener(event);
     }
-  }
-
-  /**
-   * Perform a raycast against terrain and entities
-   */  raycast(origin: vec3, direction: vec3, maxDistance: number = 100,
+  }  /**
+   * Perform a raycast against terrain and entities with spatial optimization
+   */
+  raycast(origin: vec3, direction: vec3, maxDistance?: number,
     options: { ignoreTerrain?: boolean, ignoreEntities?: boolean, ignoreEntity?: Entity } = {}
   ): {
     hit: boolean,
@@ -729,62 +760,30 @@ export class PhysicsSystem {
     normal: vec3,
     distance: number,
     entity: Entity | undefined,
-    voxelValue: number | undefined
-  } {
-    const normalizedDir = vec3.normalize(vec3.create(), direction);
-    let closestHit = {
+    voxelValue: number | undefined  } {
+    this.performanceMetrics.raycastCount++;
+    
+    const actualMaxDistance = maxDistance ?? this.config.getPhysicsConfig().defaultRaycastDistance;
+    
+    const normalizedDir = vec3.normalize(vec3.create(), direction);    let closestHit = {
       hit: false,
       position: vec3.create(),
       normal: vec3.fromValues(0, 0, 1),
-      distance: maxDistance,
+      distance: actualMaxDistance,
       entity: undefined as Entity | undefined,
       voxelValue: undefined as number | undefined
     };
 
-    // Check entities first
+    // Check entities first using spatial optimization
     if (!options.ignoreEntities) {
-      for (const entity of Entity.all) {
-        // Skip entities without collision, parent entities, or the ignored entity
-        if (!entity.collision || entity.parent || entity === options.ignoreEntity) continue;
-
-        // Simple sphere intersection test
-        const entityToOrigin = vec3.sub(vec3.create(), entity.worldPosition, origin);
-        const projection = vec3.dot(entityToOrigin, normalizedDir);
-
-        // Skip if entity is behind the ray
-        if (projection < 0) continue;
-
-        // Calculate closest point on ray to entity center
-        const projectionPoint = vec3.scaleAndAdd(vec3.create(), origin, normalizedDir, projection);
-        const distance = vec3.distance(projectionPoint, entity.worldPosition);
-
-        // If distance is less than entity radius, we have a hit
-        if (distance <= entity.radius && projection < closestHit.distance) {
-          // Calculate intersection point
-          const distanceToIntersection = projection - Math.sqrt(entity.radius * entity.radius - distance * distance);
-
-          // Skip if too far
-          if (distanceToIntersection > maxDistance) continue;
-
-          // Update closest hit
-          closestHit.hit = true;
-          closestHit.distance = distanceToIntersection;
-
-          // Calculate hit position and normal
-          vec3.scaleAndAdd(closestHit.position, origin, normalizedDir, distanceToIntersection);
-
-          // Calculate normal from the hit position to the entity center
-          vec3.subtract(closestHit.normal, closestHit.position, entity.worldPosition);
-          vec3.normalize(closestHit.normal, closestHit.normal);
-
-          closestHit.entity = entity;
-        }
+      const entityHit = this.raycastEntities(origin, normalizedDir, actualMaxDistance, options.ignoreEntity);
+      if (entityHit.hit && entityHit.distance < closestHit.distance) {
+        closestHit = entityHit;
       }
-    }
-
-    // Check terrain intersection if we have a level and terrain checks are enabled
+    }    // Check terrain intersection if we have a level and terrain checks are enabled
     if (!options.ignoreTerrain && this.level) {
-      const terrainHit = this.raycastTerrain(origin, normalizedDir, maxDistance);      // If we hit terrain and it's closer than any entity hit, use the terrain hit
+      const terrainHit = this.raycastTerrain(origin, normalizedDir, actualMaxDistance);
+      // If we hit terrain and it's closer than any entity hit, use the terrain hit
       if (terrainHit.hit && terrainHit.distance < closestHit.distance) {
         closestHit = {
           ...terrainHit,
@@ -798,9 +797,161 @@ export class PhysicsSystem {
   }
 
   /**
+   * Optimized raycast against entities using spatial grid
+   */
+  private raycastEntities(origin: vec3, direction: vec3, maxDistance: number, ignoreEntity?: Entity): {
+    hit: boolean,
+    position: vec3,
+    normal: vec3,
+    distance: number,
+    entity: Entity | undefined,
+    voxelValue: number | undefined
+  } {
+    let closestHit = {
+      hit: false,
+      position: vec3.create(),
+      normal: vec3.fromValues(0, 0, 1),
+      distance: maxDistance,
+      entity: undefined as Entity | undefined,
+      voxelValue: undefined as number | undefined
+    };
+
+    if (this.useGridOptimization && this.spatialGrid.size > 0) {
+      // Use spatial grid to only check entities along the ray path
+      const entitiesAlongRay = this.getEntitiesAlongRay(origin, direction, maxDistance);
+      
+      for (const entity of entitiesAlongRay) {
+        if (!entity.collision || entity.parent || entity === ignoreEntity) continue;
+        if ('head' in entity && (globalThis as any).godMode) continue;
+
+        const hit = this.raycastEntity(entity, origin, direction, maxDistance);
+        if (hit.hit && hit.distance < closestHit.distance) {
+          closestHit = hit;
+        }
+      }
+    } else {
+      // Fallback to checking all entities
+      for (const entity of Entity.all) {
+        if (!entity.collision || entity.parent || entity === ignoreEntity) continue;
+        if ('head' in entity && (globalThis as any).godMode) continue;
+
+        const hit = this.raycastEntity(entity, origin, direction, maxDistance);
+        if (hit.hit && hit.distance < closestHit.distance) {
+          closestHit = hit;
+        }
+      }
+    }
+
+    return closestHit;
+  }
+
+  /**
+   * Get entities along a ray path using spatial grid
+   */
+  private getEntitiesAlongRay(origin: vec3, direction: vec3, maxDistance: number): Set<Entity> {
+    const entities = new Set<Entity>();
+    const step = this.gridCellSize / 2; // Sample every half grid cell
+    const steps = Math.ceil(maxDistance / step);
+
+    for (let i = 0; i <= steps; i++) {
+      const t = (i * step);
+      if (t > maxDistance) break;
+
+      const point = vec3.scaleAndAdd(vec3.create(), origin, direction, t);
+      
+      const cellX = Math.floor(point[0] / this.gridCellSize);
+      const cellY = Math.floor(point[1] / this.gridCellSize);
+      const cellZ = Math.floor(point[2] / this.gridCellSize);
+      
+      const cellKey = this.spatialHash(cellX, cellY, cellZ);
+      const cellEntities = this.spatialGrid.get(cellKey);
+      
+      if (cellEntities) {
+        for (const entity of cellEntities) {
+          entities.add(entity);
+        }
+      }
+    }
+
+    return entities;
+  }
+
+  /**
+   * Perform raycast against a single entity
+   */
+  private raycastEntity(entity: Entity, origin: vec3, direction: vec3, maxDistance: number): {
+    hit: boolean,
+    position: vec3,
+    normal: vec3,
+    distance: number,
+    entity: Entity | undefined,
+    voxelValue: number | undefined
+  } {
+    // Simple sphere intersection test
+    const entityToOrigin = vec3.sub(vec3.create(), entity.worldPosition, origin);
+    const projection = vec3.dot(entityToOrigin, direction);
+
+    // Skip if entity is behind the ray
+    if (projection < 0) {
+      return {
+        hit: false,
+        position: vec3.create(),
+        normal: vec3.fromValues(0, 0, 1),
+        distance: maxDistance,
+        entity: undefined,
+        voxelValue: undefined
+      };
+    }
+
+    // Calculate closest point on ray to entity center
+    const projectionPoint = vec3.scaleAndAdd(vec3.create(), origin, direction, projection);
+    const distance = vec3.distance(projectionPoint, entity.worldPosition);
+
+    // If distance is less than entity radius, we have a hit
+    if (distance <= entity.radius && projection < maxDistance) {
+      // Calculate intersection point
+      const distanceToIntersection = projection - Math.sqrt(entity.radius * entity.radius - distance * distance);
+
+      // Skip if too far
+      if (distanceToIntersection > maxDistance) {
+        return {
+          hit: false,
+          position: vec3.create(),
+          normal: vec3.fromValues(0, 0, 1),
+          distance: maxDistance,
+          entity: undefined,
+          voxelValue: undefined
+        };
+      }
+
+      // Calculate hit position and normal
+      const hitPosition = vec3.scaleAndAdd(vec3.create(), origin, direction, distanceToIntersection);
+      const normal = vec3.subtract(vec3.create(), hitPosition, entity.worldPosition);
+      vec3.normalize(normal, normal);
+
+      return {
+        hit: true,
+        position: hitPosition,
+        normal,
+        distance: distanceToIntersection,
+        entity,
+        voxelValue: undefined
+      };
+    }    return {
+      hit: false,
+      position: vec3.create(),
+      normal: vec3.fromValues(0, 0, 1),
+      distance: maxDistance,
+      entity: undefined,
+      voxelValue: undefined
+    };
+  }
+
+  /**
    * Perform a raycast against terrain only using Digital Differential Analyzer (DDA) algorithm
    * @private
-   */  private raycastTerrain(origin: vec3, direction: vec3, maxDistance: number = 100): {
+   */
+  private raycastTerrain(origin: vec3, direction: vec3, maxDistance: number = 100): {
     hit: boolean,
     position: vec3,
     normal: vec3,
@@ -924,7 +1075,8 @@ export class PhysicsSystem {
 
   /**
    * Move entity with collision detection (sliding along surfaces)
-   */  moveWithCollisions(entity: Entity, displacement: vec3): vec3 {
+   */
+  moveWithCollisions(entity: Entity, displacement: vec3): vec3 {
     // Skip all collision handling if collisions disabled or player in godMode 
     // This allows godMode players to pass through terrain and entities
     // 'head' property identifies a player since we can't use instanceof
@@ -952,14 +1104,14 @@ export class PhysicsSystem {
 
     return actualMove;
   }
-
   /**
    * Update the spatial grid used for optimizing collision detection
+   * Uses numeric hash keys and incremental updates for better performance
    */
   private updateSpatialGrid(): void {
     if (!this.useGridOptimization) return;
 
-    // Clear existing grid
+    // Clear existing grid (full rebuild for now, could be optimized to incremental)
     this.spatialGrid.clear();
 
     // Add entities to grid cells based on their position
@@ -970,8 +1122,8 @@ export class PhysicsSystem {
       const cellY = Math.floor(entity.worldPosition[1] / this.gridCellSize);
       const cellZ = Math.floor(entity.worldPosition[2] / this.gridCellSize);
 
-      // Create hash key for this cell
-      const cellKey = `${cellX},${cellY},${cellZ}`;
+      // Use numeric hash key for better performance (avoid string creation)
+      const cellKey = this.spatialHash(cellX, cellY, cellZ);
 
       // Add entity to this cell
       if (!this.spatialGrid.has(cellKey)) {
@@ -979,27 +1131,39 @@ export class PhysicsSystem {
       }
       this.spatialGrid.get(cellKey)?.push(entity);
 
-      // Also add to neighboring cells if the entity is large 
+      // For large entities, only add to immediately adjacent cells
+      // Optimized: reduce from 27 cells to 7 cells for large entities
       if (entity.radius > this.gridCellSize / 2) {
-        for (let dx = -1; dx <= 1; dx++) {
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dz = -1; dz <= 1; dz++) {
-              if (dx === 0 && dy === 0 && dz === 0) continue;
+        const adjacentCells = [
+          this.spatialHash(cellX + 1, cellY, cellZ),
+          this.spatialHash(cellX - 1, cellY, cellZ),
+          this.spatialHash(cellX, cellY + 1, cellZ),
+          this.spatialHash(cellX, cellY - 1, cellZ),
+          this.spatialHash(cellX, cellY, cellZ + 1),
+          this.spatialHash(cellX, cellY, cellZ - 1)
+        ];
 
-              const neighborKey = `${cellX + dx},${cellY + dy},${cellZ + dz}`;
-              if (!this.spatialGrid.has(neighborKey)) {
-                this.spatialGrid.set(neighborKey, []);
-              }
-              this.spatialGrid.get(neighborKey)?.push(entity);
-            }
+        for (const neighborKey of adjacentCells) {
+          if (!this.spatialGrid.has(neighborKey)) {
+            this.spatialGrid.set(neighborKey, []);
           }
+          this.spatialGrid.get(neighborKey)?.push(entity);
         }
       }
     }
   }
 
   /**
-   * Get potential collision candidates for an entity using spatial partitioning
+   * Generate a numeric hash for spatial grid coordinates
+   * Much faster than string concatenation and comparison
+   */
+  private spatialHash(x: number, y: number, z: number): number {
+    // Simple but effective hash function for 3D coordinates
+    // Uses prime numbers to reduce collisions
+    return ((x * 73856093) ^ (y * 19349663) ^ (z * 83492791)) >>> 0;
+  }
+  /**
+   * Get potential collision candidates for an entity using optimized spatial partitioning
    */
   private getPotentialCollisionCandidates(entity: Entity): Entity[] {
     if (!this.useGridOptimization) {
@@ -1011,14 +1175,14 @@ export class PhysicsSystem {
     const cellY = Math.floor(entity.worldPosition[1] / this.gridCellSize);
     const cellZ = Math.floor(entity.worldPosition[2] / this.gridCellSize);
 
-    // Check this cell and neighboring cells
+    // Check this cell and neighboring cells using numeric hash
     const candidates = new Set<Entity>();
 
     for (let dx = -1; dx <= 1; dx++) {
       for (let dy = -1; dy <= 1; dy++) {
         for (let dz = -1; dz <= 1; dz++) {
-          const key = `${cellX + dx},${cellY + dy},${cellZ + dz}`;
-          const cellEntities = this.spatialGrid.get(key) || [];
+          const hashKey = this.spatialHash(cellX + dx, cellY + dy, cellZ + dz);
+          const cellEntities = this.spatialGrid.get(hashKey) || [];
 
           for (const other of cellEntities) {
             if (other !== entity && other.collision && !other.parent) {
@@ -1031,49 +1195,96 @@ export class PhysicsSystem {
 
     return Array.from(candidates);
   }
+  /**
+   * Generate a consistent key for entity pairs in collision cache
+   */
+  private getEntityPairKey(entityA: Entity, entityB: Entity): string {
+    // Ensure consistent ordering to avoid duplicate cache entries
+    const idA = entityA.id;
+    const idB = entityB.id;
+    return idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`;
+  }
 
   /**
+   * Clean old entries from collision cache to prevent memory leaks
+   */
+  private cleanCollisionCache(currentTime: number): void {
+    for (const [key, timestamp] of this.collisionPairCache.entries()) {
+      if (currentTime - timestamp > this.collisionCacheTimeout * 2) {
+        this.collisionPairCache.delete(key);
+      }
+    }
+  }
+  /**
+   * Get performance metrics for debugging and optimization
+   */
+  getPerformanceMetrics() {
+    const now = Date.now();
+    const elapsed = now - this.performanceMetrics.lastResetTime;
+    
+    return {
+      ...this.performanceMetrics,
+      collisionChecksPerSecond: elapsed > 0 ? (this.performanceMetrics.collisionChecks * 1000) / elapsed : 0,
+      collisionHitRate: this.performanceMetrics.collisionChecks > 0 ? 
+        this.performanceMetrics.collisionHits / this.performanceMetrics.collisionChecks : 0
+    };
+  }
+  /**
+   * Reset performance metrics
+   */
+  resetPerformanceMetrics(): void {
+    this.performanceMetrics = {
+      collisionChecks: 0,
+      collisionHits: 0,
+      raycastCount: 0,
+      gridUpdateTime: 0,
+      lastResetTime: Date.now()
+    };
+  }  /**
    * Set physics quality level
    */
   setQualityLevel(level: 'low' | 'medium' | 'high'): void {
-    const config = { ...this.config, qualityLevel: level };
-
     // Adjust physics settings based on quality level
     switch (level) {
       case 'low':
-        // Low quality physics - focus on performance
-        config.maxEntities = 50;
-        config.spatialOptimization = true;
-        this.gridCellSize = 10; // Larger cells = fewer checks but less accurate
+        // Low quality physics - performance optimized
+        const lowConfig = this.config.getPhysicsConfigForQuality('low');
+        this.gridCellSize = 8; // Larger cells = fewer checks
         this.useGridOptimization = true;
+        this.gridUpdateInterval = lowConfig.gridUpdateInterval!;
+        this.collisionCacheTimeout = lowConfig.collisionCacheTimeout!;
+        this.updateConfig({ qualityLevel: level });
         break;
 
       case 'medium':
         // Medium quality physics - balanced
-        config.maxEntities = 100;
-        config.spatialOptimization = true;
-        this.gridCellSize = 5;
+        const mediumConfig = this.config.getPhysicsConfigForQuality('medium');
+        this.gridCellSize = this.config.getPhysicsConfig().gridCellSize;
         this.useGridOptimization = true;
+        this.gridUpdateInterval = mediumConfig.gridUpdateInterval!;
+        this.collisionCacheTimeout = mediumConfig.collisionCacheTimeout!;
+        this.updateConfig({ qualityLevel: level });
         break;
 
       case 'high':
         // High quality physics - focus on accuracy
-        config.maxEntities = 200;
-        config.spatialOptimization = true;
+        const highConfig = this.config.getPhysicsConfigForQuality('high');
         this.gridCellSize = 3; // Smaller cells = more checks but more accurate
         this.useGridOptimization = true;
+        this.gridUpdateInterval = 16; // ~60fps updates
+        this.collisionCacheTimeout = highConfig.collisionCacheTimeout!;
+        this.updateConfig({ qualityLevel: level });
         break;
     }
-    this.updateConfig(config);
-    console.log(`Physics quality set to ${level}`);
+    logger.debug('PHYSICS', `Physics quality set to ${level}, grid update interval: ${this.gridUpdateInterval}ms`);
   }
-
   /**
    * Limit the number of active physics entities when needed
    * This prioritizes entities closest to the player
    */
   limitActiveEntities(playerEntity?: Entity): void {
-    const maxEntities = this.config.maxEntities || 100;
+    const physicsConfig = this.config.getPhysicsConfig();
+    const maxEntities = physicsConfig.maxEntities || 100;
     const physicsEntities = Entity.all.filter(e => (e.gravity || e.collision) && !e.parent);
 
     if (physicsEntities.length <= maxEntities) {
@@ -1098,7 +1309,7 @@ export class PhysicsSystem {
       entity.collision = false;
     }
     if (this.debugEnabled) {
-      console.log(`Limited active physics entities to ${maxEntities}/${physicsEntities.length}`);
+      logger.info('PHYSICS', `Limited active physics entities to ${maxEntities}/${physicsEntities.length}`);
     }
   }
 

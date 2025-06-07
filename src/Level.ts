@@ -1,6 +1,11 @@
-import { Volume } from './Volume';
-import { Entity } from './Entity';
-import type { LevelData } from './types';
+import { vec3 } from 'gl-matrix';
+import type { LevelData } from './types/index.js';
+import { Volume } from './Volume.js';
+import { Entity } from './Entity.js';
+import { Logger } from './Logger.js';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 export class Level {
   url: string;
@@ -34,7 +39,7 @@ export class Level {
       if (layer.type === 'tilelayer') {
         const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
         if (layerIndex === -1) {
-          console.log(`Unknown tilelayer name: ${layer.name}`);
+          logger.warn('LEVEL', `Unknown tilelayer name: ${layer.name}`);
           continue;
         }
         
@@ -81,6 +86,6 @@ export class Level {
     }
     
     this.isFullyLoaded = true;
-    console.log('Level fully loaded and registered with renderer');
+    logger.info('LEVEL', 'Level fully loaded and registered with renderer');
   }
 }

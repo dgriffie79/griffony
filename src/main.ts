@@ -9,12 +9,17 @@ import { Renderer } from './Renderer.js';
 import { Net } from './Net.js';
 import { combatSystem } from './CombatSystem.js';
 import { physicsSystem } from './PhysicsSystem.js';
+import { getConfig } from './Config.js';
 import { WeaponConfigs } from './Weapon.js';
 import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
 import { MeshStats } from './MeshStats.js';
+import { Logger } from './Logger.js';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 // Message types for networking
 export const MessageType = {
@@ -134,17 +139,18 @@ function playAttackSound(): void {
 		gainNode.connect(audioContext.destination);
 
 		// Quick metallic sound effect
+		const audioConfig = getConfig().getAudioConfig();
 		oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-		oscillator.frequency.exponentialRampToValueAtTime(200, audioContext.currentTime + 0.1);
+		oscillator.frequency.exponentialRampToValueAtTime(audioConfig.attackSoundFrequency.end, audioContext.currentTime + audioConfig.attackSoundFrequency.duration);
 
 		gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + audioConfig.attackSoundFrequency.duration);
 
 		oscillator.start(audioContext.currentTime);
-		oscillator.stop(audioContext.currentTime + 0.1);
+		oscillator.stop(audioContext.currentTime + audioConfig.attackSoundFrequency.duration);
 	} catch (e) {
 		// Fallback if Web Audio API fails
-		console.log('⚔️ ATTACK!');
+		logger.info('COMBAT', '⚔️ ATTACK!');
 	}
 }
 
@@ -158,17 +164,17 @@ function playHitSound(): void {
 		gainNode.connect(audioContext.destination);
 
 		// Impact sound effect
-		oscillator.frequency.setValueAtTime(150, audioContext.currentTime);
-		oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.15);
+		const audioConfig = getConfig().getAudioConfig();
+		oscillator.frequency.setValueAtTime(audioConfig.hitSoundFrequency.start, audioContext.currentTime);
+		oscillator.frequency.exponentialRampToValueAtTime(audioConfig.hitSoundFrequency.end, audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
 
 		gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
-		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
-
+		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
 		oscillator.start(audioContext.currentTime);
-		oscillator.stop(audioContext.currentTime + 0.15);
+		oscillator.stop(audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
 	} catch (e) {
 		// Fallback if Web Audio API fails
-		console.log('💥 HIT!');
+		logger.info('COMBAT', '💥 HIT!');
 	}
 }
 
@@ -446,20 +452,20 @@ function setupUI(): void {	// Set up keybind buttons
 	timeLabel.style.fontFamily = 'monospace';
 	timeLabel.style.fontSize = '14px'; timeLabel.style.lineHeight = '1.4';
 	document.body.appendChild(timeLabel);
-
 	// Create crosshair
 	const crosshair = document.createElement('div');
 	crosshair.id = 'crosshair';
 	crosshair.style.position = 'fixed';
-	crosshair.style.top = '50%';
-	crosshair.style.left = '50%';
-	crosshair.style.transform = 'translate(-50%, -50%)';
+	const uiConfig = getConfig().getUIConfig();
+	crosshair.style.top = `${uiConfig.centerPosition}%`;
+	crosshair.style.left = `${uiConfig.centerPosition}%`;
+	crosshair.style.transform = `translate(-${uiConfig.centerPosition}%, -${uiConfig.centerPosition}%)`;
 	crosshair.style.width = '20px';
 	crosshair.style.height = '20px';
 	crosshair.style.pointerEvents = 'none';
 	crosshair.style.zIndex = '1000'; crosshair.innerHTML = `
-		<div style="position: absolute; top: 50%; left: 0; right: 0; height: 2px; background: white; transform: translateY(-50%);"></div>
-		<div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: white; transform: translateX(-50%);"></div>
+		<div style="position: absolute; top: ${uiConfig.centerPosition}%; left: 0; right: 0; height: 2px; background: white; transform: translateY(-${uiConfig.centerPosition}%);"></div>
+		<div style="position: absolute; left: ${uiConfig.centerPosition}%; top: 0; bottom: 0; width: 2px; background: white; transform: translateX(-${uiConfig.centerPosition}%);"></div>
 	`;
 	document.body.appendChild(crosshair);
 
@@ -504,7 +510,7 @@ function onKeydown(event: KeyboardEvent): void {
 				if (mainMenu) {
 					mainMenu.hidden = true;
 				}
-				setTimeout(() => document.body.requestPointerLock(), 150);
+				setTimeout(() => document.body.requestPointerLock(), getConfig().getUIConfig().pointerLockDelay);
 			}
 			break;
 		}
@@ -512,7 +518,7 @@ function onKeydown(event: KeyboardEvent): void {
 			godMode = !godMode;
 			// Synchronize with global scope for physics system
 			(globalThis as any).godMode = godMode;
-			console.log(`God Mode ${godMode ? 'enabled' : 'disabled'}`);
+			logger.info('GAME', `God Mode ${godMode ? 'enabled' : 'disabled'}`);
 			break;
 		} case settings.keybinds.respawn: {
 			player.respawn();
@@ -521,11 +527,11 @@ function onKeydown(event: KeyboardEvent): void {
 			settings.useGreedyMesh = useGreedyMesh;
 			(globalThis as any).useGreedyMesh = useGreedyMesh;
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
-			console.log(`Mesh algorithm switched to: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
+			logger.info('RENDERER', `Mesh algorithm switched to: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
 			
 			// Update renderer to use new mesh type immediately
 			renderer.updateMeshRenderingMode();
-			console.log('Mesh rendering updated - no reload needed!');
+			logger.info('RENDERER', 'Mesh rendering updated - no reload needed!');
 			
 			// Reset mesh stats when switching algorithms
 			MeshStats.getInstance().reset();
@@ -541,12 +547,12 @@ function onKeydown(event: KeyboardEvent): void {
 				);
 				const nextIndex = (currentIndex + 1) % weaponTypes.length;
 				combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
-				console.log(`Switched to ${WeaponConfigs[weaponTypes[nextIndex]].name}`);
+				logger.info('WEAPON', `Switched to ${WeaponConfigs[weaponTypes[nextIndex]].name}`);
 			}
 			break;
 		}		case settings.keybinds.adjustWeapon: {
 			// Toggle the weapon position adjuster with the current weapon model
-			console.log('Activating weapon position adjuster');
+			logger.info('WEAPON', 'Activating weapon position adjuster');
 			const currentWeapon = combatSystem.getWeapon(player);
 			if (currentWeapon) {
 				toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
@@ -668,7 +674,7 @@ function performRaycast(): void {
 
 	// Show result
 	if (result.hit) {
-		console.log('Raycast hit:', {
+		logger.debug('RAYCAST', 'Raycast hit:', {
 			position: [
 				result.position[0].toFixed(2),
 				result.position[1].toFixed(2),
@@ -685,7 +691,7 @@ function performRaycast(): void {
 			for (let i = 0; i < lines.length; i++) {
 				const line = lines[i] as HTMLElement;
 				line.style.background = '#FF0000';
-				setTimeout(() => line.style.background = '#FFFFFF', 200);
+				setTimeout(() => line.style.background = '#FFFFFF', getConfig().getUIConfig().crosshairFlashDuration);
 			}
 		}
 	}
@@ -709,11 +715,10 @@ function loop(): void {
 	}
 
 	// Monitor for fall-through (player falling below reasonable level)
-	if (player.localPosition[2] < -2 && !godMode) {
-		console.warn(`⚠️ Potential fall-through detected! Player Z position: ${player.localPosition[2].toFixed(2)}`);
-		console.warn(`Current mesh algorithm: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
-		console.warn(`Player velocity: [${player.vel[0].toFixed(2)}, ${player.vel[1].toFixed(2)}, ${player.vel[2].toFixed(2)}]`);
-		console.warn(`On ground: ${physicsSystem.isEntityOnGround(player)}`);
+	if (player.localPosition[2] < -2 && !godMode) {		logger.warn('PHYSICS', `⚠️ Potential fall-through detected! Player Z position: ${player.localPosition[2].toFixed(2)}`);
+		logger.warn('PHYSICS', `Current mesh algorithm: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
+		logger.warn('PHYSICS', `Player velocity: [${player.vel[0].toFixed(2)}, ${player.vel[1].toFixed(2)}, ${player.vel[2].toFixed(2)}]`);
+		logger.warn('PHYSICS', `On ground: ${physicsSystem.isEntityOnGround(player)}`);
 	}// Update UI
 	if (timeLabel) {
 		const playerStats = combatSystem.getCombatStats(player);
@@ -766,7 +771,7 @@ function loop(): void {
 	// Greedy mesh takes longer to generate, so physics must wait for terrain data
 	if (level.isFullyLoaded) {
 		if (!physicsStarted) {
-			console.log('🎮 Physics system started - level fully loaded and terrain collision data ready');
+			logger.info('PHYSICS', '🎮 Physics system started - level fully loaded and terrain collision data ready');
 			physicsStarted = true;
 		}
 		physicsSystem.update(elapsed);
@@ -807,7 +812,7 @@ async function main(): Promise<void> {
 			(globalThis as any).godMode = godMode;
 			showingMenu = state.showingMenu;
 		} catch (error) {
-			console.warn('Failed to load saved game state:', error);
+			logger.warn('GAME', 'Failed to load saved game state:', error);
 		}
 	}
 	// Load saved settings
@@ -824,7 +829,7 @@ async function main(): Promise<void> {
 				localStorage.setItem('gameSettings', JSON.stringify(settings));
 			}
 		} catch (error) {
-			console.warn('Failed to load saved settings:', error);
+			logger.warn('GAME', 'Failed to load saved settings:', error);
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
 		}
 	} else {
@@ -844,7 +849,7 @@ async function main(): Promise<void> {
 		...Object.values(models).map((model) => model.load())]);
 	// Wait for GPU operations to complete before starting physics
 	// The greedy mesh algorithm takes longer, so we need to ensure all resources are uploaded
-	console.log('Waiting for GPU resource upload to complete...');
+	logger.info('GAME', 'Waiting for GPU resource upload to complete...');
 	await new Promise(resolve => requestAnimationFrame(resolve));
 	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh
 
@@ -852,7 +857,7 @@ async function main(): Promise<void> {
 	while (!level.isFullyLoaded) {
 		await new Promise(resolve => setTimeout(resolve, 10));
 	}
-	console.log('Level fully loaded, starting physics...');
+	logger.info('GAME', 'Level fully loaded, starting physics...');
 	// Initialize physics system with configuration
 	physicsSystem.setLevel(level);
 	physicsSystem.updateConfig({
@@ -876,9 +881,9 @@ async function main(): Promise<void> {
 		height: 0.5,
 		layer: PhysicsLayer.Player,
 		collidesWith: PhysicsLayer.All & ~PhysicsLayer.Trigger // Collide with everything except triggers
-	});
-	// Initialize combat system
-	combatSystem.initializeCombatStats(player, 100, 5); // 100 HP, 5 defense
+	});	// Initialize combat system
+	const combatConfig = getConfig().getCombatConfig();
+	combatSystem.initializeCombatStats(player, combatConfig.defaultMaxHealth, combatConfig.defaultDefense); // 100 HP, 5 defense
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
 		// Initialize weapon position adjuster
 	WeaponPositionAdjuster.getInstance().init(settings.keybinds.adjustWeapon);
@@ -892,7 +897,7 @@ async function main(): Promise<void> {
 	demoTrigger.setCallback({
 		onEnter: (entity) => {
 			if (entity === player) {
-				console.log('Player entered trigger zone!');
+				logger.info('TRIGGER', 'Player entered trigger zone!');
 				// Example: Boost player speed temporarily
 				physicsSystem.updateConfig({
 					maxVelocity: 20
@@ -901,7 +906,7 @@ async function main(): Promise<void> {
 		},
 		onExit: (entity) => {
 			if (entity === player) {
-				console.log('Player exited trigger zone!');
+				logger.info('TRIGGER', 'Player exited trigger zone!');
 				// Reset player speed
 				physicsSystem.updateConfig({
 					maxVelocity: 10
@@ -915,7 +920,7 @@ async function main(): Promise<void> {
 
 // Start the game
 main().catch(error => {
-	console.error('Failed to start game:', error);
+	logger.error('GAME', 'Failed to start game:', error);
 	const debug = document.getElementById('debug');
 	if (debug) {
 		debug.innerHTML = `Failed to start game: ${error}<br>${debug.innerHTML}`;

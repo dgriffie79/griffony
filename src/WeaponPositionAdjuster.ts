@@ -1,5 +1,6 @@
 import { quat, vec3 } from 'gl-matrix';
 import { WeaponPositionConfigs } from './FirstPersonWeapon';
+import { getConfig } from './Config';
 
 /**
  * A utility class to help adjust weapon positions in-game.
@@ -42,7 +43,7 @@ export class WeaponPositionAdjuster {
     
     console.log(`Weapon position adjuster initialized - press ${this.keyBindString} to activate, then use ALT+keys to adjust`);
   }
-    /**
+  /**
    * Toggle the weapon position adjuster mode
    */
   public toggle(weaponType?: string): void {
@@ -59,11 +60,12 @@ export class WeaponPositionAdjuster {
       if (this.helpText) {
         const originalBg = this.helpText.style.backgroundColor;
         this.helpText.style.backgroundColor = 'rgba(255, 255, 0, 0.5)';
+        const uiConfig = getConfig().getUIConfig();
         setTimeout(() => {
           if (this.helpText) {
             this.helpText.style.backgroundColor = originalBg;
           }
-        }, 500);
+        }, uiConfig.weaponAdjusterFlashDuration);
       }
       
       // Debug log to confirm the weapon type
@@ -431,6 +433,9 @@ export function toggleWeaponAdjuster(weaponType?: string): void {
   const adjuster = WeaponPositionAdjuster.getInstance();
   adjuster.toggle(weaponType);
   
+  // Get UI config for timing
+  const uiConfig = getConfig().getUIConfig();
+  
   // Add a visual indicator that adjuster was toggled
   const flashElement = document.createElement('div');
   flashElement.style.position = 'fixed';
@@ -444,11 +449,11 @@ export function toggleWeaponAdjuster(weaponType?: string): void {
   flashElement.style.transition = 'opacity 0.5s ease-out';
   document.body.appendChild(flashElement);
   
-  // Fade out the flash
+  // Fade out the flash using config timing
   setTimeout(() => {
     flashElement.style.opacity = '0';
     setTimeout(() => {
       document.body.removeChild(flashElement);
-    }, 500);
-  }, 100);
+    }, uiConfig.weaponAdjusterFlashDuration);
+  }, uiConfig.weaponAdjusterFlashDelay);
 }

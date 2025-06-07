@@ -3,6 +3,11 @@ import { Entity } from './Entity';
 import { Player } from './Player';
 import { Weapon, WeaponConfigs } from './Weapon';
 import type { CombatStats, AttackInfo, CombatEvent } from './types/index';
+import { Logger } from './Logger.js';
+import { getConfig } from './Config.js';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 export class CombatSystem {
   private static instance: CombatSystem | null = null;
@@ -18,13 +23,16 @@ export class CombatSystem {
     }
     return CombatSystem.instance;
   }
-
   // Initialize combat stats for an entity
-  initializeCombatStats(entity: Entity, maxHealth: number = 100, defense: number = 0): CombatStats {
+  initializeCombatStats(entity: Entity, maxHealth?: number, defense?: number): CombatStats {
+    const combatConfig = getConfig().getCombatConfig();
+    const actualMaxHealth = maxHealth ?? combatConfig.defaultMaxHealth;
+    const actualDefense = defense ?? combatConfig.defaultDefense;
+    
     const stats: CombatStats = {
-      health: maxHealth,
-      maxHealth: maxHealth,
-      defense: defense,
+      health: actualMaxHealth,
+      maxHealth: actualMaxHealth,
+      defense: actualDefense,
       lastDamageTime: 0,
       isDead: false
     };
@@ -168,135 +176,27 @@ export class CombatSystem {
   // Get combat stats for an entity
   getCombatStats(entity: Entity): CombatStats | null {
     return this.combatEntities.get(entity.id) || null;
-  }
-
-  // Get equipped weapon for an entity
+  }  // Get equipped weapon for an entity
   getWeapon(entity: Entity): Weapon | null {
     return this.weapons.get(entity.id) || null;
   }
 
-  // Update all combat-related systems
+  // Update combat system (called from main loop)
   update(elapsed: number): void {
-    // Update all weapons
-    for (const weapon of this.weapons.values()) {
-      weapon.update(elapsed);
-    }
+    // Future: Update cooldowns, damage over time effects, etc.
+    // Currently no frame-by-frame updates needed
+  }
 
-    // Update combat stats (regeneration, status effects, etc.)
-    for (const [entityId, stats] of this.combatEntities.entries()) {
-      if (stats.isDead) continue;
-
-      // Simple health regeneration (1 HP per 5 seconds when not recently damaged)
-      const timeSinceLastDamage = performance.now() - stats.lastDamageTime;
-      if (timeSinceLastDamage > 5000 && stats.health < stats.maxHealth) {
-        const regenRate = elapsed / 5000; // 1 HP per 5 seconds
-        stats.health = Math.min(stats.maxHealth, stats.health + regenRate);
-      }
-    }
+  // Dispatch combat events for logging/UI updates
+  private dispatchCombatEvent(event: CombatEvent): void {
+    logger.info('COMBAT', `Event: ${event.type}`, event);
+    // Future: Could dispatch to event system for UI updates
   }
 
   // Handle entity death
   private onEntityDeath(entity: Entity, killer?: Entity): void {
-    console.log(`Entity ${entity.id} has died!`);
-    // Remove weapon on death
-    this.unequipWeapon(entity);
-    // For players, trigger respawn logic
-    if (entity instanceof Player) {
-      setTimeout(() => {
-        this.respawnPlayer(entity);
-      }, 3000); // 3 second respawn delay
-    } else {
-      // Remove non-player entity from Entity.all
-      const idx = Entity.all.indexOf(entity);
-      if (idx !== -1) {
-        Entity.all.splice(idx, 1);
-      }
-    }
-  }
-
-  // Respawn a player
-  private respawnPlayer(player: Player): void {
-    const stats = this.combatEntities.get(player.id);
-    if (stats) {
-      stats.health = stats.maxHealth;
-      stats.isDead = false;
-      stats.lastDamageTime = 0;
-    }
-
-    player.respawn();
-
-    // Re-equip default weapon
-    this.equipWeapon(player, 'IRON_SWORD');
-
-    console.log(`Player ${player.id} has respawned!`);
-  }  // Dispatch combat events for UI/effects
-  private dispatchCombatEvent(event: CombatEvent): void {
-    // Enhanced logging for better feedback
-    switch (event.type) {
-      case 'attack':
-        console.log(`🗡️ ${event.source?.constructor.name || 'Entity'} ${event.source?.id} starts attacking with ${event.weaponId}!`);
-        // Play attack sound for player attacks
-        if (event.source && 'head' in event.source) { // Player attack
-          const playAttackSound = (globalThis as any).playAttackSound;
-          if (playAttackSound) playAttackSound();
-        }
-        break;
-      case 'hit':
-        console.log(`💥 HIT! ${event.source?.constructor.name || 'Entity'} ${event.source?.id} deals ${event.damage} damage to ${event.target?.constructor.name || 'Entity'} ${event.target?.id}`);
-        // Trigger visual and audio effects for player hits
-        if (event.source && 'head' in event.source) { // Player hit something
-          const triggerFlash = (globalThis as any).triggerAttackFlash;
-          const playHitSound = (globalThis as any).playHitSound;
-          if (triggerFlash) triggerFlash();
-          if (playHitSound) playHitSound();
-        }
-        break;
-      case 'death':
-        console.log(`💀 ${event.target?.constructor.name || 'Entity'} ${event.target?.id} has been defeated by ${event.source?.constructor.name || 'Entity'} ${event.source?.id}!`);
-        break;
-      case 'heal':
-        console.log(`💚 ${event.target?.constructor.name || 'Entity'} ${event.target?.id} has been healed!`);
-        break;
-    }
-
-    // Could dispatch to event system if we had one
-    // EventSystem.getInstance().dispatch('combat', event);
-  }
-
-  // Get all entities within attack range of a position
-  getEntitiesInRange(position: vec3, range: number, excludeEntity?: Entity): Entity[] {
-    const inRange: Entity[] = [];
-
-    for (const entity of Entity.all) {
-      if (entity === excludeEntity) continue;
-
-      const distance = vec3.distance(position, entity.worldPosition);
-      if (distance <= range) {
-        inRange.push(entity);
-      }
-    }
-
-    return inRange;
-  }
-
-  // Check if entity can be attacked (has combat stats and is alive)
-  canBeAttacked(entity: Entity): boolean {
-    const stats = this.getCombatStats(entity);
-    return stats !== null && !stats.isDead;
-  }
-
-  // Get health percentage for UI display
-  getHealthPercentage(entity: Entity): number {
-    const stats = this.getCombatStats(entity);
-    if (!stats) return 0;
-    return stats.health / stats.maxHealth;
-  }
-
-  // Reset all combat data (useful for level changes, etc.)
-  reset(): void {
-    this.combatEntities.clear();
-    this.weapons.clear();
-    this.lastAttackTime.clear();
+    logger.info('COMBAT', `Entity ${entity.id} died`, { killer: killer?.id });
+    // Future: Handle loot drops, experience, etc.
   }
 }
 

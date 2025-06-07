@@ -1,6 +1,7 @@
 import { vec3, quat, mat4 } from 'gl-matrix';
 import { Entity } from './Entity';
 import type { WeaponData, WeaponSwing, WeaponType } from './types/index';
+import { getConfig } from './Config';
 
 export class Weapon extends Entity {
   weaponData: WeaponData;
@@ -248,11 +249,10 @@ export const WeaponConfigs = {
     attackSpeed: 1.0,
     swingDuration: 600,
     modelName: 'axe'
-  },
-  WAR_HAMMER: {
+  },  WAR_HAMMER: {
     id: 'war_hammer',
     name: 'War Hammer',
-    damage: 50,
+    damage: getConfig().getCombatConfig().defaultWeaponDamage,
     range: 2.5,
     attackSpeed: 0.8,
     swingDuration: 700,

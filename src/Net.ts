@@ -1,6 +1,10 @@
 import { Peer, DataConnection } from 'peerjs';
 import { Entity } from './Entity';
 import { MessageType, type NetworkMessage } from './types';
+import { Logger } from './Logger.js';
+
+// Create logger instance for this module
+const logger = Logger.getInstance();
 
 export class Net {
   peer: Peer | null = null;
@@ -18,7 +22,7 @@ export class Net {
     this.isHost = true;
 
     this.peer.on('open', (id) => {
-      console.log('Host ID:', id);
+      logger.info('NET', 'Host ID:', id);
     });
 
     this.peer.on('connection', (conn) => {
@@ -36,7 +40,7 @@ export class Net {
     this.isHost = false;
     this.peer = new Peer();
     this.peer.on('open', (id) => {
-      console.log('Client ID:', id);
+      logger.info('NET', 'Client ID:', id);
       const conn = this.peer!.connect(hostid);
       conn.on('open', () => {
         conn.send({ msg: MessageType.PLAYER_JOIN });
@@ -50,7 +54,7 @@ export class Net {
   onData(conn: DataConnection, data: any): void {
     switch (data.msg) {
       case MessageType.PLAYER_JOIN:
-        console.log('Player joined');
+        logger.info('NET', 'Player joined');
         if (this.isHost) {
           for (const connection of this.connections) {
             connection.send(data);
