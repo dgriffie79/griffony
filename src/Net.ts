@@ -48,16 +48,15 @@ export class Net {
   private messagesSent: number = 0;
   private messagesReceived: number = 0;
   private lastPingTime: number = 0;
-  
-  // Event callbacks
+    // Event callbacks
   private onPlayerJoinCallback?: (playerId: string, playerName: string) => void;
   private onPlayerLeaveCallback?: (playerId: string) => void;
   private onMessageCallback?: (message: NetworkMessage, senderId: string) => void;
-  private onConnectionStateChangeCallback?: (isConnected: boolean) => void;
+  private onConnectionStateChangeCallback?: (isConnected: boolean) => void;  private onChatMessageCallback?: (playerName: string, message: string, timestamp: number) => void;
+  
   constructor() {
     this.startMessageBatchingLoop();
   }
-
   // Manual Signaling Methods for WebRTC
   async createOffer(): Promise<string> {
     // Generate a unique peer ID for this host
@@ -82,6 +81,9 @@ export class Net {
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
     
+    // Wait for ICE gathering to complete
+    await this.waitForIceGathering(connection);
+    
     // Store the connection for later use
     const peerConnection: PeerConnection = {
       id: 'pending_client',
@@ -92,14 +94,12 @@ export class Net {
       latency: 0
     };
     
-    // We'll update this when we get the answer
+    // We'll set up connection state handlers in processAnswer() when we have the final peerId
     this.pendingConnection = peerConnection;
     
-    logger.info('NET', 'Created WebRTC offer for host');
-    return JSON.stringify(offer);
-  }
-
-  async createAnswer(offerString: string): Promise<string> {
+    logger.info('NET', 'Created WebRTC offer for host with ICE candidates, waiting for answer...');
+    return JSON.stringify(connection.localDescription);
+  }  async createAnswer(offerString: string): Promise<string> {
     // Generate a unique peer ID for this client
     this.peerId = 'client_' + Math.random().toString(36).substr(2, 9);
     this.isHost = false;
@@ -115,38 +115,36 @@ export class Net {
         ]
       });
 
-      // Set up data channel handler
-      let dataChannel: RTCDataChannel | undefined;
-      connection.ondatachannel = (event) => {
-        dataChannel = event.channel;
-        this.setupDataChannelHandlers(dataChannel, 'host');
+      // Store the connection for later use (without data channel initially)
+      const peerConnection: PeerConnection = {
+        id: 'host',
+        connection,
+        dataChannel: undefined, // Will be set when ondatachannel fires
+        isHost: false,
+        lastSeen: Date.now(),
+        latency: 0
       };
+      
+      this.connections.set('host', peerConnection);      // Data channel handler will be set up in setupConnectionStateHandlers()
+      // No need to set it here as it creates conflicts
 
       // Set remote description and create answer
       await connection.setRemoteDescription(offer);
       const answer = await connection.createAnswer();
       await connection.setLocalDescription(answer);
       
-      // Store the connection for later use
-      const peerConnection: PeerConnection = {
-        id: 'host',
-        connection,
-        dataChannel,
-        isHost: false,
-        lastSeen: Date.now(),
-        latency: 0
-      };
+      // Wait for ICE gathering to complete
+      await this.waitForIceGathering(connection);
       
-      this.pendingConnection = peerConnection;
-      
-      logger.info('NET', 'Created WebRTC answer for client');
-      return JSON.stringify(answer);
+      // Set up connection state handlers AFTER storing the connection
+      this.setupConnectionStateHandlers(connection, 'host');
+      logger.info('NET', 'Created WebRTC answer for client with ICE candidates, waiting for connection...');
+      return JSON.stringify(connection.localDescription);
     } catch (error) {
       logger.error('NET', 'Failed to create answer:', error);
       throw new Error('Invalid offer format');
     }
   }
-
   async processAnswer(answerString: string): Promise<void> {
     if (!this.pendingConnection || !this.isHost) {
       throw new Error('No pending connection or not a host');
@@ -158,26 +156,47 @@ export class Net {
       // Set the remote description
       await this.pendingConnection.connection.setRemoteDescription(answer);
       
-      // Set up data channel handlers
-      if (this.pendingConnection.dataChannel) {
-        this.setupDataChannelHandlers(this.pendingConnection.dataChannel, 'client');
-      }
-      
       // Update the connection ID and add to active connections
       this.pendingConnection.id = 'client';
       this.connections.set('client', this.pendingConnection);
+      
+      // Now set up connection state handlers with the correct peerId
+      this.setupConnectionStateHandlers(this.pendingConnection.connection, 'client');
+      
+      // Clear pending connection
       this.pendingConnection = undefined;
       
-      // Set up connection state monitoring
-      this.pendingConnection = undefined;
-      this.isConnected = true;
-      
-      logger.info('NET', 'WebRTC connection established as host');
-      this.onConnectionStateChangeCallback?.(true);
+      logger.info('NET', 'WebRTC answer processed, waiting for connection establishment...');
     } catch (error) {
       logger.error('NET', 'Failed to process answer:', error);
       throw new Error('Invalid answer format');
     }
+  }
+
+  // Helper method to wait for ICE gathering to complete
+  private async waitForIceGathering(connection: RTCPeerConnection): Promise<void> {
+    return new Promise((resolve) => {
+      if (connection.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+      
+      const handleStateChange = () => {
+        if (connection.iceGatheringState === 'complete') {
+          connection.onicegatheringstatechange = null;
+          resolve();
+        }
+      };
+      
+      connection.onicegatheringstatechange = handleStateChange;
+      
+      // Fallback timeout after 10 seconds
+      setTimeout(() => {
+        connection.onicegatheringstatechange = null;
+        logger.warn('NET', 'ICE gathering timeout, proceeding anyway');
+        resolve();
+      }, 10000);
+    });
   }
 
   // Connection Management
@@ -249,32 +268,116 @@ export class Net {
     // Handle ICE candidates
     connection.onicecandidate = (event) => {
       if (event.candidate) {
-        // In manual signaling, this would be copied to the other peer
-        logger.debug('NET', `ICE candidate for ${peerId}:`, event.candidate);
+        // In manual signaling, this would be copied to the other peer        logger.debug('NET', `ICE candidate for ${peerId}:`, event.candidate);
+      }
+    };    
+    this.connections.set(peerId, peerConnection);
+  }
+    private setupConnectionStateHandlers(connection: RTCPeerConnection, peerId: string): void {    // Handle connection state changes
+    connection.onconnectionstatechange = () => {
+      const state = connection.connectionState;
+      logger.info('NET', `Connection state changed for ${peerId}: ${state}`);
+        if (state === 'connected') {
+        this.isConnected = true;
+        logger.info('NET', `WebRTC connection established with ${peerId}`);
+        
+        // Now that connection is established, set up data channel handlers
+        const peerConnection = this.connections.get(peerId);
+        if (peerConnection?.dataChannel) {
+          logger.info('NET', `Setting up data channel handlers for connected peer ${peerId}`);
+          this.setupDataChannelHandlers(peerConnection.dataChannel, peerId);
+        } else if (this.isHost) {
+          // For host, data channel should already be created in createOffer()
+          logger.warn('NET', `Host missing data channel for connected peer ${peerId}`);
+        } else {
+          // For client, data channel might not have arrived yet - handler will set it up when it arrives
+          logger.info('NET', `Client waiting for data channel from host ${peerId}`);
+        }
+        
+        this.onConnectionStateChangeCallback?.(true);
+      } else if (state === 'failed') {
+        logger.error('NET', `WebRTC connection failed for ${peerId}`);
+        this.handlePeerDisconnection(peerId);
+      } else if (state === 'disconnected') {
+        logger.warn('NET', `WebRTC connection disconnected for ${peerId}`);
+        this.handlePeerDisconnection(peerId);
       }
     };
 
-    this.connections.set(peerId, peerConnection);
-  }
+    // Handle ICE connection state changes (additional monitoring)
+    connection.oniceconnectionstatechange = () => {
+      const iceState = connection.iceConnectionState;
+      logger.info('NET', `ICE connection state for ${peerId}: ${iceState}`);
+      
+      if (iceState === 'failed') {
+        logger.error('NET', `ICE connection failed for ${peerId}`);
+      } else if (iceState === 'disconnected') {
+        logger.warn('NET', `ICE connection disconnected for ${peerId}`);
+      } else if (iceState === 'connected') {
+        logger.info('NET', `ICE connection established for ${peerId}`);
+      }
+    };
 
+    // Handle ICE candidate gathering
+    connection.onicecandidate = (event) => {
+      if (event.candidate) {
+        logger.debug('NET', `ICE candidate for ${peerId}:`, {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
+        });
+      } else {
+        logger.debug('NET', `ICE gathering complete for ${peerId}`);
+      }
+    };    // For clients, set up the data channel handler when it arrives
+    if (!this.isHost) {
+      connection.ondatachannel = (event) => {
+        logger.info('NET', `Data channel received from host for ${peerId}`);
+        const peerConnection = this.connections.get(peerId);
+        if (peerConnection) {
+          peerConnection.dataChannel = event.channel;
+          // Set up handlers immediately if connection is already established
+          if (connection.connectionState === 'connected') {
+            logger.info('NET', `Setting up data channel handlers immediately for ${peerId}`);
+            this.setupDataChannelHandlers(peerConnection.dataChannel, peerId);
+          }
+        } else {
+          logger.error('NET', `No peer connection found for ${peerId} when setting up data channel`);
+        }
+      };
+    }
+    
+    // Set a connection timeout
+    setTimeout(() => {
+      if (connection.connectionState !== 'connected') {
+        logger.warn('NET', `Connection timeout for ${peerId}, current state: ${connection.connectionState}`);
+        // Don't automatically fail - let user try again
+      }
+    }, 30000); // 30 second timeout
+  }
   private setupDataChannelHandlers(dataChannel: RTCDataChannel, peerId: string): void {
+    logger.info('NET', `Setting up data channel handlers for ${peerId}, current state: ${dataChannel.readyState}`);
+    
     dataChannel.onopen = () => {
       logger.info('NET', `Data channel opened with ${peerId}`);
       
-      // Send player join message if this is a new connection
+      // Send player join message if this is a client connecting to host
       if (!this.isHost) {
-        this.sendMessage({
-          type: MessageType.PLAYER_JOIN,
-          priority: MessagePriority.HIGH,
-          timestamp: Date.now(),
-          sequenceNumber: this.getNextSequenceNumber(),
-          data: {
-            playerId: this.peerId,
-            playerName: `Player_${this.peerId}`,
-            position: [0, 0, 0] as any,
-            rotation: [0, 0, 0, 1] as any
-          }
-        } as PlayerJoinMessage);
+        // Add a small delay to ensure the connection is fully stable
+        setTimeout(() => {
+          this.sendMessage({
+            type: MessageType.PLAYER_JOIN,
+            priority: MessagePriority.HIGH,
+            timestamp: Date.now(),
+            sequenceNumber: this.getNextSequenceNumber(),
+            data: {
+              playerId: this.peerId,
+              playerName: `Player_${this.peerId}`,
+              position: [0, 0, 0] as any,
+              rotation: [0, 0, 0, 1] as any
+            }
+          } as PlayerJoinMessage);
+        }, 100);
       }
     };
 
@@ -295,6 +398,12 @@ export class Net {
       logger.info('NET', `Data channel closed with ${peerId}`);
       this.handlePeerDisconnection(peerId);
     };
+    
+    // If the data channel is already open, trigger the open handler
+    if (dataChannel.readyState === 'open') {
+      logger.info('NET', `Data channel already open for ${peerId}, triggering open handler`);
+      dataChannel.onopen?.(new Event('open'));
+    }
   }
 
   private handleMessage(message: NetworkMessage, senderId: string): void {
@@ -371,9 +480,9 @@ export class Net {
       }
     }
   }
-
   private handleChatMessage(message: ChatMessage): void {
     logger.info('NET', `Chat from ${message.data.playerName}: ${message.data.message}`);
+    this.onChatMessageCallback?.(message.data.playerName, message.data.message, message.data.timestamp);
   }
 
   private handlePing(message: NetworkMessage, senderId: string): void {
@@ -650,9 +759,12 @@ export class Net {
   getConnectedPeers(): string[] {
     return Array.from(this.connections.keys());
   }
-
   getPeerLatency(peerId: string): number {
     return this.connections.get(peerId)?.latency ?? -1;
+  }
+
+  getPeerId(): string {
+    return this.peerId;
   }
 
   getNetworkStats() {
@@ -677,9 +789,12 @@ export class Net {
   onMessage(callback: (message: NetworkMessage, senderId: string) => void): void {
     this.onMessageCallback = callback;
   }
-
   onConnectionStateChange(callback: (isConnected: boolean) => void): void {
     this.onConnectionStateChangeCallback = callback;
+  }
+
+  onChatMessage(callback: (playerName: string, message: string, timestamp: number) => void): void {
+    this.onChatMessageCallback = callback;
   }
 
   // Cleanup

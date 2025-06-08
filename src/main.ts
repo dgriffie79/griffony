@@ -20,6 +20,8 @@ import { Logger, configureLogging } from './Logger.js';
 import { errorHandler, ValidationError, Result } from './ErrorHandler.js';
 import { AutoCleanup } from './ResourceManager.js';
 import { ManualSignalingUI } from './ManualSignalingUI.js';
+import { ChatUI } from './ChatUI.js';
+import { InputManager } from './InputManager.js';
 
 // Create logger instance for this module
 const logger = Logger.getInstance();
@@ -102,6 +104,8 @@ const player = new Player();
 const renderer = new Renderer();
 const net = new Net();
 const camera = new Camera();
+const inputManager = InputManager.getInstance();
+const chatUI = new ChatUI(net);
 
 // Make global references available for legacy compatibility
 declare global {
@@ -112,6 +116,8 @@ declare global {
 	var renderer: Renderer;
 	var net: Net;
 	var camera: Camera;
+	var inputManager: InputManager;
+	var chatUI: ChatUI;
 	var Entity: typeof Entity;
 	var greedyMesh: any; // Will be defined later in the file
 	var physicsSystem: any; // Use 'any' to avoid circular reference
@@ -125,10 +131,37 @@ globalThis.player = player;
 globalThis.renderer = renderer;
 globalThis.net = net;
 globalThis.camera = camera;
+globalThis.inputManager = inputManager;
+globalThis.chatUI = chatUI;
 globalThis.Entity = Entity;
 globalThis.greedyMesh = greedyMesh;
 globalThis.physicsSystem = physicsSystem;
 globalThis.useGreedyMesh = useGreedyMesh;
+
+// Setup chat and input integration
+function setupChatSystem(): void {
+	// Connect input manager to chat UI
+	inputManager.onChatOpen(() => {
+		// Don't open chat if we're in the menu or during signaling
+		if (showingMenu) {
+			return;
+		}
+		
+		if (!chatUI.isOpenForInput()) {
+			chatUI.open();
+		}
+	});
+
+	// Connect network to chat UI
+	net.onChatMessage((playerName: string, message: string, timestamp: number) => {
+		chatUI.addMessage(playerName, message, timestamp);
+	});
+
+	logger.info('MAIN', 'Chat system initialized');
+}
+
+// Initialize the chat system
+setupChatSystem();
 
 function triggerAttackFlash(): void {
 	const flash = document.getElementById('attack-flash');
@@ -525,10 +558,13 @@ function setupGlobalEventListeners(): void {
 			mouseMoveX += event.movementX;
 			mouseMoveY += event.movementY;
 		}
-	});
-	// Menu toggle and pointer lock management
+	});	// Menu toggle and pointer lock management
 	document.addEventListener('click', (event) => {
 		const target = event.target as HTMLElement;
+		
+		// Debug logging
+		logger.debug('MAIN', `Click detected on element: ${target.tagName}, id: ${target.id}, class: ${target.className}`);
+		
 		if (target instanceof HTMLButtonElement && target.id === 'toggle-menu') {
 			showingMenu = !showingMenu;
 			const mainMenu = document.getElementById('main-menu');
@@ -546,19 +582,41 @@ function setupGlobalEventListeners(): void {
 		// Don't request pointer lock if clicking within the signaling UI
 		const signalingUI = document.getElementById('manualSignalingUI');
 		if (signalingUI && signalingUI.contains(target)) {
+			logger.debug('MAIN', 'Click within signaling UI, not requesting pointer lock');
 			return;
 		}
 
-		if (!document.pointerLockElement) {
-			document.body.requestPointerLock();
+		// Don't request pointer lock if clicking within the chat UI
+		const chatUI = document.getElementById('chat-ui');
+		if (chatUI && chatUI.contains(target)) {
+			logger.debug('MAIN', 'Click within chat UI, not requesting pointer lock');
+			return;
 		}
+		// Don't request pointer lock if showing menu
 		if (showingMenu) {
+			logger.debug('MAIN', 'Menu is showing, not requesting pointer lock');
 			showingMenu = false;
 			const mainMenu = document.getElementById('main-menu');
 			if (mainMenu) {
 				mainMenu.hidden = true;
 			}
+			return;
 		}
+
+		// Don't request pointer lock if clicking on UI elements
+		if (target.tagName === 'BUTTON' || 
+			target.classList.contains('bind-button') ||
+			target.classList.contains('ui-button') ||
+			target.tagName === 'INPUT' ||
+			target.tagName === 'TEXTAREA' ||
+			target.tagName === 'SELECT') {
+			logger.debug('MAIN', 'Click on UI element, not requesting pointer lock');
+			return;
+		}
+
+		// Request pointer lock for valid game area clicks
+		logger.debug('MAIN', 'Requesting pointer lock for game area click');
+		document.body.requestPointerLock();
 	});
 
 	document.addEventListener('visibilitychange', () => {
@@ -695,6 +753,16 @@ function setupUI(): void {
  * Create a UI button for activating the weapon adjuster
  */
 function onKeydown(event: KeyboardEvent): void {
+	// Prevent game input when chat is open, except for 'T' and 'Escape'
+	if (chatUI.isOpenForInput() && event.code !== 'KeyT' && event.code !== 'Escape') {
+		return;
+	}
+
+	// Prevent chat from opening when menu is showing
+	if (event.code === 'KeyT' && showingMenu) {
+		return;
+	}
+
 	key_states.add(event.code);
 
 	switch (event.code) {

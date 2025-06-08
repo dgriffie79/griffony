@@ -287,10 +287,11 @@ export class Renderer {
     // Don't await here to maintain compatibility with existing synchronous callers
     this.recoverFromDeviceLoss().catch(error => {
       this.logger.error('RENDERER', 'Device recovery failed:', error);
-      // Fallback: disable performance monitoring
-      this.frameTimes = [];
+      // Fallback: disable performance monitoring    this.frameTimes = [];
     });
-  }  private async initializeWebGPU(): Promise<void> {
+  }
+
+  private async initializeWebGPU(): Promise<void> {
     // Set up GPU device and adapter
     await this.setupGPUDevice();
 
@@ -457,12 +458,12 @@ export class Renderer {
           'createShaderModule'
         );
       }
-    }
-
-    await Promise.all(compilationResults);
+    }    await Promise.all(compilationResults);
     this.logger.info('RENDERER', 'All shader modules compiled successfully');
     this.shaders = modules;
-  }  async loadShaderSources(): Promise<Record<string, string>> {
+  }
+
+  async loadShaderSources(): Promise<Record<string, string>> {
     try {
       const shaders: Record<string, string> = {};
       const shaderModules = (import.meta as any).glob('./shaders/*.wgsl', { query: '?raw', import: 'default' });

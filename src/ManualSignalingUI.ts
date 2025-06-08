@@ -19,9 +19,63 @@ export class ManualSignalingUI {
   private isHost: boolean = false;
   private onCompleteCallback?: () => void;
   private onErrorCallback?: (error: string) => void;
+  private connectionEstablished: boolean = false;
+  private connectionCheckInterval?: number;
 
   constructor(net: Net) {
     this.net = net;
+    this.setupConnectionStateListener();
+  }  private setupConnectionStateListener(): void {
+    this.net.onConnectionStateChange((isConnected) => {
+      logger.info('SIGNALING', `Connection state changed: ${isConnected}`);
+      if (isConnected && !this.connectionEstablished) {
+        this.connectionEstablished = true;
+        this.updateConnectionStatus();
+        this.stopConnectionCheck();
+        
+        // Automatically close signaling UI and start the game
+        setTimeout(() => {
+          logger.info('SIGNALING', 'Connection established, automatically starting game');
+          this.finishSignaling();
+        }, 1000); // Small delay to show success message
+      }
+    });
+  }
+  private startConnectionCheck(): void {
+    // Stop any existing check
+    this.stopConnectionCheck();
+    
+    // Check connection status every 500ms
+    this.connectionCheckInterval = window.setInterval(() => {
+      if (this.net.isConnectionActive() && !this.connectionEstablished) {
+        this.connectionEstablished = true;
+        this.updateConnectionStatus();
+        this.stopConnectionCheck();
+        
+        // Automatically close signaling UI and start the game
+        setTimeout(() => {
+          logger.info('SIGNALING', 'Connection detected via polling, automatically starting game');
+          this.finishSignaling();
+        }, 1000); // Small delay to show success message
+      }
+    }, 500);
+  }
+
+  private stopConnectionCheck(): void {
+    if (this.connectionCheckInterval) {
+      clearInterval(this.connectionCheckInterval);
+      this.connectionCheckInterval = undefined;
+    }
+  }  private updateConnectionStatus(): void {
+    if (!this.isHost && this.currentStep === 1 && this.steps[1]) {
+      // Update the final step instruction for clients
+      this.steps[1].instruction = 'Connection established successfully! Starting game...';
+      this.showCurrentStep();
+    } else if (this.isHost && this.currentStep === 2 && this.steps[2]) {
+      // Update the final step instruction for hosts
+      this.steps[2].instruction = 'Connection established successfully! Starting game...';
+      this.showCurrentStep();
+    }
   }
   // Show host signaling flow directly
   showHostFlow(): void {
@@ -36,10 +90,10 @@ export class ManualSignalingUI {
     if (!this.container) return;
     this.startJoinFlow();
   }
-
   // Start the host signaling flow
   private async startHostFlow(): Promise<void> {
     this.isHost = true;
+    this.connectionEstablished = false;
     
     try {
       logger.info('SIGNALING', 'Starting host signaling flow');
@@ -74,11 +128,10 @@ export class ManualSignalingUI {
       logger.error('SIGNALING', 'Host flow error:', error);
       this.showError('Failed to create offer: ' + error);
     }
-  }
-
-  // Start the client signaling flow
+  }  // Start the client signaling flow
   private startJoinFlow(): void {
     this.isHost = false;
+    this.connectionEstablished = false;
     
     this.steps = [
       {
@@ -88,23 +141,16 @@ export class ManualSignalingUI {
         isInput: true
       },
       {
-        type: 'answer',
-        title: 'Step 2: Share Your Answer',
-        instruction: 'Copy this answer and send it back to the host:',
-        data: '' // Will be filled after processing offer
-      },
-      {
         type: 'complete',
-        title: 'Connection Complete!',
-        instruction: 'Waiting for the host to complete the connection...'
+        title: 'Step 2: Share Your Answer & Wait',
+        instruction: 'Copy this answer and send it back to the host. Waiting for the host to complete the connection...',
+        data: '' // Will be filled after processing offer
       }
     ];
     
     this.currentStep = 0;
     this.showCurrentStep();
-  }
-
-  private showCurrentStep(): void {
+  }  private showCurrentStep(): void {
     if (!this.container || this.currentStep >= this.steps.length) return;
     
     const step = this.steps[this.currentStep];
@@ -123,9 +169,8 @@ export class ManualSignalingUI {
         ${step.isInput ? this.createInputSection() : this.createDataSection(step.data || '')}
         
         <div class="step-buttons">
-          ${step.isInput ? '<button id="processInput" class="primary-btn">Continue</button>' : ''}
+          ${step.isInput ? '<button id="processInput" class="primary-btn" disabled>Continue</button>' : ''}
           ${!step.isInput && this.currentStep < this.steps.length - 1 ? '<button id="nextStep" class="primary-btn">Next</button>' : ''}
-          ${step.type === 'complete' ? '<button id="finishSignaling" class="success-btn">Start Game</button>' : ''}
           <button id="cancelSignaling" class="cancel-btn">Cancel</button>
         </div>
       </div>
@@ -133,48 +178,52 @@ export class ManualSignalingUI {
 
     this.attachStepEventListeners();
   }
-
   private createInputSection(): string {
     return `
       <div class="input-section">
         <textarea id="signalingInput" placeholder="Paste the signaling data here..." rows="10"></textarea>
-        <div class="input-help">
-          <small>💡 Tip: Use Ctrl+V to paste the data</small>
-        </div>
       </div>
     `;
   }
-
   private createDataSection(data: string): string {
     return `
       <div class="output-section">
         <textarea id="signalingOutput" readonly rows="10">${data}</textarea>
         <button id="copyData" class="copy-btn">📋 Copy to Clipboard</button>
-        <div class="copy-help">
-          <small>💡 Click the copy button or select all text and press Ctrl+C</small>
-        </div>
       </div>
     `;
-  }
+  }  private attachStepEventListeners(): void {
+    const processBtn = document.getElementById('processInput') as HTMLButtonElement;
+    const nextBtn = document.getElementById('nextStep') as HTMLButtonElement;
+    const cancelBtn = document.getElementById('cancelSignaling') as HTMLButtonElement;
+    const copyBtn = document.getElementById('copyData') as HTMLButtonElement;
+    const signalingInput = document.getElementById('signalingInput') as HTMLTextAreaElement;
 
-  private attachStepEventListeners(): void {
-    const processBtn = document.getElementById('processInput');
-    const nextBtn = document.getElementById('nextStep');
-    const finishBtn = document.getElementById('finishSignaling');
-    const cancelBtn = document.getElementById('cancelSignaling');
-    const copyBtn = document.getElementById('copyData');    processBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.processInput(); });
+    processBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.processInput(); });
     nextBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.nextStep(); });
-    finishBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.finishSignaling(); });
     cancelBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.close(); });
     copyBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.copyToClipboard(); });
-  }
 
-  private async processInput(): Promise<void> {
-    const input = document.getElementById('signalingInput') as HTMLTextAreaElement;
-    if (!input || !input.value.trim()) {
-      this.showError('Please paste the signaling data');
-      return;
+    // Enable/disable continue button based on input content
+    if (signalingInput && processBtn) {
+      const updateButtonState = () => {
+        const hasContent = signalingInput.value.trim().length > 0;
+        processBtn.disabled = !hasContent;
+      };
+
+      // Check initial state
+      updateButtonState();
+
+      // Monitor input changes
+      signalingInput.addEventListener('input', updateButtonState);
+      signalingInput.addEventListener('paste', () => {
+        // Delay check to allow paste to complete
+        setTimeout(updateButtonState, 10);
+      });
     }
+  }private async processInput(): Promise<void> {
+    const input = document.getElementById('signalingInput') as HTMLTextAreaElement;
+    if (!input) return;
 
     try {
       const data = input.value.trim();
@@ -191,15 +240,49 @@ export class ManualSignalingUI {
       }
       
       this.nextStep();
+        // For clients, immediately start connection checking after generating answer
+      if (!this.isHost && this.currentStep === 1) {
+        this.startConnectionCheck();
+        
+        // Also check immediately if already connected
+        if (this.net.isConnectionActive() && !this.connectionEstablished) {
+          this.connectionEstablished = true;
+          this.updateConnectionStatus();
+          this.stopConnectionCheck();
+          
+          // Automatically close signaling UI and start the game
+          setTimeout(() => {
+            logger.info('SIGNALING', 'Connection detected immediately, automatically starting game');
+            this.finishSignaling();
+          }, 1000); // Small delay to show success message
+        }
+      }
       
     } catch (error) {
       logger.error('SIGNALING', 'Process input error:', error);
       this.showError('Invalid signaling data: ' + error);
     }
-  }
-
-  private nextStep(): void {
+  }  private nextStep(): void {
     this.currentStep++;
+    
+    // If client reaches the final step (step 1, which is the answer display), start checking for connection immediately
+    if (!this.isHost && this.currentStep === 1) {
+      this.startConnectionCheck();
+      
+      // Also check immediately if already connected
+      if (this.net.isConnectionActive() && !this.connectionEstablished) {
+        this.connectionEstablished = true;
+        this.updateConnectionStatus();
+        this.stopConnectionCheck();
+        
+        // Automatically close signaling UI and start the game
+        setTimeout(() => {
+          logger.info('SIGNALING', 'Connection detected in nextStep, automatically starting game');
+          this.finishSignaling();
+        }, 1000); // Small delay to show success message
+      }
+    }
+    
     this.showCurrentStep();
   }
 
@@ -408,9 +491,19 @@ export class ManualSignalingUI {
       .success-btn:hover::after {
         background-color: rgba(0, 255, 0, 0.1);
       }
-      
-      .cancel-btn:hover::after {
+        .cancel-btn:hover::after {
         background-color: rgba(255, 255, 255, 0.05);
+      }
+      
+      .primary-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        border-color: rgba(255, 255, 255, 0.3);
+        color: rgba(255, 255, 255, 0.5);
+      }
+      
+      .primary-btn:disabled::after {
+        display: none;
       }
       
       .copy-btn.copied {
@@ -551,13 +644,14 @@ export class ManualSignalingUI {
 
   onError(callback: (error: string) => void): void {
     this.onErrorCallback = callback;
-  }
-
-  close(): void {
+  }  close(): void {
+    this.stopConnectionCheck();
     if (this.container) {
       this.container.remove();
       this.container = null;
     }
+    // Reset connection state for next use
+    this.connectionEstablished = false;
   }
 
   isVisible(): boolean {

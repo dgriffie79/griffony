@@ -70,10 +70,10 @@ export class InputManager {
   private mouseSensitivity: number = 1.0;
   private mouseInverted: boolean = false;
   private mouseLocked: boolean = false;
-  
-  // Event callbacks
+    // Event callbacks
   private onInputCallback?: (input: BufferedInput) => void;
   private onActionCallback?: (action: string, position?: [number, number, number]) => void;
+  private onChatOpenCallback?: () => void;
   
   // Performance tracking
   private inputsProcessed: number = 0;
@@ -140,12 +140,20 @@ export class InputManager {
       this.mouseLocked = document.pointerLockElement === document.body;
     });
   }
-
   // Event Handlers
   private handleKeyEvent(event: KeyboardEvent, isPressed: boolean): void {
+    // Check if chat input has focus - if so, don't process movement keys
+    const chatInput = document.querySelector('#chat-ui input') as HTMLInputElement;
+    const isChatInputFocused = chatInput && document.activeElement === chatInput;
+    
     const binding = this.keyBindings.get(event.code);
     
     if (binding) {
+      // Don't prevent default or process movement keys if chat input is focused
+      if (isChatInputFocused) {
+        return;
+      }
+      
       event.preventDefault();
       
       // Handle movement keys
@@ -167,11 +175,12 @@ export class InputManager {
             break;
         }
       }
-    }
-
-    // Handle special keys
+    }    // Handle special keys
     if (isPressed) {
       switch (event.code) {
+        case 'KeyT':
+          this.triggerAction('chat');
+          break;
         case 'Escape':
           this.releaseMouse();
           break;
@@ -194,8 +203,14 @@ export class InputManager {
     this.currentInput.mouseDelta[0] += deltaX;
     this.currentInput.mouseDelta[1] += deltaY;
   }
-
   private handleMouseButton(event: MouseEvent, isPressed: boolean): void {
+    const target = event.target as HTMLElement;
+    
+    // Don't process mouse input if clicking on UI elements
+    if (this.isUIElement(target)) {
+      return; // Allow normal button behavior
+    }
+    
     event.preventDefault();
 
     switch (event.button) {
@@ -249,14 +264,23 @@ export class InputManager {
     this.lastInputTime = now;
 
     // Trigger callback
-    this.onInputCallback?.(bufferedInput);
-
-    return bufferedInput;
+    this.onInputCallback?.(bufferedInput);    return bufferedInput;
   }
 
   private triggerAction(action: string): void {
     logger.debug('INPUT', `Action triggered: ${action}`);
-    this.onActionCallback?.(action);
+    
+    if (action === 'chat') {
+      // Don't open chat if signaling UI is active
+      const signalingUI = document.getElementById('manualSignalingUI');
+      if (signalingUI) {
+        logger.debug('INPUT', 'Cannot open chat while signaling UI is active');
+        return;
+      }
+      this.onChatOpenCallback?.();
+    } else {
+      this.onActionCallback?.(action);
+    }
   }
 
   // Network Integration
@@ -320,8 +344,46 @@ export class InputManager {
     const cutoff = Date.now() - maxAge;
     this.inputBuffer = this.inputBuffer.filter(input => input.timestamp > cutoff);
   }
-
   // Utility Methods
+  private isUIElement(element: HTMLElement): boolean {
+    // Check if element is a button
+    if (element.tagName === 'BUTTON') {
+      return true;
+    }
+    
+    // Check if element has UI-related classes
+    if (element.classList.contains('bind-button') || 
+        element.classList.contains('ui-button') ||
+        element.classList.contains('menu-button')) {
+      return true;
+    }
+    
+    // Check if element is within specific UI containers
+    const uiContainers = [
+      'main-menu',
+      'manualSignalingUI', 
+      'chat-ui',
+      'settings-panel',
+      'ui-panel'
+    ];
+    
+    for (const containerId of uiContainers) {
+      const container = document.getElementById(containerId);
+      if (container && container.contains(element)) {
+        return true;
+      }
+    }
+    
+    // Check if element is an input field
+    if (element.tagName === 'INPUT' || 
+        element.tagName === 'TEXTAREA' || 
+        element.tagName === 'SELECT') {
+      return true;
+    }
+    
+    return false;
+  }
+
   private createEmptyInputState(): InputState {
     return {
       forward: false,
@@ -432,9 +494,12 @@ export class InputManager {
   onInput(callback: (input: BufferedInput) => void): void {
     this.onInputCallback = callback;
   }
-
   onAction(callback: (action: string, position?: [number, number, number]) => void): void {
     this.onActionCallback = callback;
+  }
+
+  onChatOpen(callback: () => void): void {
+    this.onChatOpenCallback = callback;
   }
 
   // Cleanup
