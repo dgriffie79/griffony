@@ -359,6 +359,90 @@ export class Entity {
     return entity;
   }
 
+  // Serialization methods for network synchronization
+  serialize(): any {
+    return {
+      entityId: this.id.toString(),
+      entityType: this.constructor.name,
+      position: Array.from(this.localPosition) as [number, number, number],
+      rotation: Array.from(this.localRotation) as [number, number, number, number],
+      scale: Array.from(this.localScale) as [number, number, number],
+      velocity: Array.from(this.velocity) as [number, number, number],
+      modelId: this.modelId,
+      frame: this.frame,
+      animationFrame: this.animationFrame,
+      ownerId: this.ownerId,
+      isNetworkEntity: this.isNetworkEntity,
+      physicsLayer: this.physicsLayer,
+      gravity: this.gravity,
+      collision: this.collision,
+      spawn: this.spawn,
+      height: this.height,
+      radius: this.radius
+    };
+  }
+
+  static fromSnapshot(snapshot: any): Entity {
+    const entity = new Entity();
+    
+    entity.id = parseInt(snapshot.entityId);
+    vec3.copy(entity.localPosition, snapshot.position);
+    quat.copy(entity.localRotation, snapshot.rotation);
+    if (snapshot.scale) {
+      vec3.copy(entity.localScale, snapshot.scale);
+    }
+    if (snapshot.velocity) {
+      vec3.copy(entity.velocity, snapshot.velocity);
+      vec3.copy(entity.vel, snapshot.velocity); // Keep vel in sync
+    }
+    
+    entity.modelId = snapshot.modelId || -1;
+    entity.frame = snapshot.frame || 0;
+    entity.animationFrame = snapshot.animationFrame || 0;
+    entity.ownerId = snapshot.ownerId || '';
+    entity.isNetworkEntity = snapshot.isNetworkEntity || false;
+    entity.physicsLayer = snapshot.physicsLayer || PhysicsLayer.Default;
+    entity.gravity = snapshot.gravity || false;
+    entity.collision = snapshot.collision || false;
+    entity.spawn = snapshot.spawn || false;
+    entity.height = snapshot.height || 0;
+    entity.radius = snapshot.radius || 0;
+    
+    // Set model if available
+    if (entity.modelId >= 0 && globalThis.models) {
+      entity.model = globalThis.models[entity.modelId];
+    }
+    
+    entity.dirty = true;
+    return entity;
+  }
+
+  // Static methods for managing entity collections
+  static clearAllEntities(): void {
+    // Clear the global entity list
+    Entity.all.length = 0;
+    Entity.nextId = 1;
+  }
+
+  static loadEntitiesFromSnapshots(snapshots: any[]): Entity[] {
+    const loadedEntities: Entity[] = [];
+    
+    for (const snapshot of snapshots) {
+      try {
+        const entity = Entity.fromSnapshot(snapshot);
+        loadedEntities.push(entity);
+      } catch (error) {
+        console.error('Failed to load entity from snapshot:', error, snapshot);
+      }
+    }
+    
+    return loadedEntities;
+  }
+
+  static getAllEntitiesAsSnapshots(): any[] {
+    return Entity.all.map(entity => entity.serialize());
+  }
+
   onGround(terrain: Level): boolean {
     const r = 0.85 * this.radius;
     const x = this.worldPosition[0];

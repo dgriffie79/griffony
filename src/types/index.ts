@@ -94,6 +94,7 @@ export const MessageType = {
   GAME_STATE_REQUEST: 2,
   GAME_STATE_RESPONSE: 3,
   HOST_HANDOFF: 4,
+  FULL_GAME_STATE: 33, // Send complete game state to new clients
   
   // Entity Synchronization
   ENTITY_UPDATE: 5,
@@ -191,6 +192,17 @@ export interface GameStateResponseMessage extends NetworkMessage {
   data: {
     entities: EntitySnapshot[];
     terrainModifications: TerrainModification[];
+    gameTime: number;
+    hostId: string;
+  };
+}
+
+export interface FullGameStateMessage extends NetworkMessage {
+  type: typeof MessageType.FULL_GAME_STATE;
+  data: {
+    entities: EntitySnapshot[];
+    playerPosition?: vec3;
+    playerRotation?: quat;
     gameTime: number;
     hostId: string;
   };
@@ -378,10 +390,21 @@ export interface PongMessage extends NetworkMessage {
 // Supporting Data Structures
 export interface EntitySnapshot {
   entityId: string;
+  entityType?: string;
   position: vec3;
   rotation: quat;
+  scale?: vec3;
   velocity?: vec3;
   health?: number;
+  modelId?: number;
+  frame?: number;
+  animationFrame?: number;
+  ownerId?: string;
+  isNetworkEntity?: boolean;
+  physicsLayer?: number;
+  gravity?: boolean;
+  collision?: boolean;
+  spawn?: boolean;
   properties?: Record<string, any>;
 }
 

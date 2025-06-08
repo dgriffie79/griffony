@@ -146,7 +146,6 @@ export class Level {
       }
     }
   }
-
   private processLevelObject(object: any, sizeY: number): void {
     for (let i = 0; i < 1; i++) {
       const entity = Entity.deserialize(object);
@@ -167,6 +166,12 @@ export class Level {
           // Initialize combat stats for entities
           if ((globalThis as any).combatSystem) {
             (globalThis as any).combatSystem.initializeCombatStats(entity);
+          }
+            // Mark as network entity if multiplayer is active
+          if ((globalThis as any).net && (globalThis as any).net.isConnectionActive()) {
+            entity.isNetworkEntity = true;
+            if ((globalThis as any).net.isHost()) {
+              entity.ownerId = (globalThis as any).net.getPeerId();            }
           }
         }
       }

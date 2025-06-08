@@ -13,6 +13,7 @@ import { getConfig } from './Config.js';
 import { WeaponConfigs } from './Weapon.js';
 import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
+import { MessageType } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
 import { MeshStats } from './MeshStats.js';
@@ -33,14 +34,6 @@ configureLogging(true);
 logger.configure({
 	enablePhysicsLogs: true
 });
-
-// Message types for networking
-export const MessageType = {
-	PLAYER_JOIN: 0,
-	PLAYER_LEAVE: 1,
-	CHAT: 2,
-	ENTITY_UPDATE: 3,
-} as const;
 
 // Global game state
 let lastTime = 0;
@@ -319,8 +312,6 @@ function loadGameState(): GameState | null {
 	logger.info('GAME', 'Successfully loaded game state from storage');
 	return savedState as GameState;
 }
-
-// ...existing code...
 
 /**
  * Initialize keybind buttons with current settings
@@ -1197,6 +1188,12 @@ function loop(): void {
 	const physicsTime = updatePhysicsSystem(elapsed);
 	
 	updateGameEntities(elapsed);
+	
+	// Entity synchronization for multiplayer
+	if ((globalThis as any).syncEntities) {
+		(globalThis as any).syncEntities();
+	}
+	
 	const transformTime = updateEntityTransforms();
 	const renderTime = renderFrame();
 	const netTime = updateNetworking();
@@ -1326,8 +1323,118 @@ async function main(): Promise<void> {
 			}
 		}
 	});
+	// Initialize multiplayer manager
+	import('./MultiplayerManager.js').then(module => {
+		const multiplayerManager = module.multiplayerManager;
+		
+		// Connect the net instance to work with the multiplayer manager
+		(globalThis as any).multiplayerManager = multiplayerManager;
+		
+		console.log('✅ Multiplayer manager initialized');
+	}).catch(error => {
+		console.warn('⚠️ Could not initialize multiplayer manager:', error);	});
+
+	// Set up entity synchronization for the host
+	let lastEntitySyncTime = 0;
+	const ENTITY_SYNC_INTERVAL = 50; // 20 FPS for entity updates
+
+	// Initialize entity synchronization
+	setupEntitySynchronization();
+
+	// Debug function to test entity synchronization
+	(globalThis as any).testEntitySync = () => {
+		if (!net.isConnectionActive()) {
+			console.log('❌ No active connection');
+			return;
+		}
+		const isHost = net.isHosting();
+		console.log(`🔄 Entity Sync Test - Role: ${isHost ? 'HOST' : 'CLIENT'}`);
+		console.log(`📊 Total entities: ${Entity.all.length}`);
+		
+		const networkEntities = Entity.all.filter(e => e.isNetworkEntity);
+		console.log(`🌐 Network entities: ${networkEntities.length}`);
+		
+		if (isHost) {
+			console.log('📤 Sending entity update as host...');
+			sendEntityUpdatesFromMain();
+		} else {
+			console.log('📥 Waiting for entity updates as client...');
+		}
+		
+		// Log entity details
+		Entity.all.forEach((entity, index) => {
+			console.log(`Entity ${index}: ID=${entity.id}, Network=${entity.isNetworkEntity}, Owner=${entity.ownerId}, Pos=[${entity.localPosition[0].toFixed(2)}, ${entity.localPosition[1].toFixed(2)}, ${entity.localPosition[2].toFixed(2)}]`);
+		});
+	};
+
+	// Debug function to manually trigger full game state sync
+	(globalThis as any).sendFullGameState = () => {
+		if (!net.isConnectionActive() || !net.isHosting()) {
+			console.log('❌ Must be host with active connection');
+			return;
+		}
+		
+		console.log('📤 Sending full game state to all clients...');
+		// Get all connected peer IDs and send to each
+		for (const [peerId] of (net as any).connections) {
+			console.log(`📤 Sending to peer: ${peerId}`);
+			(net as any).sendFullGameStateToPlayer(peerId);
+		}
+	};
 
 	requestAnimationFrame(loop);
+}
+
+// Entity synchronization helper functions
+let lastEntitySyncTime = 0;
+const ENTITY_SYNC_INTERVAL = 50; // 20 FPS for entity updates
+
+function setupEntitySynchronization(): void {
+	// Set up periodic entity synchronization for hosts
+	const syncEntities = () => {
+		const now = Date.now();
+		if (now - lastEntitySyncTime > ENTITY_SYNC_INTERVAL) {
+			// Send entity updates if we're connected and hosting
+			if (net.isConnectionActive() && net.isHosting()) {
+				sendEntityUpdatesFromMain();
+			}
+			lastEntitySyncTime = now;
+		}
+	};
+	
+	// Add to the game loop
+	(globalThis as any).syncEntities = syncEntities;
+}
+
+function sendEntityUpdatesFromMain(): void {
+	// Get all entities that need updates
+	const entitiesToSync = Entity.all.filter(entity => 
+		entity.isNetworkEntity || entity.dirty
+	);
+	
+	if (entitiesToSync.length === 0) return;
+	
+	// Create entity batch message
+	const entitySnapshots = entitiesToSync.map(entity => ({
+		entityId: entity.id.toString(),
+		position: Array.from(entity.localPosition) as [number, number, number],
+		rotation: Array.from(entity.localRotation) as [number, number, number, number],
+		velocity: Array.from(entity.velocity) as [number, number, number],
+		timestamp: Date.now()
+	}));
+	
+	const batchMessage = {
+		type: MessageType.ENTITY_STATE_BATCH,
+		priority: 2, // Medium priority
+		timestamp: Date.now(),
+		sequenceNumber: 0, // Will be set by Net
+		data: {
+			entities: entitySnapshots,
+			timestamp: Date.now()
+		}
+	};
+	
+	net.sendMessage(batchMessage);
 }
 
 // Start the game

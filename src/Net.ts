@@ -9,7 +9,8 @@ import {
   type PlayerLeaveMessage,
   type ChatMessage,
   type EntitySnapshot,
-  type TerrainModification
+  type TerrainModification,
+  type FullGameStateMessage
 } from './types';
 import { Logger } from './Logger.js';
 
@@ -405,7 +406,6 @@ export class Net {
       dataChannel.onopen?.(new Event('open'));
     }
   }
-
   private handleMessage(message: NetworkMessage, senderId: string): void {
     this.messagesReceived++;
     
@@ -425,6 +425,12 @@ export class Net {
         break;
       case MessageType.ENTITY_UPDATE:
         this.handleEntityUpdate(message as EntityUpdateMessage);
+        break;
+      case MessageType.ENTITY_STATE_BATCH:
+        this.handleEntityStateBatch(message);
+        break;
+      case MessageType.FULL_GAME_STATE:
+        this.handleFullGameState(message as FullGameStateMessage);
         break;
       case MessageType.CHAT:
         this.handleChatMessage(message as ChatMessage);
@@ -446,14 +452,13 @@ export class Net {
       this.relayMessage(message, senderId);
     }
   }
-
   private handlePlayerJoin(message: PlayerJoinMessage, senderId: string): void {
     logger.info('NET', `Player joined: ${message.data.playerId}`);
     this.onPlayerJoinCallback?.(message.data.playerId, message.data.playerName);
     
     // If we're the host, send current game state to the new player
     if (this.isHost) {
-      this.sendGameStateToPlayer(senderId);
+      this.sendFullGameStateToPlayer(senderId);
     }
   }
 
@@ -541,6 +546,12 @@ export class Net {
     this.addMessageToBatch(message);
   }
 
+  sendMessageToPlayer(playerId: string, message: NetworkMessage): void {
+    message.timestamp = Date.now();
+    message.sequenceNumber = this.getNextSequenceNumber();
+    this.sendMessageToPeer(playerId, message);
+  }
+
   private sendMessageToPeer(peerId: string, message: NetworkMessage): void {
     const peerConnection = this.connections.get(peerId);
     if (peerConnection?.dataChannel?.readyState === 'open') {
@@ -560,28 +571,43 @@ export class Net {
       }
     }
   }
-
-  private sendGameStateToPlayer(playerId: string): void {
-    const entities: EntitySnapshot[] = Entity.all.map(entity => ({
-      entityId: entity.id.toString(),
-      position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]] as any,
-      rotation: [entity.localRotation[0], entity.localRotation[1], entity.localRotation[2], entity.localRotation[3]] as any,
-      velocity: entity.velocity ? [entity.velocity[0], entity.velocity[1], entity.velocity[2]] as any : undefined,
-      health: (entity as any).health
-    }));
-
-    this.sendMessageToPeer(playerId, {
-      type: MessageType.GAME_STATE_RESPONSE,
-      priority: MessagePriority.HIGH,
-      timestamp: Date.now(),
-      sequenceNumber: this.getNextSequenceNumber(),
-      data: {
-        entities,
-        terrainModifications: [], // TODO: Add terrain modifications
-        gameTime: Date.now(),
-        hostId: this.peerId
+  private sendFullGameStateToPlayer(playerId: string): void {
+    try {
+      // Collect all current entities as snapshots
+      const entitySnapshots = Entity.getAllEntitiesAsSnapshots();
+      
+      // Get player position/rotation if available
+      let playerPosition: [number, number, number] | undefined;
+      let playerRotation: [number, number, number, number] | undefined;
+      
+      // Try to get player state from global game state
+      if ((globalThis as any).gameState) {
+        const gameState = (globalThis as any).gameState;
+        playerPosition = gameState.playerPos;
+        playerRotation = gameState.playerOrientation;
       }
-    });
+      
+      const fullStateMessage = {
+        type: MessageType.FULL_GAME_STATE,
+        priority: MessagePriority.CRITICAL,
+        timestamp: Date.now(),
+        sequenceNumber: this.getNextSequenceNumber(),
+        data: {
+          entities: entitySnapshots,
+          playerPosition,
+          playerRotation,
+          gameTime: Date.now(),
+          hostId: this.peerId
+        }
+      };
+      
+      // Send to specific player
+      this.sendMessageToPeer(playerId, fullStateMessage);
+      
+      logger.info('NET', `Sent full game state to ${playerId} (${entitySnapshots.length} entities)`);
+    } catch (error) {
+      logger.error('NET', `Failed to send full game state: ${error}`);
+    }
   }
 
   // Message Batching System
@@ -746,10 +772,12 @@ export class Net {
   // Utility methods
   private getNextSequenceNumber(): number {
     return ++this.sequenceNumber;
+  }  isHosting(): boolean {
+    return this.isHost;
   }
 
-  isHosting(): boolean {
-    return this.isHost;
+  getPeerId(): string {
+    return this.peerId;
   }
 
   isConnectionActive(): boolean {
@@ -761,10 +789,6 @@ export class Net {
   }
   getPeerLatency(peerId: string): number {
     return this.connections.get(peerId)?.latency ?? -1;
-  }
-
-  getPeerId(): string {
-    return this.peerId;
   }
 
   getNetworkStats() {
@@ -806,5 +830,83 @@ export class Net {
     this.connections.clear();
     this.isConnected = false;
     this.onConnectionStateChangeCallback?.(false);
+  }
+
+  private handleEntityStateBatch(message: any): void {
+    if (this.isHost) {
+      // Hosts shouldn't receive entity state batches
+      return;
+    }
+    
+    // Apply entity updates from batch
+    for (const entityData of message.data.entities) {
+      const entity = Entity.all.find(e => e.id.toString() === entityData.entityId);
+      if (entity) {
+        // Apply network update with interpolation
+        entity.applyNetworkUpdate({
+          position: entityData.position,
+          rotation: entityData.rotation,
+          velocity: entityData.velocity,
+          timestamp: entityData.timestamp,
+          sequenceNumber: 0
+        });
+      }
+    }
+  }
+
+  private handleFullGameState(message: FullGameStateMessage): void {
+    if (this.isHost) {
+      // Hosts shouldn't receive full game state
+      logger.warn('NET', 'Host received full game state message - ignoring');
+      return;
+    }
+    
+    try {
+      logger.info('NET', `Received full game state with ${message.data.entities.length} entities`);
+      
+      // Clear all current entities except the player
+      this.clearClientEntities();
+      
+      // Load entities from server snapshots
+      const loadedEntities = Entity.loadEntitiesFromSnapshots(message.data.entities);
+      
+      // Mark all loaded entities as network entities
+      for (const entity of loadedEntities) {
+        entity.isNetworkEntity = true;
+        entity.ownerId = message.data.hostId;
+      }
+      
+      logger.info('NET', `Loaded ${loadedEntities.length} entities from server`);
+      
+      // Update player position if provided
+      if (message.data.playerPosition && (globalThis as any).gameState) {
+        const gameState = (globalThis as any).gameState;
+        gameState.playerPos = message.data.playerPosition;
+        if (message.data.playerRotation) {
+          gameState.playerOrientation = message.data.playerRotation;
+        }
+      }
+      
+    } catch (error) {
+      logger.error('NET', `Failed to process full game state: ${error}`);
+    }
+  }
+
+  private clearClientEntities(): void {
+    // Save the player entity and any local entities
+    const localEntities = Entity.all.filter(entity => 
+      !entity.isNetworkEntity || entity.ownerId === this.peerId
+    );
+    
+    // Clear all entities
+    Entity.clearAllEntities();
+    
+    // Restore local entities
+    for (const entity of localEntities) {
+      Entity.all.push(entity);
+    }
+    
+    // Reset the ID counter
+    Entity.nextId = Math.max(Entity.nextId, ...Entity.all.map(e => e.id), 0) + 1;
   }
 }
