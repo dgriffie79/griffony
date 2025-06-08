@@ -14,6 +14,24 @@ export enum PhysicsLayer {
   All = 0b11111111
 }
 
+// Network state for interpolation and prediction
+export interface NetworkState {
+  position: vec3;
+  rotation: quat;
+  velocity?: vec3;
+  timestamp: number;
+  sequenceNumber: number;
+}
+
+// Network prediction and reconciliation
+export interface PredictionState {
+  inputSequence: number;
+  position: vec3;
+  rotation: quat;
+  velocity?: vec3;
+  timestamp: number;
+}
+
 export class Entity {
   static all: Entity[] = [];
   static nextId: number = 1;
@@ -45,6 +63,7 @@ export class Entity {
   height: number = 0;
   radius: number = 0;
   vel: vec3 = vec3.create();
+  velocity: vec3 = vec3.create(); // Alias for vel for consistency
   gravity: boolean = false;    // Whether this entity is affected by gravity
   collision: boolean = false;  // Whether this entity collides with others
   spawn: boolean = false;      // Whether this is a spawn point
@@ -57,10 +76,32 @@ export class Entity {
   _tempGravity?: boolean;
   _tempCollision?: boolean;
 
+  // Network synchronization properties
+  isNetworkEntity: boolean = false;
+  ownerId: string = '';
+  lastNetworkUpdate: number = 0;
+  networkStates: NetworkState[] = [];
+  predictionStates: PredictionState[] = [];
+  
+  // Interpolation properties
+  isInterpolating: boolean = false;
+  interpolationTarget: NetworkState | null = null;
+  interpolationStart: NetworkState | null = null;
+  interpolationStartTime: number = 0;
+  interpolationDuration: number = 100; // ms
+  
+  // Smoothing for network updates
+  smoothingEnabled: boolean = true;
+  maxInterpolationDistance: number = 5.0; // Max distance before teleporting
+  maxExtrapolationTime: number = 200; // Max time to extrapolate without updates
+
   constructor() {
     // Generate entity ID and add to global list
     this.id = Entity.nextId++;
     Entity.all.push(this);
+    
+    // Sync velocity alias with vel
+    this.velocity = this.vel;
   }
 
   updateTransforms(parentTransform: mat4 | null): void {
@@ -88,12 +129,205 @@ export class Entity {
     }
   }
 
+  // Network synchronization methods
+  applyNetworkUpdate(state: NetworkState, isAuthoritative: boolean = false): void {
+    this.lastNetworkUpdate = Date.now();
+    
+    // Store network state for interpolation
+    this.networkStates.push(state);
+    
+    // Keep only recent states (last 500ms)
+    const cutoff = Date.now() - 500;
+    this.networkStates = this.networkStates.filter(s => s.timestamp > cutoff);
+    
+    if (isAuthoritative) {
+      // Direct application for authoritative updates
+      vec3.copy(this.localPosition, state.position);
+      quat.copy(this.localRotation, state.rotation);
+      if (state.velocity) {
+        vec3.copy(this.velocity, state.velocity);
+      }
+      this.dirty = true;
+    } else if (this.smoothingEnabled) {
+      // Start interpolation for smooth movement
+      this.startInterpolation(state);
+    } else {
+      // Direct snap for non-smoothed entities
+      vec3.copy(this.localPosition, state.position);
+      quat.copy(this.localRotation, state.rotation);
+      this.dirty = true;
+    }
+  }
+
+  private startInterpolation(targetState: NetworkState): void {
+    const currentState: NetworkState = {
+      position: vec3.clone(this.localPosition),
+      rotation: quat.clone(this.localRotation),
+      velocity: vec3.clone(this.velocity),
+      timestamp: Date.now(),
+      sequenceNumber: 0
+    };
+
+    // Check if we need to teleport instead of interpolate
+    const distance = vec3.distance(currentState.position, targetState.position);
+    if (distance > this.maxInterpolationDistance) {
+      // Teleport for large distances
+      vec3.copy(this.localPosition, targetState.position);
+      quat.copy(this.localRotation, targetState.rotation);
+      if (targetState.velocity) {
+        vec3.copy(this.velocity, targetState.velocity);
+      }
+      this.dirty = true;
+      return;
+    }
+
+    this.interpolationStart = currentState;
+    this.interpolationTarget = targetState;
+    this.interpolationStartTime = Date.now();
+    this.isInterpolating = true;
+    
+    // Calculate appropriate interpolation duration based on distance
+    this.interpolationDuration = Math.min(200, Math.max(50, distance * 20));
+  }
+
+  updateNetworkInterpolation(deltaTime: number): void {
+    if (!this.isNetworkEntity) return;
+
+    if (this.isInterpolating && this.interpolationStart && this.interpolationTarget) {
+      const elapsed = Date.now() - this.interpolationStartTime;
+      const progress = Math.min(1.0, elapsed / this.interpolationDuration);
+      
+      // Use smoothstep for natural acceleration/deceleration
+      const smoothProgress = progress * progress * (3 - 2 * progress);
+      
+      // Interpolate position
+      vec3.lerp(
+        this.localPosition,
+        this.interpolationStart.position,
+        this.interpolationTarget.position,
+        smoothProgress
+      );
+      
+      // Interpolate rotation
+      quat.slerp(
+        this.localRotation,
+        this.interpolationStart.rotation,
+        this.interpolationTarget.rotation,
+        smoothProgress
+      );
+      
+      // Interpolate velocity if available
+      if (this.interpolationStart.velocity && this.interpolationTarget.velocity) {
+        vec3.lerp(
+          this.velocity,
+          this.interpolationStart.velocity,
+          this.interpolationTarget.velocity,
+          smoothProgress
+        );
+      }
+      
+      this.dirty = true;
+      
+      // End interpolation when complete
+      if (progress >= 1.0) {
+        this.isInterpolating = false;
+        this.interpolationStart = null;
+        this.interpolationTarget = null;
+      }
+    } else {
+      // Handle extrapolation for missing updates
+      this.updateExtrapolation(deltaTime);
+    }
+  }
+
+  private updateExtrapolation(deltaTime: number): void {
+    if (this.networkStates.length === 0) return;
+    
+    const timeSinceLastUpdate = Date.now() - this.lastNetworkUpdate;
+    if (timeSinceLastUpdate > this.maxExtrapolationTime) return;
+    
+    // Get latest network state
+    const latestState = this.networkStates[this.networkStates.length - 1];
+    if (!latestState.velocity) return;
+    
+    // Simple extrapolation using velocity
+    const extrapolationTime = timeSinceLastUpdate / 1000; // Convert to seconds
+    const extrapolatedPosition = vec3.create();
+    vec3.scaleAndAdd(extrapolatedPosition, latestState.position, latestState.velocity, extrapolationTime);
+    
+    // Apply extrapolated position
+    vec3.copy(this.localPosition, extrapolatedPosition);
+    this.dirty = true;
+  }
+
+  // Client-side prediction support
+  saveStateForPrediction(inputSequence: number): void {
+    const state: PredictionState = {
+      inputSequence,
+      position: vec3.clone(this.localPosition),
+      rotation: quat.clone(this.localRotation),
+      velocity: vec3.clone(this.velocity),
+      timestamp: Date.now()
+    };
+    
+    this.predictionStates.push(state);
+    
+    // Keep only recent states (last 2 seconds)
+    const cutoff = Date.now() - 2000;
+    this.predictionStates = this.predictionStates.filter(s => s.timestamp > cutoff);
+  }
+
+  reconcileWithServer(serverState: NetworkState, inputSequence: number): void {
+    // Find the corresponding prediction state
+    const predictionIndex = this.predictionStates.findIndex(s => s.inputSequence === inputSequence);
+    if (predictionIndex === -1) return;
+    
+    const predictedState = this.predictionStates[predictionIndex];
+    
+    // Calculate difference between prediction and server state
+    const positionDiff = vec3.distance(predictedState.position, serverState.position);
+    const threshold = 0.1; // 10cm threshold
+    
+    if (positionDiff > threshold) {
+      // Significant difference - apply correction
+      vec3.copy(this.localPosition, serverState.position);
+      quat.copy(this.localRotation, serverState.rotation);
+      if (serverState.velocity) {
+        vec3.copy(this.velocity, serverState.velocity);
+      }
+      this.dirty = true;
+      
+      // Re-apply inputs that came after this server state
+      const subsequentStates = this.predictionStates.slice(predictionIndex + 1);
+      for (const state of subsequentStates) {
+        // Re-apply the movement for this state
+        // This would typically re-run the input processing
+        // For now, we'll just smooth towards the corrected position
+      }
+    }
+    
+    // Remove old prediction states
+    this.predictionStates = this.predictionStates.slice(predictionIndex + 1);
+  }
+
+  // Get current network snapshot
+  getNetworkSnapshot(): NetworkState {
+    return {
+      position: vec3.clone(this.localPosition),
+      rotation: quat.clone(this.localRotation),
+      velocity: vec3.clone(this.velocity),
+      timestamp: Date.now(),
+      sequenceNumber: 0 // Will be set by network layer
+    };
+  }
+
   static deserialize(data: any): Entity | null {
     let entity: Entity;
 
     switch (data.type.toUpperCase()) {
       case 'PLAYER':
-        return null;      case 'SPAWN':
+        return null;
+      case 'SPAWN':
         entity = new Entity();
         entity.spawn = true;
         entity.model = globalThis.models['spawn'];
@@ -117,7 +351,8 @@ export class Entity {
         case 'model_id':
           entity.modelId = property.value;
           break;
-      }    }
+      }
+    }
     
     entity.model = globalThis.models[entity.modelId];
 
@@ -141,8 +376,13 @@ export class Entity {
   }
 
   update(elapsed: number): void {
+    // Update network interpolation
+    this.updateNetworkInterpolation(elapsed);
+    
     // Base implementation - can be overridden by subclasses
-  }  /**
+  }
+
+  /**
    * Check if this entity can collide with another entity based on layers
    * and godMode status
    */

@@ -86,39 +86,313 @@ export interface ModelData {
   palette: number[][];
 }
 
-// Network message types
+// Network message types - Expanded for comprehensive multiplayer support
 export const MessageType = {
+  // Connection Management
   PLAYER_JOIN: 0,
   PLAYER_LEAVE: 1,
-  CHAT: 2,
-  ENTITY_UPDATE: 3,
+  GAME_STATE_REQUEST: 2,
+  GAME_STATE_RESPONSE: 3,
+  HOST_HANDOFF: 4,
+  
+  // Entity Synchronization
+  ENTITY_UPDATE: 5,
+  ENTITY_CREATE: 6,
+  ENTITY_DESTROY: 7,
+  ENTITY_STATE_BATCH: 8,
+  
+  // Player Input & Actions
+  PLAYER_INPUT: 9,
+  PLAYER_ACTION: 10,
+  PLAYER_RESPAWN: 11,
+  PLAYER_TELEPORT: 12,
+  
+  // Combat System
+  COMBAT_ATTACK: 13,
+  COMBAT_HIT: 14,
+  COMBAT_DAMAGE: 15,
+  COMBAT_HEAL: 16,
+  COMBAT_DEATH: 17,
+  WEAPON_SWITCH: 18,
+  WEAPON_SWING: 19,
+  
+  // Terrain & World
+  TERRAIN_MODIFY: 20,
+  TERRAIN_BATCH: 21,
+  CHUNK_REQUEST: 22,
+  CHUNK_DATA: 23,
+  
+  // Game Events
+  GAME_EVENT: 24,
+  OBJECTIVE_UPDATE: 25,
+  
+  // Communication
+  CHAT: 26,
+  
+  // WebRTC Signaling (for manual signaling)
+  SIGNALING_OFFER: 27,
+  SIGNALING_ANSWER: 28,
+  SIGNALING_ICE_CANDIDATE: 29,
+  
+  // Utility & Debug
+  PING: 30,
+  PONG: 31,
+  TIME_SYNC: 32,
 } as const;
 
 export type MessageTypeValue = typeof MessageType[keyof typeof MessageType];
 
-// Network message interfaces
+// Message priority levels for batching and throttling
+export enum MessagePriority {
+  CRITICAL = 0,    // Combat hits, deaths, critical game events
+  HIGH = 1,        // Player inputs, attacks, terrain modifications
+  MEDIUM = 2,      // Entity updates, position sync
+  LOW = 3,         // Chat, non-critical events
+}
+
+// Base network message interface
 export interface NetworkMessage {
   type: MessageTypeValue;
+  priority: MessagePriority;
+  timestamp: number;
+  sequenceNumber: number;
   data: any;
 }
 
+// Connection Management Messages
 export interface PlayerJoinMessage extends NetworkMessage {
   type: typeof MessageType.PLAYER_JOIN;
   data: {
-    id: number;
+    playerId: string;
+    playerName: string;
     position: vec3;
     rotation: quat;
+    weaponId?: string;
   };
 }
 
+export interface PlayerLeaveMessage extends NetworkMessage {
+  type: typeof MessageType.PLAYER_LEAVE;
+  data: {
+    playerId: string;
+    reason?: string;
+  };
+}
+
+export interface GameStateRequestMessage extends NetworkMessage {
+  type: typeof MessageType.GAME_STATE_REQUEST;
+  data: {
+    playerId: string;
+  };
+}
+
+export interface GameStateResponseMessage extends NetworkMessage {
+  type: typeof MessageType.GAME_STATE_RESPONSE;
+  data: {
+    entities: EntitySnapshot[];
+    terrainModifications: TerrainModification[];
+    gameTime: number;
+    hostId: string;
+  };
+}
+
+// Entity Synchronization Messages
 export interface EntityUpdateMessage extends NetworkMessage {
   type: typeof MessageType.ENTITY_UPDATE;
   data: {
-    id: number;
+    entityId: string;
     position: vec3;
     rotation: quat;
-    headRotation: quat;
+    velocity?: vec3;
+    health?: number;
+    timestamp: number;
   };
+}
+
+export interface EntityCreateMessage extends NetworkMessage {
+  type: typeof MessageType.ENTITY_CREATE;
+  data: {
+    entityId: string;
+    entityType: string;
+    position: vec3;
+    rotation: quat;
+    ownerId?: string;
+    properties?: Record<string, any>;
+  };
+}
+
+export interface EntityDestroyMessage extends NetworkMessage {
+  type: typeof MessageType.ENTITY_DESTROY;
+  data: {
+    entityId: string;
+    reason?: string;
+  };
+}
+
+export interface EntityStateBatchMessage extends NetworkMessage {
+  type: typeof MessageType.ENTITY_STATE_BATCH;
+  data: {
+    entities: EntitySnapshot[];
+    timestamp: number;
+  };
+}
+
+// Player Input & Actions
+export interface PlayerInputMessage extends NetworkMessage {
+  type: typeof MessageType.PLAYER_INPUT;
+  data: {
+    playerId: string;
+    inputSequence: number;
+    timestamp: number;
+    keys: {
+      forward: boolean;
+      backward: boolean;
+      left: boolean;
+      right: boolean;
+      jump: boolean;
+      crouch: boolean;
+    };
+    mouse: {
+      deltaX: number;
+      deltaY: number;
+    };
+  };
+}
+
+export interface PlayerActionMessage extends NetworkMessage {
+  type: typeof MessageType.PLAYER_ACTION;
+  data: {
+    playerId: string;
+    action: 'attack' | 'block' | 'interact' | 'reload' | 'aim';
+    timestamp: number;
+    position?: vec3;
+    direction?: vec3;
+  };
+}
+
+// Combat Messages
+export interface CombatAttackMessage extends NetworkMessage {
+  type: typeof MessageType.COMBAT_ATTACK;
+  data: {
+    attackerId: string;
+    weaponId: string;
+    position: vec3;
+    direction: vec3;
+    timestamp: number;
+    attackSequence: number;
+  };
+}
+
+export interface CombatHitMessage extends NetworkMessage {
+  type: typeof MessageType.COMBAT_HIT;
+  data: {
+    attackerId: string;
+    targetId: string;
+    damage: number;
+    position: vec3;
+    direction: vec3;
+    weaponId: string;
+    timestamp: number;
+    attackSequence: number;
+  };
+}
+
+export interface CombatDamageMessage extends NetworkMessage {
+  type: typeof MessageType.COMBAT_DAMAGE;
+  data: {
+    targetId: string;
+    damage: number;
+    sourceId?: string;
+    damageType: 'melee' | 'ranged' | 'environmental';
+    timestamp: number;
+  };
+}
+
+export interface WeaponSwitchMessage extends NetworkMessage {
+  type: typeof MessageType.WEAPON_SWITCH;
+  data: {
+    playerId: string;
+    weaponId: string;
+    timestamp: number;
+  };
+}
+
+export interface WeaponSwingMessage extends NetworkMessage {
+  type: typeof MessageType.WEAPON_SWING;
+  data: {
+    playerId: string;
+    weaponId: string;
+    startPosition: vec3;
+    endPosition: vec3;
+    swingDuration: number;
+    timestamp: number;
+  };
+}
+
+// Terrain Messages
+export interface TerrainModifyMessage extends NetworkMessage {
+  type: typeof MessageType.TERRAIN_MODIFY;
+  data: {
+    modifications: TerrainModification[];
+    timestamp: number;
+  };
+}
+
+export interface TerrainBatchMessage extends NetworkMessage {
+  type: typeof MessageType.TERRAIN_BATCH;
+  data: {
+    modifications: TerrainModification[];
+    timestamp: number;
+  };
+}
+
+// Chat Message
+export interface ChatMessage extends NetworkMessage {
+  type: typeof MessageType.CHAT;
+  data: {
+    playerId: string;
+    playerName: string;
+    message: string;
+    timestamp: number;
+  };
+}
+
+// Utility Messages
+export interface PingMessage extends NetworkMessage {
+  type: typeof MessageType.PING;
+  data: {
+    timestamp: number;
+    senderId: string;
+  };
+}
+
+export interface PongMessage extends NetworkMessage {
+  type: typeof MessageType.PONG;
+  data: {
+    originalTimestamp: number;
+    responseTimestamp: number;
+    senderId: string;
+  };
+}
+
+// Supporting Data Structures
+export interface EntitySnapshot {
+  entityId: string;
+  position: vec3;
+  rotation: quat;
+  velocity?: vec3;
+  health?: number;
+  properties?: Record<string, any>;
+}
+
+export interface TerrainModification {
+  x: number;
+  y: number;
+  z: number;
+  oldValue: number;
+  newValue: number;
+  timestamp: number;
+  playerId: string;
 }
 
 // Combat System Types

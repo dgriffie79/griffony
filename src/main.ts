@@ -19,6 +19,7 @@ import { MeshStats } from './MeshStats.js';
 import { Logger, configureLogging } from './Logger.js';
 import { errorHandler, ValidationError, Result } from './ErrorHandler.js';
 import { AutoCleanup } from './ResourceManager.js';
+import { ManualSignalingUI } from './ManualSignalingUI.js';
 
 // Create logger instance for this module
 const logger = Logger.getInstance();
@@ -457,25 +458,55 @@ function setupKeybindingListeners(): void {
 function handleMenuButtonClick(buttonId: string): void {
 	const menu = document.getElementById('main-menu');
 	if (!menu) return;
-
 	switch (buttonId) {
 		case 'close-menu':
 			showingMenu = false;
 			menu.hidden = true;
 			break;
 		case 'host':
-			net.isHost = true;
-			const hostIdInput = document.getElementById('hostid') as HTMLInputElement;
-			if (hostIdInput) {
-				net.host(hostIdInput.value);
-			}
+			// Show host signaling flow
+			showManualSignalingUI(true);
 			break;
 		case 'join':
-			const joinHostIdInput = document.getElementById('hostid') as HTMLInputElement;
-			if (joinHostIdInput) {
-				net.join(joinHostIdInput.value);
-			}
+			// Show join signaling flow
+			showManualSignalingUI(false);
 			break;
+	}
+}
+
+/**
+ * Show the manual signaling UI for multiplayer connection
+ */
+function showManualSignalingUI(isHost: boolean): void {
+	// Hide the main menu temporarily
+	const menu = document.getElementById('main-menu');
+	if (menu) {
+		menu.hidden = true;
+	}
+
+	// Create and show the manual signaling UI
+	const signalingUI = new ManualSignalingUI(net);
+	
+	signalingUI.onComplete(() => {
+		logger.info('MULTIPLAYER', 'Connection established successfully');
+		showingMenu = false;
+		// Request pointer lock to resume game
+		setTimeout(() => document.body.requestPointerLock(), getConfig().getUIConfig().pointerLockDelay);
+	});
+	
+	signalingUI.onError((error) => {
+		logger.error('MULTIPLAYER', 'Connection failed:', error);
+		// Show the main menu again
+		if (menu) {
+			menu.hidden = false;
+		}
+	});
+
+	// Start the appropriate signaling flow
+	if (isHost) {
+		signalingUI.showHostFlow();
+	} else {
+		signalingUI.showJoinFlow();
 	}
 }
 
@@ -495,7 +526,6 @@ function setupGlobalEventListeners(): void {
 			mouseMoveY += event.movementY;
 		}
 	});
-
 	// Menu toggle and pointer lock management
 	document.addEventListener('click', (event) => {
 		const target = event.target as HTMLElement;
@@ -510,6 +540,12 @@ function setupGlobalEventListeners(): void {
 			} else {
 				document.body.requestPointerLock();
 			}
+			return;
+		}
+
+		// Don't request pointer lock if clicking within the signaling UI
+		const signalingUI = document.getElementById('manualSignalingUI');
+		if (signalingUI && signalingUI.contains(target)) {
 			return;
 		}
 
