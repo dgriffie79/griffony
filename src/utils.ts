@@ -1,3 +1,5 @@
+import { MeshStats } from './MeshStats.js';
+
 export function greedyMesh(
   voxels: ArrayLike<number>,
   sizeX: number,
@@ -136,23 +138,18 @@ export function greedyMesh(
         }      }
     }
   }
-  
-  // Report statistics if requested
+    // Report statistics if requested
   if (collectStats && typeof globalThis !== 'undefined') {
-    // Dynamically import MeshStats to avoid circular dependencies
-    import('./MeshStats').then(({ MeshStats }) => {
-      MeshStats.getInstance().recordMeshStats(
-        originalFaceCount,
-        mergedFaceCount,
-        maxWidth,
-        maxHeight,
-        mergedFaceCount,
-        totalSavedFaces,
-        largestMerge
-      );
-    }).catch(err => {
-      console.error('Could not import MeshStats:', err);
-    });
+    // Record mesh statistics
+    MeshStats.getInstance().recordMeshStats(
+      originalFaceCount,
+      mergedFaceCount,
+      maxWidth,
+      maxHeight,
+      mergedFaceCount,
+      totalSavedFaces,
+      largestMerge
+    );
     
     // Log to console as well
     console.log(`Greedy Mesh Stats:

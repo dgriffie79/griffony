@@ -35,6 +35,7 @@ export interface ResourceMetadata {
   size?: number;
   createdAt: number;
   lastUsed: number;
+  permanent?: boolean; // If true, resource will not be automatically cleaned up
 }
 
 // Managed resource wrapper
@@ -60,6 +61,10 @@ export class ManagedResource<T> implements IDisposable {
 
   public markUsed(): void {
     this.metadata.lastUsed = Date.now();
+  }
+
+  public markPermanent(): void {
+    this.metadata.permanent = true;
   }
 
   public get disposed(): boolean {
@@ -207,7 +212,6 @@ export class ResourceManager {
       totalMemoryUsage
     };
   }
-
   /**
    * Cleanup unused resources (older than threshold)
    */
@@ -216,7 +220,8 @@ export class ResourceManager {
     const toDispose: string[] = [];
 
     for (const [id, resource] of this.resources.entries()) {
-      if (now - resource.metadata.lastUsed > maxAgeMs) {
+      // Skip permanent resources and recently used resources
+      if (!resource.metadata.permanent && now - resource.metadata.lastUsed > maxAgeMs) {
         toDispose.push(id);
       }
     }
@@ -238,6 +243,7 @@ export class GPUResourceManager {
   private static instance: GPUResourceManager;
   private readonly resourceManager = ResourceManager.getInstance();
   private device?: GPUDevice;
+  private deviceLost: boolean = false;
 
   public static getInstance(): GPUResourceManager {
     if (!GPUResourceManager.instance) {
@@ -248,6 +254,34 @@ export class GPUResourceManager {
 
   public setDevice(device: GPUDevice): void {
     this.device = device;
+    this.deviceLost = false;
+    
+    // Track device loss state
+    device.lost.then((info) => {
+      this.deviceLost = true;
+    });
+  }
+
+  /**
+   * Get the current GPU device
+   */
+  public getDevice(): GPUDevice | undefined {
+    return this.device;
+  }
+
+  /**
+   * Check if the GPU device is available and valid
+   */
+  public isDeviceValid(): boolean {
+    return this.device !== undefined && !this.deviceLost;
+  }
+
+  /**
+   * Clear device reference (for device loss recovery)
+   */
+  public clearDevice(): void {
+    this.device = undefined;
+    this.deviceLost = false;
   }
 
   /**

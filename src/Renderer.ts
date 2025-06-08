@@ -74,15 +74,19 @@ export class Renderer {
     return managedCanvas.resource;
   }
 
-  private async initializeResources(): Promise<void> {
-    // Create and register GPU resources
+  /**
+   * Create core GPU buffers (frame uniforms, object uniforms, transfer buffer)
+   */
+  private createCoreBuffers(): void {
     const gpuConfig = this.config.getGPUConfig();
-      // Frame uniforms buffer
+    
+    // Frame uniforms buffer
     this.frameUniforms = gpuResourceManager.createBuffer({
       size: gpuConfig.uniformBufferSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       label: 'frame-uniforms'
     });
+    this.frameUniforms.markPermanent(); // Critical renderer resource
     
     // Object uniforms buffer  
     this.objectUniforms = gpuResourceManager.createBuffer({
@@ -90,18 +94,26 @@ export class Renderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       label: 'object-uniforms'
     });
+    this.objectUniforms.markPermanent(); // Critical renderer resource
     
     // Transfer buffer (CPU side)
     this.transferBuffer = new ArrayBuffer(gpuConfig.transferBufferSize);
     this.floatView = new Float32Array(this.transferBuffer);
     this.uintView = new Uint32Array(this.transferBuffer);
-      // Palette texture
+  }
+
+  /**
+   * Create core GPU textures and samplers (palette texture, tile sampler)
+   */
+  private createCoreTextures(): void {
+    // Palette texture
     this.paletteTexture = gpuResourceManager.createTexture({
       format: 'rgba8unorm',
       size: [256, 256, 1],
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       label: 'palette-texture'
     });
+    this.paletteTexture.markPermanent(); // Critical renderer resource
     
     // Tile sampler
     this.tileSampler = gpuResourceManager.createSampler({
@@ -111,28 +123,49 @@ export class Renderer {
       addressModeV: 'repeat',
       addressModeW: 'repeat',
       label: 'tile-sampler'
-    });    // Query resources for performance monitoring
+    });
+    this.tileSampler.markPermanent(); // Critical renderer resource
+  }
+
+  /**
+   * Create query resources for performance monitoring
+   */
+  private createQueryResources(): void {
+    // Query resources for performance monitoring
     this.querySet = gpuResourceManager.createQuerySet({
       type: "timestamp",
       count: 2,
       label: 'performance-queries'
     });
+    this.querySet.markPermanent(); // Prevent automatic cleanup
     
     this.queryResolve = gpuResourceManager.createBuffer({
       size: 16,
       usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
       label: 'query-resolve'
     });
+    this.queryResolve.markPermanent(); // Prevent automatic cleanup
     
     this.queryResult = gpuResourceManager.createBuffer({
       size: 16,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       label: 'query-result'
     });
+    this.queryResult.markPermanent(); // Prevent automatic cleanup
 
     // Initialize frame timing
     this.frameTimes = [];
     this.lastTimePrint = performance.now();
+  }
+  private async initializeResources(): Promise<void> {
+    // Create core GPU buffers
+    this.createCoreBuffers();
+    
+    // Create core textures and samplers
+    this.createCoreTextures();
+    
+    // Create query resources for performance monitoring
+    this.createQueryResources();
   }
 
   private cleanup(): void {
@@ -152,9 +185,128 @@ export class Renderer {
     // GPU resources will be cleaned up by gpuResourceManager
     this.logger.info('RENDERER', 'Renderer cleanup completed');
   }
-  private async initializeWebGPU(): Promise<void> {
+  /**
+   * Comprehensive device loss recovery - recreates ALL GPU resources
+   */
+  private async recoverFromDeviceLoss(): Promise<void> {
+    try {
+      this.logger.warn('RENDERER', 'Attempting comprehensive GPU device recovery');
+      
+      // Clear all resource references before recreation
+      this.clearResourceReferences();
+      
+      // Step 1: Recreate GPU device and context
+      await this.initializeWebGPU();
+      
+      // Step 2: Recreate core renderer resources  
+      await this.initializeResources();
+      
+      // Step 3: Re-register all models and levels
+      await this.reregisterAllResources();
+      
+      this.logger.info('RENDERER', 'GPU device recovery completed successfully');
+    } catch (error) {
+      this.logger.error('RENDERER', 'Failed to recover from device loss:', error);
+      throw new GPUError('Device loss recovery failed', 'recoverFromDeviceLoss');
+    }
+  }
+  /**
+   * Clear all GPU resource references before recreation
+   */
+  private clearResourceReferences(): void {
+    // Clear GPU resource manager device reference first
+    gpuResourceManager.clearDevice();
+    
+    // Clear shader references
+    this.shaders = {};
+    
+    // Clear pipeline references - these will be recreated in initializeWebGPU
+    this.terrainPipeline = undefined as any;
+    this.modelPipeline = undefined as any;
+    this.greedyTerrainPipeline = undefined as any;
+    this.greedyModelPipeline = undefined as any;
+    this.bindGroupLayout = undefined as any;
+    this.greedyBindGroupLayout = undefined as any;
+    
+    // Clear managed resources - these will be recreated in initializeResources  
+    this.frameUniforms = undefined as any;
+    this.objectUniforms = undefined as any;
+    this.paletteTexture = undefined as any;
+    this.tileSampler = undefined as any;
+    this.depthTexture = undefined as any;
+    this.querySet = undefined as any;
+    this.queryResolve = undefined as any;
+    this.queryResult = undefined as any;
+    
+    // Clear resource map - will be repopulated during re-registration
+    this.resourceMap.clear();
+    
+    this.logger.debug('RENDERER', 'Cleared all GPU resource references');
+  }
+
+  /**
+   * Re-register all models and levels after device loss recovery
+   */
+  private async reregisterAllResources(): Promise<void> {
+    // Re-register tileset if available
+    if (globalThis.tileset) {
+      this.registerTileset(globalThis.tileset);
+    }
+    
+    // Re-register current level if available
+    if (globalThis.level) {
+      this.registerLevel(globalThis.level);
+    }
+    
+    // Re-register all models if available
+    // Note: This assumes models are tracked globally or in a collection
+    // You may need to adjust this based on how models are managed in your application
+    if (globalThis.models && Array.isArray(globalThis.models)) {
+      for (const model of globalThis.models) {
+        this.registerModel(model);
+      }
+    } else if (globalThis.models && typeof globalThis.models === 'object') {
+      // Handle case where models is an object with model names as keys
+      for (const modelName in globalThis.models) {
+        const model = globalThis.models[modelName];
+        if (model) {
+          this.registerModel(model);
+        }
+      }
+    }
+    
+    this.logger.info('RENDERER', 'Re-registered all models and levels');
+  }
+
+  /**
+   * Legacy method - now redirects to comprehensive device recovery
+   * @deprecated Use recoverFromDeviceLoss() for proper device loss handling
+   */
+  private recreateQueryResources(): void {
+    this.logger.warn('RENDERER', 'Query resource recreation detected - performing full device recovery');
+    // Don't await here to maintain compatibility with existing synchronous callers
+    this.recoverFromDeviceLoss().catch(error => {
+      this.logger.error('RENDERER', 'Device recovery failed:', error);
+      // Fallback: disable performance monitoring
+      this.frameTimes = [];
+    });
+  }  private async initializeWebGPU(): Promise<void> {
+    // Set up GPU device and adapter
+    await this.setupGPUDevice();
+
+    // Setup canvas and WebGPU context
+    this.setupCanvasContext();
+    
+    // Create rendering resources (depth texture, shaders, pipelines)
+    await this.createRenderingResources();
+  }
+
+  /**
+   * Set up GPU device and adapter
+   */
+  private async setupGPUDevice(): Promise<void> {
     if (!navigator.gpu) {
-      throw new GPUError('WebGPU not supported in this browser', 'initializeWebGPU');
+      throw new GPUError('WebGPU not supported in this browser', 'setupGPUDevice');
     }
     
     const adapter = await navigator.gpu.requestAdapter();
@@ -173,9 +325,25 @@ export class Renderer {
       );
     }
 
+    // Set up device lost handler for automatic recovery
+    this.device.lost.then((info) => {
+      this.logger.error('RENDERER', `GPU device lost: ${info.message}`);
+      if (info.reason !== 'destroyed') {
+        // Device was lost due to system issues, attempt recovery
+        this.recoverFromDeviceLoss().catch(error => {
+          this.logger.error('RENDERER', 'Failed to recover from device loss:', error);
+        });
+      }
+    });
+
     // Initialize GPU resource manager
     gpuResourceManager.setDevice(this.device);
+  }
 
+  /**
+   * Set up canvas and WebGPU context
+   */
+  private setupCanvasContext(): void {
     // Setup canvas and context
     const canvas = this.setupCanvas();
     canvas.width = window.innerWidth;
@@ -217,17 +385,43 @@ export class Renderer {
         mat4.perspective(globalThis.camera.projection, globalThis.camera.fov, globalThis.camera.aspect, globalThis.camera.near, globalThis.camera.far);
       }
     });
-
+  }
+  /**
+   * Create rendering resources (depth texture, shaders, pipelines)
+   */
+  private async createRenderingResources(): Promise<void> {
+    // Create depth texture for depth testing
     this.createDepthTexture();
     
-    // Compile shaders and create pipelines
+    // Compile shaders and create bind group layouts
+    await this.createShadersAndLayouts();
+    
+    // Create render pipelines
+    this.createRenderPipelines();
+  }
+
+  /**
+   * Compile shaders and create bind group layouts
+   */
+  private async createShadersAndLayouts(): Promise<void> {
+    // Compile all shaders
     await this.compileShaders();
+    
+    // Create bind group layouts
+    this.createBindGroupLayouts();
+  }
+
+  /**
+   * Create render pipelines for both original and greedy mesh rendering
+   */
+  private createRenderPipelines(): void {
     const quadsShader = this.shaders['quads'];
     const greedyShader = this.shaders['greedy'];
     
-    this.createBindGroupLayouts();
+    // Create all render pipelines
     this.createPipelines(quadsShader, greedyShader);
   }
+
   async compileShaders(): Promise<void> {
     const sources = await this.loadShaderSources();
     const modules: Record<string, GPUShaderModule> = {};
@@ -759,14 +953,21 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
       label: 'depth-texture'
     });
-  }
-  async draw(): Promise<void> {
-    // Reset face counters at the start of each frame
-    this.renderedFacesCount = 0;
-    this.renderedOriginalFacesCount = 0;
-    this.renderedGreedyFacesCount = 0;
-    
-    const commandEncoder = this.device.createCommandEncoder();
+    this.depthTexture.markPermanent(); // Critical renderer resource - prevent automatic cleanup
+  }async draw(): Promise<void> {
+    // Validate device before drawing
+    if (!gpuResourceManager.isDeviceValid()) {
+      this.logger.warn('RENDERER', 'GPU device invalid, skipping frame');
+      return;
+    }
+
+    try {
+      // Reset face counters at the start of each frame
+      this.renderedFacesCount = 0;
+      this.renderedOriginalFacesCount = 0;
+      this.renderedGreedyFacesCount = 0;
+      
+      const commandEncoder = this.device.createCommandEncoder();
     const renderPass = commandEncoder.beginRenderPass({
       colorAttachments: [{
         view: this.context.getCurrentTexture().createView(),
@@ -777,14 +978,15 @@ export class Renderer {
         view: this.depthTexture.resource.createView(),
         depthClearValue: 1.0,
         depthLoadOp: 'clear',
-        depthStoreOp: 'store',
-      },
-      timestampWrites: {
-        querySet: this.querySet.resource,
-        beginningOfPassWriteIndex: 0,
-        endOfPassWriteIndex: 1,
-      }
-    });    const camera = globalThis.camera;
+        depthStoreOp: 'store',      },      // Conditional timestamp writes (resources are permanent, check for device loss edge cases)
+      ...(this.querySet ? {
+        timestampWrites: {
+          querySet: this.querySet.resource,
+          beginningOfPassWriteIndex: 0,
+          endOfPassWriteIndex: 1,
+        }
+      } : {})
+    });const camera = globalThis.camera;
     this.device.queue.writeBuffer(this.frameUniforms.resource, 0, camera.projection as Float32Array);
     this.device.queue.writeBuffer(this.frameUniforms.resource, 64, camera.view as Float32Array);
     if (camera.entity) {
@@ -857,31 +1059,43 @@ export class Renderer {
         }
         e.animationFrame = 0;
       }
-    }    this.device.queue.writeBuffer(this.objectUniforms.resource, 0, this.transferBuffer, 0, this.objectUniformsOffset);
-
-    renderPass.end();
-    commandEncoder.resolveQuerySet(this.querySet.resource, 0, 2, this.queryResolve.resource, 0);
-    if (this.queryResult.resource.mapState === 'unmapped') {
-      commandEncoder.copyBufferToBuffer(this.queryResolve.resource, 0, this.queryResult.resource, 0, this.queryResult.resource.size);
-    }    this.device.queue.submit([commandEncoder.finish()]);
-
-    if (this.queryResult.resource.mapState === 'unmapped') {
-      await this.queryResult.resource.mapAsync(GPUMapMode.READ);
-      const queryData = new BigUint64Array(this.queryResult.resource.getMappedRange());
-      const delta = queryData[1] - queryData[0];
-      this.queryResult.resource.unmap();
-      const frameTimeMs = Number(delta) / 1e6;
-      this.frameTimes.push(frameTimeMs);
-      const now = performance.now();      if (now - this.lastTimePrint >= 1000) {
-        const sum = this.frameTimes.reduce((a, b) => a + b, 0);
-        const avgFrameTime = sum / this.frameTimes.length;
-        this.logger.performance('Average frame time', avgFrameTime, 
-          `Over last ${this.frameTimes.length} frames`);
-        this.frameTimes.length = 0;
-        this.lastTimePrint = now;
+    }    this.device.queue.writeBuffer(this.objectUniforms.resource, 0, this.transferBuffer, 0, this.objectUniformsOffset);    renderPass.end();
+      // Resolve query set (resources are permanent, but validate for edge cases like device loss)
+    if (this.querySet && this.queryResolve && this.queryResult) {
+      commandEncoder.resolveQuerySet(this.querySet.resource, 0, 2, this.queryResolve.resource, 0);
+      if (this.queryResult.resource.mapState === 'unmapped') {
+        commandEncoder.copyBufferToBuffer(this.queryResolve.resource, 0, this.queryResult.resource, 0, this.queryResult.resource.size);
+      }
+    }this.device.queue.submit([commandEncoder.finish()]);    // Read query results (resources are permanent, but handle edge cases gracefully)
+    if (this.queryResult && this.queryResult.resource.mapState === 'unmapped') {
+      try {
+        await this.queryResult.resource.mapAsync(GPUMapMode.READ);
+        const queryData = new BigUint64Array(this.queryResult.resource.getMappedRange());
+        const delta = queryData[1] - queryData[0];
+        this.queryResult.resource.unmap();
+        const frameTimeMs = Number(delta) / 1e6;
+        this.frameTimes.push(frameTimeMs);
+        const now = performance.now();
+        if (now - this.lastTimePrint >= 1000) {
+          const sum = this.frameTimes.reduce((a, b) => a + b, 0);
+          const avgFrameTime = sum / this.frameTimes.length;
+          this.logger.performance('Average frame time', avgFrameTime, 
+            `Over last ${this.frameTimes.length} frames`);
+          this.frameTimes.length = 0;
+          this.lastTimePrint = now;        }
+      } catch (error) {
+        this.logger.warn('RENDERER', 'Query buffer operation failed (likely device loss):', error);
+        // Use new comprehensive device recovery instead of query-only recreation
+        this.recreateQueryResources();
       }
     }
-  }  drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+    } catch (error) {
+      this.logger.error('RENDERER', 'Draw operation failed, likely due to device loss:', error);
+      // Trigger device recovery for any GPU-related errors
+      this.recreateQueryResources();
+      throw error;  // Re-throw to let caller handle if needed
+    }
+  }drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
     const gpuConfig = this.config.getGPUConfig();
     const resources = this.resourceMap.get(level);
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
@@ -889,82 +1103,18 @@ export class Renderer {
     floatView.set(modelViewProjectionMatrix, 16);
     
     const useGreedy = (globalThis as any).useGreedyMesh || false;
-    
-    // Update the active buffer and bind group based on current setting
+      // Update the active buffer and bind group based on current setting
     if (useGreedy && resources.greedyBuffer) {
       resources.rasterBuffer = resources.greedyBuffer;
-      
-      // Create greedy bind group if needed
-      if (!resources.greedyBindGroup) {        resources.greedyBindGroup = this.device.createBindGroup({
-          layout: this.greedyBindGroupLayout,
-          entries: [
-            {
-              binding: 0,
-              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 1,
-              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 2,
-              resource: resources.texture.resource.createView()
-            },
-            {
-              binding: 3,
-              resource: this.paletteTexture.resource.createView()
-            },
-            {
-              binding: 4,
-              resource: globalThis.tileset.texture!.createView()
-            },
-            {
-              binding: 5,
-              resource: this.tileSampler.resource
-            }
-          ],
-        });
-      }
-      
       renderPass.setPipeline(this.greedyTerrainPipeline);
-      renderPass.setBindGroup(0, resources.greedyBindGroup, [this.objectUniformsOffset]);
     } else {
       resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
-        // Create original bind group if needed
-      if (!resources.bindGroup) {        resources.bindGroup = this.device.createBindGroup({
-          layout: this.bindGroupLayout,
-          entries: [
-            {
-              binding: 0,
-              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 1,
-              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 2,
-              resource: resources.texture.resource.createView()
-            },
-            {
-              binding: 3,
-              resource: this.paletteTexture.resource.createView()
-            },
-            {
-              binding: 4,
-              resource: globalThis.tileset.texture!.createView()
-            },
-            {
-              binding: 5,
-              resource: this.tileSampler.resource
-            }
-          ],
-        });
-      }
-      
       renderPass.setPipeline(this.terrainPipeline);
-      renderPass.setBindGroup(0, resources.bindGroup, [this.objectUniformsOffset]);
     }
+    
+    // Get or create the appropriate bind group using unified method
+    const bindGroup = this.getOrCreateBindGroup(resources, useGreedy, resources.texture.resource, 'level');
+    renderPass.setBindGroup(0, bindGroup, [this.objectUniformsOffset]);
       renderPass.setVertexBuffer(0, resources.rasterBuffer.resource);    // Count the faces in the level
     const levelFaceCount = useGreedy ? resources.rasterBuffer.resource.size / 32 : resources.rasterBuffer.resource.size / 4;
     this.renderedFacesCount += levelFaceCount;
@@ -999,83 +1149,16 @@ export class Renderer {
     uintView[35] = resources.paletteIndex;
     
     const useGreedy = (globalThis as any).useGreedyMesh || false;
-    
-    // Update the active buffer and bind group based on current setting
+      // Update the active buffer and bind group based on current setting
     if (useGreedy && resources.greedyBuffer) {
       resources.rasterBuffer = resources.greedyBuffer;
-      
-      // Create greedy bind group if needed
-      if (!resources.greedyBindGroup) {        resources.greedyBindGroup = this.device.createBindGroup({          label: 'greedy-model',
-          layout: this.greedyBindGroupLayout,
-          entries: [
-            {
-              binding: 0,
-              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 1,
-              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 2,
-              resource: resources.texture.resource.createView()
-            },
-            {
-              binding: 3,
-              resource: this.paletteTexture.resource.createView()
-            },
-            {
-              binding: 4,
-              resource: globalThis.tileset.texture!.createView()
-            },
-            {
-              binding: 5,
-              resource: this.tileSampler.resource
-            }
-          ],
-        });
-      }
-      
-      renderPass.setBindGroup(0, resources.greedyBindGroup, [this.objectUniformsOffset]);
     } else {
       resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
-      
-      // Create original bind group if needed
-      if (!resources.bindGroup) {        const descriptor: GPUBindGroupDescriptor = {
-          label: 'model',
-          layout: this.bindGroupLayout,
-          entries: [            {
-              binding: 0,
-              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 1,
-              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
-            },
-            {
-              binding: 2,
-              resource: resources.texture.resource.createView()
-            },
-            {
-              binding: 3,
-              resource: this.paletteTexture.resource.createView()
-            },
-            {
-              binding: 4,
-              resource: globalThis.tileset.texture!.createView()
-            },
-            {
-              binding: 5,
-              resource: this.tileSampler.resource
-            }
-          ],
-        };
-
-        resources.bindGroup = this.device.createBindGroup(descriptor);
-      }
-      
-      renderPass.setBindGroup(0, resources.bindGroup, [this.objectUniformsOffset]);
     }
+    
+    // Get or create the appropriate bind group using unified method
+    const bindGroup = this.getOrCreateBindGroup(resources, useGreedy, resources.texture.resource, 'model');
+    renderPass.setBindGroup(0, bindGroup, [this.objectUniformsOffset]);
       renderPass.setVertexBuffer(0, resources.rasterBuffer.resource);    // Count the faces in the model
     const modelFaceCount = useGreedy ? resources.rasterBuffer.resource.size / 32 : resources.rasterBuffer.resource.size / 4;
     this.renderedFacesCount += modelFaceCount;
@@ -1177,6 +1260,97 @@ export class Renderer {
         resources.bindGroup = null;
         resources.greedyBindGroup = null;
       }
+    }
+  }
+
+  /**
+   * Public method to manually trigger device loss recovery
+   * Useful for testing or when device loss is detected outside the renderer
+   */
+  public async triggerDeviceRecovery(): Promise<void> {
+    this.logger.info('RENDERER', 'Manual device recovery triggered');
+    await this.recoverFromDeviceLoss();
+  }
+
+  /**
+   * Check if the renderer is ready for rendering
+   */
+  public isReady(): boolean {
+    return gpuResourceManager.isDeviceValid() && 
+           this.frameUniforms !== undefined &&
+           this.objectUniforms !== undefined &&
+           this.depthTexture !== undefined;
+  }
+
+  /**
+   * Create a standard bind group for a resource (level or model)
+   * @param layout The bind group layout to use
+   * @param texture The 3D texture resource
+   * @param label Label for the bind group
+   * @returns Created bind group
+   */
+  private createBindGroupForResource(layout: GPUBindGroupLayout, texture: GPUTexture, label: string): GPUBindGroup {
+    const gpuConfig = this.config.getGPUConfig();
+    
+    return this.device.createBindGroup({
+      label,
+      layout,
+      entries: [
+        {
+          binding: 0,
+          resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
+        },
+        {
+          binding: 1,
+          resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
+        },
+        {
+          binding: 2,
+          resource: texture.createView()
+        },
+        {
+          binding: 3,
+          resource: this.paletteTexture.resource.createView()
+        },
+        {
+          binding: 4,
+          resource: globalThis.tileset.texture!.createView()
+        },
+        {
+          binding: 5,
+          resource: this.tileSampler.resource
+        }
+      ],
+    });
+  }
+
+  /**
+   * Get or create bind group for a resource
+   * @param resources The resource container
+   * @param useGreedy Whether to use greedy mesh pipeline
+   * @param texture The 3D texture for the resource
+   * @param resourceType Type of resource for labeling
+   * @returns The appropriate bind group
+   */
+  private getOrCreateBindGroup(resources: any, useGreedy: boolean, texture: GPUTexture, resourceType: string): GPUBindGroup {
+    if (useGreedy) {
+      if (!resources.greedyBindGroup) {
+        resources.greedyBindGroup = this.createBindGroupForResource(
+          this.greedyBindGroupLayout, 
+          texture, 
+          `greedy-${resourceType}`
+        );
+      }
+      return resources.greedyBindGroup;
+    } else {
+      if (!resources.bindGroup) {
+        resources.bindGroup = this.createBindGroupForResource(
+          this.bindGroupLayout, 
+          texture, 
+          resourceType
+        );
+      }
+      return resources.bindGroup;
     }
   }
 }
