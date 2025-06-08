@@ -725,8 +725,7 @@ export class Renderer {
    * Create GPU texture for model voxels and upload voxel data
    * @param model The model containing voxel data
    * @param resources The resource container to store texture
-   */
-  private createModelTexture(model: Model, resources: any): void {
+   */  private createModelTexture(model: Model, resources: any): void {
     const volume = model.volume;
       resources.texture = gpuResourceManager.createTexture({
       size: [volume.sizeX, volume.sizeY, volume.sizeZ],
@@ -736,6 +735,7 @@ export class Renderer {
       mipLevelCount: 1,
       label: `model-texture-${model.url}`
     });
+    resources.texture.markPermanent(); // Prevent automatic cleanup
     
     this.device.queue.writeTexture(
       { texture: resources.texture.resource, mipLevel: 0 },
@@ -787,13 +787,13 @@ export class Renderer {
    * Create GPU buffers for mesh data and upload to GPU
    * @param meshData Object containing original and greedy mesh data
    * @param resources The resource container to store buffers
-   */
-  private createModelBuffers(meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }, resources: any): void {    // Create and upload original mesh buffer
+   */  private createModelBuffers(meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }, resources: any): void {    // Create and upload original mesh buffer
     resources.originalBuffer = gpuResourceManager.createBuffer({
       size: meshData.originalFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       label: `model-original-buffer-${Date.now()}`
     });
+    resources.originalBuffer.markPermanent(); // Prevent automatic cleanup
     this.device.queue.writeBuffer(resources.originalBuffer.resource, 0, meshData.originalFaces);
     
     // Create and upload greedy mesh buffer
@@ -802,6 +802,7 @@ export class Renderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       label: `model-greedy-buffer-${Date.now()}`
     });
+    resources.greedyBuffer.markPermanent(); // Prevent automatic cleanup
     this.device.queue.writeBuffer(resources.greedyBuffer.resource, 0, meshData.greedyFaces);
   }
 
@@ -886,8 +887,7 @@ export class Renderer {
       [width, height, count]
     );
     tileset.texture = texture.resource;
-  }
-  registerLevel(level: Level): void {
+  }  registerLevel(level: Level): void {
     const volume = level.volume;
     const resources = this.resourceMap.get(level) || {};
       resources.texture = gpuResourceManager.createTexture({
@@ -897,6 +897,7 @@ export class Renderer {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       label: `level-texture-${level.url}`
     });
+    resources.texture.markPermanent(); // Prevent automatic cleanup
     
     this.device.queue.writeTexture(
       { texture: resources.texture.resource },
@@ -915,14 +916,14 @@ export class Renderer {
     const meshEndTime = performance.now();
     
     this.logger.performance('Level mesh generation', meshEndTime - meshStartTime, 
-      `Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces`);
-      // Store both mesh types in resources using GPU resource manager
+      `Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces`);    // Store both mesh types in resources using GPU resource manager
     const bufferStartTime = performance.now();
     resources.originalBuffer = gpuResourceManager.createBuffer({
       size: originalFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       label: `level-original-buffer-${level.url}`
     });
+    resources.originalBuffer.markPermanent(); // Prevent automatic cleanup
     this.device.queue.writeBuffer(resources.originalBuffer.resource, 0, originalFaces);
     
     resources.greedyBuffer = gpuResourceManager.createBuffer({
@@ -930,6 +931,7 @@ export class Renderer {
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       label: `level-greedy-buffer-${level.url}`
     });
+    resources.greedyBuffer.markPermanent(); // Prevent automatic cleanup
     this.device.queue.writeBuffer(resources.greedyBuffer.resource, 0, greedyFaces);
     
     // Set the active buffer based on current setting
@@ -1095,27 +1097,37 @@ export class Renderer {
       this.recreateQueryResources();
       throw error;  // Re-throw to let caller handle if needed
     }
-  }drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+  }  drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
     const gpuConfig = this.config.getGPUConfig();
     const resources = this.resourceMap.get(level);
+    
+    // Validate that resources exist and are not disposed
+    if (!resources || !resources.texture || resources.texture.disposed) {
+      this.logger.warn('RENDERER', 'Level resources missing or disposed, skipping draw');
+      return;
+    }
+    
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
     floatView.set(modelViewProjectionMatrix, 0);
     floatView.set(modelViewProjectionMatrix, 16);
     
     const useGreedy = (globalThis as any).useGreedyMesh || false;
       // Update the active buffer and bind group based on current setting
-    if (useGreedy && resources.greedyBuffer) {
+    if (useGreedy && resources.greedyBuffer && !resources.greedyBuffer.disposed) {
       resources.rasterBuffer = resources.greedyBuffer;
       renderPass.setPipeline(this.greedyTerrainPipeline);
-    } else {
-      resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
+    } else if (resources.originalBuffer && !resources.originalBuffer.disposed) {
+      resources.rasterBuffer = resources.originalBuffer;
       renderPass.setPipeline(this.terrainPipeline);
+    } else {
+      this.logger.warn('RENDERER', 'No valid level buffers available, skipping draw');
+      return;
     }
     
     // Get or create the appropriate bind group using unified method
     const bindGroup = this.getOrCreateBindGroup(resources, useGreedy, resources.texture.resource, 'level');
     renderPass.setBindGroup(0, bindGroup, [this.objectUniformsOffset]);
-      renderPass.setVertexBuffer(0, resources.rasterBuffer.resource);    // Count the faces in the level
+      renderPass.setVertexBuffer(0, resources.rasterBuffer.resource);// Count the faces in the level
     const levelFaceCount = useGreedy ? resources.rasterBuffer.resource.size / 32 : resources.rasterBuffer.resource.size / 4;
     this.renderedFacesCount += levelFaceCount;
       // Update face counts based on which pipeline we're using
@@ -1141,6 +1153,13 @@ export class Renderer {
   }  drawModel(model: Model, modelViewProjectionMatrix: mat4, modelMatrix: mat4, renderPass: GPURenderPassEncoder): void {
     const gpuConfig = this.config.getGPUConfig();
     const resources = this.resourceMap.get(model);
+    
+    // Validate that resources exist and are not disposed
+    if (!resources || !resources.texture || resources.texture.disposed) {
+      this.logger.warn('RENDERER', 'Model resources missing or disposed, skipping draw');
+      return;
+    }
+    
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
     const uintView = new Uint32Array(this.transferBuffer, this.objectUniformsOffset);
 
@@ -1150,10 +1169,13 @@ export class Renderer {
     
     const useGreedy = (globalThis as any).useGreedyMesh || false;
       // Update the active buffer and bind group based on current setting
-    if (useGreedy && resources.greedyBuffer) {
+    if (useGreedy && resources.greedyBuffer && !resources.greedyBuffer.disposed) {
       resources.rasterBuffer = resources.greedyBuffer;
+    } else if (resources.originalBuffer && !resources.originalBuffer.disposed) {
+      resources.rasterBuffer = resources.originalBuffer;
     } else {
-      resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
+      this.logger.warn('RENDERER', 'No valid model buffers available, skipping draw');
+      return;
     }
     
     // Get or create the appropriate bind group using unified method
@@ -1280,6 +1302,68 @@ export class Renderer {
            this.frameUniforms !== undefined &&
            this.objectUniforms !== undefined &&
            this.depthTexture !== undefined;
+  }
+
+  /**
+   * Dispose of model resources and remove from resource map
+   * @param model The model to dispose
+   */
+  public disposeModel(model: Model): void {
+    const resources = this.resourceMap.get(model);
+    if (!resources) {
+      return;
+    }
+
+    // Dispose GPU resources
+    if (resources.originalBuffer) {
+      gpuResourceManager.disposeResource(resources.originalBuffer);
+    }
+    if (resources.greedyBuffer) {
+      gpuResourceManager.disposeResource(resources.greedyBuffer);
+    }
+    if (resources.texture) {
+      gpuResourceManager.disposeResource(resources.texture);
+    }
+    
+    // Clear bind groups (they'll be recreated if needed)
+    resources.bindGroup = null;
+    resources.greedyBindGroup = null;
+
+    // Remove from resource map
+    this.resourceMap.delete(model);
+    
+    this.logger.debug('RENDERER', `Disposed model resources: ${model.url}`);
+  }
+
+  /**
+   * Dispose of level resources and remove from resource map
+   * @param level The level to dispose
+   */
+  public disposeLevel(level: Level): void {
+    const resources = this.resourceMap.get(level);
+    if (!resources) {
+      return;
+    }
+
+    // Dispose GPU resources
+    if (resources.originalBuffer) {
+      gpuResourceManager.disposeResource(resources.originalBuffer);
+    }
+    if (resources.greedyBuffer) {
+      gpuResourceManager.disposeResource(resources.greedyBuffer);
+    }
+    if (resources.texture) {
+      gpuResourceManager.disposeResource(resources.texture);
+    }
+    
+    // Clear bind groups (they'll be recreated if needed)
+    resources.bindGroup = null;
+    resources.greedyBindGroup = null;
+
+    // Remove from resource map
+    this.resourceMap.delete(level);
+    
+    this.logger.debug('RENDERER', `Disposed level resources: ${level.url}`);
   }
 
   /**
