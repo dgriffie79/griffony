@@ -131,8 +131,7 @@ export class PhysicsSystem {
    */
   getConfig(): PhysicsConfig {
     return this.config.getPhysicsConfig();
-  }
-  /**
+  }  /**
    * Main physics update function, called each frame
    */
   update(elapsed: number): void {
@@ -145,6 +144,12 @@ export class PhysicsSystem {
       this.updateSpatialGrid();
       this.performanceMetrics.gridUpdateTime = performance.now() - gridStartTime;
       this.gridLastUpdate = now;
+
+      // Log spatial optimization usage
+      if (this.useGridOptimization && this.spatialGrid.size > 0) {
+        Logger.getInstance().physics(`Spatial grid updated: ${this.spatialGrid.size} cells, ` +
+          `${this.performanceMetrics.gridUpdateTime.toFixed(2)}ms update time`);
+      }
     }
 
     // Clean old collision cache entries
@@ -407,86 +412,100 @@ export class PhysicsSystem {
     });
   }  /**
    * Handle entity-terrain collisions
+   */  /**
+   * Handle entity-terrain collisions with comprehensive axis-based collision detection
+   * @param entity The entity to check for terrain collisions
    */
   private handleTerrainCollisions(entity: Entity): void {
-    if (!this.level || !this.level.isFullyLoaded) return;
+    if (!this.validateTerrainCollisionPreconditions(entity)) {
+      return;
+    }
 
-    const physicsConfig = this.config.getPhysicsConfig();
+    // Handle collisions for each axis
+    this.handleXAxisTerrainCollisions(entity);
+    this.handleYAxisTerrainCollisions(entity);
+    this.handleZAxisTerrainCollisions(entity);
+  }
+
+  /**
+   * Validate preconditions for terrain collision processing
+   * @param entity The entity to validate
+   * @returns true if collision processing should continue, false otherwise
+   */
+  private validateTerrainCollisionPreconditions(entity: Entity): boolean {
+    // Skip if level not loaded or missing
+    if (!this.level || !this.level.isFullyLoaded) {
+      return false;
+    }
 
     // Skip terrain collision for players in godMode - 'head' property identifies a player
     const isPlayer = 'head' in entity;
-    if (isPlayer && (globalThis as any).godMode) return;
+    if (isPlayer && (globalThis as any).godMode) {
+      return false;
+    }
 
+    return true;
+  }
+
+  /**
+   * Handle X-axis (left/right) terrain collisions
+   * @param entity The entity to check for X-axis collisions
+   */
+  private handleXAxisTerrainCollisions(entity: Entity): void {
     const r = entity.radius;
     const h = entity.height;
     const pos = entity.localPosition;
-    // X-axis collision (left)
-    if (this.level.volume.getVoxelFloor(pos[0] - r, pos[1], pos[2] + h / 2)) {
-      pos[0] = Math.ceil(pos[0] - r) + r;      // Apply bounce if configured and moving leftward
-      if (physicsConfig.collisionBounce > 0 && entity.vel[0] < 0) {
-        entity.vel[0] = -entity.vel[0] * physicsConfig.collisionBounce;
-      } else {
-        entity.vel[0] = 0;
-      }
 
-      entity.dirty = true;
+    // X-axis collision (left)
+    if (this.level!.volume.getVoxelFloor(pos[0] - r, pos[1], pos[2] + h / 2)) {
+      this.handleAxisCollision(entity, 0, 'left', Math.ceil(pos[0] - r) + r);
     }
 
     // X-axis collision (right)
-    if (this.level.volume.getVoxelFloor(pos[0] + r, pos[1], pos[2] + h / 2)) {
-      pos[0] = Math.floor(pos[0] + r) - r;      // Apply bounce if configured and moving rightward
-      if (physicsConfig.collisionBounce > 0 && entity.vel[0] > 0) {
-        entity.vel[0] = -entity.vel[0] * physicsConfig.collisionBounce;
-      } else {
-        entity.vel[0] = 0;
-      }
-
-      entity.dirty = true;
+    if (this.level!.volume.getVoxelFloor(pos[0] + r, pos[1], pos[2] + h / 2)) {
+      this.handleAxisCollision(entity, 0, 'right', Math.floor(pos[0] + r) - r);
     }
+  }
+
+  /**
+   * Handle Y-axis (front/back) terrain collisions
+   * @param entity The entity to check for Y-axis collisions
+   */
+  private handleYAxisTerrainCollisions(entity: Entity): void {
+    const r = entity.radius;
+    const h = entity.height;
+    const pos = entity.localPosition;
 
     // Y-axis collision (back)
-    if (this.level.volume.getVoxelFloor(pos[0], pos[1] - r, pos[2] + h / 2)) {
-      pos[1] = Math.ceil(pos[1] - r) + r;      // Apply bounce if configured and moving backward
-      if (physicsConfig.collisionBounce > 0 && entity.vel[1] < 0) {
-        entity.vel[1] = -entity.vel[1] * physicsConfig.collisionBounce;
-      } else {
-        entity.vel[1] = 0;
-      }
-
-      entity.dirty = true;
+    if (this.level!.volume.getVoxelFloor(pos[0], pos[1] - r, pos[2] + h / 2)) {
+      this.handleAxisCollision(entity, 1, 'back', Math.ceil(pos[1] - r) + r);
     }
 
     // Y-axis collision (front)
-    if (this.level.volume.getVoxelFloor(pos[0], pos[1] + r, pos[2] + h / 2)) {
-      pos[1] = Math.floor(pos[1] + r) - r;      // Apply bounce if configured and moving forward
-      if (physicsConfig.collisionBounce > 0 && entity.vel[1] > 0) {
-        entity.vel[1] = -entity.vel[1] * physicsConfig.collisionBounce;
-      } else {
-        entity.vel[1] = 0;
-      }
+    if (this.level!.volume.getVoxelFloor(pos[0], pos[1] + r, pos[2] + h / 2)) {
+      this.handleAxisCollision(entity, 1, 'front', Math.floor(pos[1] + r) - r);
+    }
+  }
 
-      entity.dirty = true;
-    }    // Z-axis collision (bottom)
-    if (this.level.volume.getVoxelFloor(pos[0], pos[1], pos[2])) {
+  /**
+   * Handle Z-axis (top/bottom) terrain collisions
+   * @param entity The entity to check for Z-axis collisions
+   */
+  private handleZAxisTerrainCollisions(entity: Entity): void {
+    const h = entity.height;
+    const pos = entity.localPosition;
+
+    // Z-axis collision (bottom/floor)
+    if (this.level!.volume.getVoxelFloor(pos[0], pos[1], pos[2])) {
       const oldVelocity = vec3.clone(entity.vel);
       const impactForce = Math.abs(entity.vel[2]);
       const collisionPoint = vec3.fromValues(pos[0], pos[1], Math.floor(pos[2]));
 
-      pos[2] = Math.ceil(pos[2]);      // Apply bounce if configured and moving downward
-      if (physicsConfig.collisionBounce > 0 && entity.vel[2] < 0) {
-        entity.vel[2] = -entity.vel[2] * physicsConfig.collisionBounce;
-
-        // Stop if bounce is very small
-        if (Math.abs(entity.vel[2]) < 0.1) {
-          entity.vel[2] = 0;
-        }
-      } else {
-        entity.vel[2] = 0;
-      }
-
+      pos[2] = Math.ceil(pos[2]);
+      this.applyCollisionBounce(entity, 2, 'down');
       entity.dirty = true;
 
-      // Dispatch collision event
+      // Dispatch collision event for floor impacts
       this.dispatchCollisionEvent({
         type: 'terrain',
         entity: entity,
@@ -497,18 +516,72 @@ export class PhysicsSystem {
       });
     }
 
-    // Z-axis collision (top)
-    if (this.level.volume.getVoxelFloor(pos[0], pos[1], pos[2] + h)) {
-      pos[2] = Math.floor(pos[2] + h) - h;      // Apply bounce if configured and moving upward
-      if (physicsConfig.collisionBounce > 0 && entity.vel[2] > 0) {
-        entity.vel[2] = -entity.vel[2] * physicsConfig.collisionBounce;
-      } else {
-        entity.vel[2] = 0;
-      }
-
+    // Z-axis collision (top/ceiling)
+    if (this.level!.volume.getVoxelFloor(pos[0], pos[1], pos[2] + h)) {
+      pos[2] = Math.floor(pos[2] + h) - h;
+      this.applyCollisionBounce(entity, 2, 'up');
       entity.dirty = true;
     }
-  }  /**
+  }
+
+  /**
+   * Handle collision for a specific axis (generic handler to reduce code duplication)
+   * @param entity The entity experiencing collision
+   * @param axis The axis index (0=X, 1=Y, 2=Z)
+   * @param direction The collision direction for bounce determination
+   * @param newPosition The corrected position value for this axis
+   */
+  private handleAxisCollision(entity: Entity, axis: number, direction: 'left' | 'right' | 'back' | 'front', newPosition: number): void {
+    entity.localPosition[axis] = newPosition;
+    this.applyCollisionBounce(entity, axis, direction);
+    entity.dirty = true;
+  }
+
+  /**
+   * Apply collision bounce physics to entity velocity
+   * @param entity The entity to apply bounce to
+   * @param axis The axis index (0=X, 1=Y, 2=Z)
+   * @param direction The collision direction for determining velocity direction
+   */
+  private applyCollisionBounce(entity: Entity, axis: number, direction: string): void {
+    const physicsConfig = this.config.getPhysicsConfig();
+    const currentVelocity = entity.vel[axis];
+
+    // Determine if we should apply bounce based on movement direction
+    const shouldBounce = physicsConfig.collisionBounce > 0 && this.shouldApplyBounceForDirection(currentVelocity, direction);
+
+    if (shouldBounce) {
+      entity.vel[axis] = -currentVelocity * physicsConfig.collisionBounce;
+      
+      // Stop very small bounces (for Z-axis specifically)
+      if (axis === 2 && Math.abs(entity.vel[axis]) < 0.1) {
+        entity.vel[axis] = 0;
+      }
+    } else {
+      entity.vel[axis] = 0;
+    }
+  }
+
+  /**
+   * Determine if bounce should be applied based on velocity direction and collision direction
+   * @param velocity The current velocity on the axis
+   * @param direction The collision direction
+   * @returns true if bounce should be applied
+   */
+  private shouldApplyBounceForDirection(velocity: number, direction: string): boolean {
+    switch (direction) {
+      case 'left':
+      case 'back':
+      case 'down':
+        return velocity < 0;
+      case 'right':
+      case 'front':
+      case 'up':
+        return velocity > 0;
+      default:
+        return false;
+    }
+  }/**
    * Check if an entity is on the ground
    */
   isEntityOnGround(entity: Entity): boolean {

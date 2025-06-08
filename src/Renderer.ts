@@ -5,6 +5,8 @@ import type { Level } from './Level';
 import { greedyMesh, optimizedGreedyMesh } from './utils';
 import { Logger } from './Logger';
 import { getConfig } from './Config';
+import { errorHandler, GPUError, ValidationError, ResourceLoadError, Result } from './ErrorHandler.js';
+import { gpuResourceManager, resourceManager, ResourceType, AutoCleanup, ManagedResource } from './ResourceManager.js';
 
 export class Renderer {
   private logger = Logger.getInstance();
@@ -18,49 +20,179 @@ export class Renderer {
   greedyTerrainPipeline!: GPURenderPipeline;
   greedyModelPipeline!: GPURenderPipeline;
   bindGroupLayout!: GPUBindGroupLayout;
-  greedyBindGroupLayout!: GPUBindGroupLayout;
-  depthTexture!: GPUTexture;
+  greedyBindGroupLayout!: GPUBindGroupLayout;  depthTexture!: ManagedResource<GPUTexture>;
     frameTimes: number[] = [];
-  lastTimePrint: number = 0;  querySet!: GPUQuerySet;
-  queryResolve!: GPUBuffer;
-  queryResult!: GPUBuffer;
+  lastTimePrint: number = 0;  querySet!: ManagedResource<GPUQuerySet>;
+  queryResolve!: ManagedResource<GPUBuffer>;
+  queryResult!: ManagedResource<GPUBuffer>;
   
   // Track mesh statistics for each frame
   renderedFacesCount: number = 0;
   renderedOriginalFacesCount: number = 0;
   renderedGreedyFacesCount: number = 0;
   
-  frameUniforms!: GPUBuffer;
-  objectUniforms!: GPUBuffer;
+  frameUniforms!: ManagedResource<GPUBuffer>;
+  objectUniforms!: ManagedResource<GPUBuffer>;
   objectUniformsOffset: number = 0;
-  paletteTexture!: GPUTexture;
+  paletteTexture!: ManagedResource<GPUTexture>;
   transferBuffer!: ArrayBuffer;
   floatView!: Float32Array;  uintView!: Uint32Array;
   nextPaletteIndex: number = 0;
-  tileSampler!: GPUSampler;
-
+  tileSampler!: ManagedResource<GPUSampler>;
   resourceMap = new Map<Model | Level, any>();
+  async init(): Promise<Result<void>> {
+    return errorHandler.safeAsync(async () => {
+      await this.initializeWebGPU();
+      await this.initializeResources();
+      
+      // Register cleanup handlers
+      AutoCleanup.register(() => this.cleanup());
+      
+      this.logger.info('RENDERER', 'Renderer initialized successfully');
+    }, 'Renderer.init');
+  }
 
-  async init(): Promise<void> {
+  private setupCanvas(): HTMLCanvasElement {
+    // Create or get existing canvas
+    let canvas = document.getElementById('webgpu-canvas') as HTMLCanvasElement;
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.id = 'webgpu-canvas';
+      canvas.style.cssText = 'width: 100%; height: 100%; margin: 0; padding: 0; display: block;';
+    }
+    
+    // Register canvas with resource manager
+    const managedCanvas = resourceManager.register(
+      canvas,
+      ResourceType.Canvas,
+      'main-webgpu-canvas'
+    );
+    
+    // Make canvas globally available
+    (globalThis as any).canvas = managedCanvas.resource;
+    
+    return managedCanvas.resource;
+  }
+
+  private async initializeResources(): Promise<void> {
+    // Create and register GPU resources
+    const gpuConfig = this.config.getGPUConfig();
+      // Frame uniforms buffer
+    this.frameUniforms = gpuResourceManager.createBuffer({
+      size: gpuConfig.uniformBufferSize,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      label: 'frame-uniforms'
+    });
+    
+    // Object uniforms buffer  
+    this.objectUniforms = gpuResourceManager.createBuffer({
+      size: gpuConfig.transferBufferSize,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      label: 'object-uniforms'
+    });
+    
+    // Transfer buffer (CPU side)
+    this.transferBuffer = new ArrayBuffer(gpuConfig.transferBufferSize);
+    this.floatView = new Float32Array(this.transferBuffer);
+    this.uintView = new Uint32Array(this.transferBuffer);
+      // Palette texture
+    this.paletteTexture = gpuResourceManager.createTexture({
+      format: 'rgba8unorm',
+      size: [256, 256, 1],
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      label: 'palette-texture'
+    });
+    
+    // Tile sampler
+    this.tileSampler = gpuResourceManager.createSampler({
+      magFilter: 'nearest',
+      minFilter: 'nearest',
+      addressModeU: 'repeat',
+      addressModeV: 'repeat',
+      addressModeW: 'repeat',
+      label: 'tile-sampler'
+    });    // Query resources for performance monitoring
+    this.querySet = gpuResourceManager.createQuerySet({
+      type: "timestamp",
+      count: 2,
+      label: 'performance-queries'
+    });
+    
+    this.queryResolve = gpuResourceManager.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+      label: 'query-resolve'
+    });
+    
+    this.queryResult = gpuResourceManager.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      label: 'query-result'
+    });
+
+    // Initialize frame timing
+    this.frameTimes = [];
+    this.lastTimePrint = performance.now();
+  }
+
+  private cleanup(): void {
+    this.logger.info('RENDERER', 'Cleaning up renderer resources');
+    
+    // Clear resource map
+    this.resourceMap.clear();
+    
+    // Reset face counters
+    this.renderedFacesCount = 0;
+    this.renderedOriginalFacesCount = 0;
+    this.renderedGreedyFacesCount = 0;
+    
+    // Clear frame timing data
+    this.frameTimes = [];
+    
+    // GPU resources will be cleaned up by gpuResourceManager
+    this.logger.info('RENDERER', 'Renderer cleanup completed');
+  }
+  private async initializeWebGPU(): Promise<void> {
     if (!navigator.gpu) {
-      throw new Error('WebGPU not supported');
+      throw new GPUError('WebGPU not supported in this browser', 'initializeWebGPU');
     }
     
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) {
-      throw new Error('No GPU adapter found');
+      throw new GPUError('No suitable GPU adapter found', 'requestAdapter');
     }
-      this.device = await adapter.requestDevice({
-      requiredFeatures: ['timestamp-query']
-    });
 
-    const canvas = document.createElement('canvas');
+    try {
+      this.device = await adapter.requestDevice({
+        requiredFeatures: ['timestamp-query']
+      });
+    } catch (error) {
+      throw new GPUError(
+        `Failed to request GPU device: ${(error as Error).message}`,
+        'requestDevice'
+      );
+    }
+
+    // Initialize GPU resource manager
+    gpuResourceManager.setDevice(this.device);
+
+    // Setup canvas and context
+    const canvas = this.setupCanvas();
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    document.body.appendChild(canvas);
+    
+    // Add canvas to DOM if not already present
+    if (!canvas.parentElement) {
+      document.body.appendChild(canvas);
+    }
+    
     this.viewport = [canvas.width, canvas.height];
     
     this.context = canvas.getContext('webgpu')!;
+    if (!this.context) {
+      throw new GPUError('Failed to get WebGPU context from canvas', 'getContext');
+    }
+    
     this.context.configure({
       device: this.device,
       format: navigator.gpu.getPreferredCanvasFormat(),
@@ -76,7 +208,7 @@ export class Renderer {
       this.context.configure({
         device: this.device,
         format: navigator.gpu.getPreferredCanvasFormat(),
-        alphaMode: 'opaque',
+        alphaMode: 'premultiplied',
       });
       
       // Update camera aspect ratio
@@ -88,84 +220,87 @@ export class Renderer {
 
     this.createDepthTexture();
     
-    // Create buffers
-    const gpuConfig = this.config.getGPUConfig();
-    
-    this.frameUniforms = this.device.createBuffer({
-      size: gpuConfig.uniformBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    
-    this.objectUniforms = this.device.createBuffer({
-      size: gpuConfig.transferBufferSize,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    
-    this.transferBuffer = new ArrayBuffer(gpuConfig.transferBufferSize);
-    
-    this.paletteTexture = this.device.createTexture({
-      format: 'rgba8unorm',
-      size: [256, 256, 1],
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-      this.tileSampler = this.device.createSampler({
-      magFilter: 'nearest',
-      minFilter: 'nearest',
-      addressModeU: 'repeat',
-      addressModeV: 'repeat',
-      addressModeW: 'repeat',
-    });
-
-    this.frameTimes = [];
-    this.lastTimePrint = performance.now();
-    
-    this.querySet = this.device.createQuerySet({
-      type: "timestamp",
-      count: 2,
-    });
-    
-    this.queryResolve = this.device.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
-    });
-    
-    this.queryResult = this.device.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });    await this.compileShaders();
+    // Compile shaders and create pipelines
+    await this.compileShaders();
     const quadsShader = this.shaders['quads'];
     const greedyShader = this.shaders['greedy'];
+    
     this.createBindGroupLayouts();
     this.createPipelines(quadsShader, greedyShader);
   }
-
   async compileShaders(): Promise<void> {
     const sources = await this.loadShaderSources();
     const modules: Record<string, GPUShaderModule> = {};
-    const results: Promise<void>[] = [];
+    const compilationResults: Promise<void>[] = [];
 
     for (const name in sources) {
-      const module = this.device.createShaderModule({
-        label: name,
-        code: sources[name],
-      });      results.push(module.getCompilationInfo().then(info => {
-        this.logger.shaderCompilation(name, info.messages.length === 0, Array.from(info.messages));
-      }));
-      modules[name] = module;
+      try {
+        const module = this.device.createShaderModule({
+          label: name,
+          code: sources[name],
+        });
+
+        // Check compilation info and log results
+        compilationResults.push(
+          module.getCompilationInfo().then(info => {
+            const hasErrors = info.messages.some(msg => msg.type === 'error');
+            if (hasErrors) {
+              const errors = info.messages.filter(msg => msg.type === 'error');
+              throw new GPUError(
+                `Shader compilation failed for ${name}: ${errors.map(e => e.message).join(', ')}`,
+                'compileShaders'
+              );
+            }
+            
+            this.logger.shaderCompilation(name, !hasErrors, Array.from(info.messages));
+          })
+        );
+        
+        modules[name] = module;
+      } catch (error) {
+        throw new GPUError(
+          `Failed to create shader module ${name}: ${(error as Error).message}`,
+          'createShaderModule'
+        );
+      }
     }
-      await Promise.all(results);
-    this.logger.info('RENDERER', 'All shader modules compiled');
+
+    await Promise.all(compilationResults);
+    this.logger.info('RENDERER', 'All shader modules compiled successfully');
     this.shaders = modules;
   }  async loadShaderSources(): Promise<Record<string, string>> {
-    const shaders: Record<string, string> = {};
-    const shaderModules = (import.meta as any).glob('./shaders/*.wgsl', { query: '?raw', import: 'default' });
+    try {
+      const shaders: Record<string, string> = {};
+      const shaderModules = (import.meta as any).glob('./shaders/*.wgsl', { query: '?raw', import: 'default' });
 
-    for (const path in shaderModules) {
-      const name = path.split('/').pop()!.replace('.wgsl', '');
-      shaders[name] = await shaderModules[path]() as string;
+      for (const path in shaderModules) {
+        const name = path.split('/').pop()!.replace('.wgsl', '');
+        try {
+          shaders[name] = await shaderModules[path]() as string;
+        } catch (error) {
+          throw new ResourceLoadError(
+            `Failed to load shader source: ${path}`,
+            'shader',
+            path
+          );
+        }
+      }
+
+      if (Object.keys(shaders).length === 0) {
+        throw new ValidationError('No shader files found', 'loadShaderSources');
+      }
+
+      return shaders;
+    } catch (error) {
+      if (error instanceof GPUError || error instanceof ValidationError) {
+        throw error;
+      }
+      throw new ResourceLoadError(
+        `Failed to load shader sources: ${(error as Error).message}`,
+        'shaders',
+        './shaders/*.wgsl'
+      );
     }
-
-    return shaders;
   }
   createBindGroupLayouts(): void {
     const bindGroupDescriptor: GPUBindGroupLayoutDescriptor = {
@@ -237,14 +372,13 @@ export class Renderer {
         module: quadsShader,
         entryPoint: 'fs_textured',
         targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-      },
-      primitive: {
+      },      primitive: {
         topology: 'triangle-list',
         cullMode: 'back',
         frontFace: 'ccw',
       },
       depthStencil: {
-        format: this.depthTexture.format,
+        format: this.depthTexture.resource.format,
         depthWriteEnabled: true,
         depthCompare: 'less',
       },
@@ -272,14 +406,13 @@ export class Renderer {
         module: quadsShader,
         entryPoint: 'fs_model',
         targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-      },
-      primitive: {
+      },      primitive: {
         topology: 'triangle-list',
         cullMode: 'back',
         frontFace: 'ccw',
       },
       depthStencil: {
-        format: this.depthTexture.format,
+        format: this.depthTexture.resource.format,
         depthWriteEnabled: true,
         depthCompare: 'less',
       },
@@ -313,14 +446,13 @@ export class Renderer {
         module: greedyShader,
         entryPoint: 'fs_textured',
         targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-      },
-      primitive: {
+      },      primitive: {
         topology: 'triangle-list',
         cullMode: 'back',
         frontFace: 'ccw',
       },
       depthStencil: {
-        format: this.depthTexture.format,
+        format: this.depthTexture.resource.format,
         depthWriteEnabled: true,
         depthCompare: 'less',
       },
@@ -354,14 +486,13 @@ export class Renderer {
         module: greedyShader,
         entryPoint: 'fs_model',
         targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-      },
-      primitive: {
+      },      primitive: {
         topology: 'triangle-list',
         cullMode: 'back',
         frontFace: 'ccw',
       },
       depthStencil: {
-        format: this.depthTexture.format,
+        format: this.depthTexture.resource.format,
         depthWriteEnabled: true,
         depthCompare: 'less',
       },
@@ -371,21 +502,49 @@ export class Renderer {
     this.modelPipeline = this.device.createRenderPipeline(modelPipelineDescriptor!);
     this.greedyTerrainPipeline = this.device.createRenderPipeline(greedyTerrainPipelineDescriptor!);
     this.greedyModelPipeline = this.device.createRenderPipeline(greedyModelPipelineDescriptor!);
-  }
+  }  /**
+   * Register a model with the renderer by creating GPU resources
+   * @param model The model to register
+   */
   registerModel(model: Model): void {
-    const gpuConfig = this.config.getGPUConfig();
-    const volume = model.volume;
     const resources = this.resourceMap.get(model) || {};
-
-    resources.texture = this.device.createTexture({
+    
+    // Create GPU texture and upload voxel data
+    this.createModelTexture(model, resources);
+    
+    // Upload palette data to GPU
+    this.uploadModelPalette(model, resources);
+    
+    // Generate both original and greedy mesh data
+    const meshData = this.generateModelMeshes(model);
+    
+    // Create GPU buffers for mesh data
+    this.createModelBuffers(meshData, resources);
+    
+    // Configure resource mapping and active buffers
+    this.configureModelResources(model, resources);
+    
+    // Log performance statistics and debugging info
+    this.logModelStatistics(model, meshData);
+  }
+  /**
+   * Create GPU texture for model voxels and upload voxel data
+   * @param model The model containing voxel data
+   * @param resources The resource container to store texture
+   */
+  private createModelTexture(model: Model, resources: any): void {
+    const volume = model.volume;
+      resources.texture = gpuResourceManager.createTexture({
       size: [volume.sizeX, volume.sizeY, volume.sizeZ],
       dimension: '3d',
       format: 'r8uint',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       mipLevelCount: 1,
+      label: `model-texture-${model.url}`
     });
-      this.device.queue.writeTexture(
-      { texture: resources.texture, mipLevel: 0 },
+    
+    this.device.queue.writeTexture(
+      { texture: resources.texture.resource, mipLevel: 0 },
       volume.voxels,
       {
         bytesPerRow: volume.sizeX,
@@ -393,10 +552,18 @@ export class Renderer {
       },
       [volume.sizeX, volume.sizeY, volume.sizeZ]
     );
-    
-    this.device.queue.writeTexture(
+  }
+
+  /**
+   * Upload model palette data to GPU palette texture
+   * @param model The model containing palette data
+   * @param resources The resource container to store palette index
+   */
+  private uploadModelPalette(model: Model, resources: any): void {
+    const gpuConfig = this.config.getGPUConfig();
+      this.device.queue.writeTexture(
       {
-        texture: this.paletteTexture,
+        texture: this.paletteTexture.resource,
         aspect: 'all',
         origin: [0, this.nextPaletteIndex, 0],
         mipLevel: 0,
@@ -406,44 +573,87 @@ export class Renderer {
       [255, 1, 1]
     );
     
-    resources.paletteIndex = this.nextPaletteIndex++;// Generate both original and greedy mesh data
+    resources.paletteIndex = this.nextPaletteIndex++;
+  }
+
+  /**
+   * Generate both original and greedy mesh data for the model
+   * @param model The model to generate meshes for
+   * @returns Object containing both mesh data arrays
+   */
+  private generateModelMeshes(model: Model): { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array } {
+    const volume = model.volume;
+    
     const originalFaces = model.volume.generateFaces();
     const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
     
-    // Store both mesh types in resources
-    resources.originalBuffer = this.device.createBuffer({
-      size: originalFaces.byteLength,
+    return { originalFaces, greedyFaces };
+  }
+  /**
+   * Create GPU buffers for mesh data and upload to GPU
+   * @param meshData Object containing original and greedy mesh data
+   * @param resources The resource container to store buffers
+   */
+  private createModelBuffers(meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }, resources: any): void {    // Create and upload original mesh buffer
+    resources.originalBuffer = gpuResourceManager.createBuffer({
+      size: meshData.originalFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      label: `model-original-buffer-${Date.now()}`
     });
-    this.device.queue.writeBuffer(resources.originalBuffer, 0, originalFaces);
+    this.device.queue.writeBuffer(resources.originalBuffer.resource, 0, meshData.originalFaces);
     
-    resources.greedyBuffer = this.device.createBuffer({
-      size: greedyFaces.byteLength,
+    // Create and upload greedy mesh buffer
+    resources.greedyBuffer = gpuResourceManager.createBuffer({
+      size: meshData.greedyFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      label: `model-greedy-buffer-${Date.now()}`
     });
-    this.device.queue.writeBuffer(resources.greedyBuffer, 0, greedyFaces);
-      // Set the active buffer based on current setting
+    this.device.queue.writeBuffer(resources.greedyBuffer.resource, 0, meshData.greedyFaces);
+  }
+
+  /**
+   * Configure resource mapping and set active buffer based on current settings
+   * @param model The model being registered
+   * @param resources The resource container with buffers
+   */
+  private configureModelResources(model: Model, resources: any): void {
+    // Set the active buffer based on current setting
     const useGreedy = (globalThis as any).useGreedyMesh || false;
     resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
 
+    // Store resources in the resource map
+    this.resourceMap.set(model, resources);
+  }
+
+  /**
+   * Log performance statistics and debugging information for the model
+   * @param model The model that was processed
+   * @param meshData Object containing mesh data for statistics
+   */
+  private logModelStatistics(model: Model, meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }): void {
+    const volume = model.volume;
+    
     // Log mesh statistics using centralized logger
-    this.logger.meshStats(model.url, originalFaces.length / 4, greedyFaces.length / 8, {
-      originalFaces: originalFaces.length / 4,
-      greedyFaces: greedyFaces.length / 8,
+    this.logger.meshStats(model.url, meshData.originalFaces.length / 4, meshData.greedyFaces.length / 8, {
+      originalFaces: meshData.originalFaces.length / 4,
+      greedyFaces: meshData.greedyFaces.length / 8,
       dimensions: `${volume.sizeX}x${volume.sizeY}x${volume.sizeZ}`
     });
 
     // Count faces by direction for debugging
     this.logger.debug('RENDERER', 'Face distribution analysis', {
-      originalFaces: this.getFaceCountsByDirection(originalFaces, 4),
-      greedyFaces: this.getFaceCountsByDirection(greedyFaces, 8)
+      originalFaces: this.getFaceCountsByDirection(meshData.originalFaces, 4),
+      greedyFaces: this.getFaceCountsByDirection(meshData.greedyFaces, 8)
     });
+  }
 
-    this.resourceMap.set(model, resources);
-}
-
-// Helper method for analyzing face distribution by direction
-private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number): { [key: string]: number } {
+  /**
+   * Helper method for analyzing face distribution by direction for debugging
+   * @param faces The face data array to analyze
+   * @param stride The stride between face elements
+   * @returns Object with face counts by direction (+X, -X, +Y, -Y, +Z, -Z)
+   */
+  private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number): { [key: string]: number } {
   const normalNames = ['-X', '+X', '-Y', '+Y', '-Z', '+Z'];
   const counts = [0, 0, 0, 0, 0, 0];
   
@@ -461,21 +671,19 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
   
   return result;
 }
-
   registerTileset(tileset: Tileset): void {
     const width = tileset.tileWidth;
     const height = tileset.tileHeight;
-    const count = tileset.numTiles;
-
-    const texture = this.device.createTexture({
+    const count = tileset.numTiles;    const texture = gpuResourceManager.createTexture({
       size: [width, height, count],
       format: 'rgba8unorm',
       dimension: '2d',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      label: `tileset-texture-${tileset.url}`
     });
 
     this.device.queue.writeTexture(
-      { texture },
+      { texture: texture.resource },
       tileset.imageData!.data,
       {
         bytesPerRow: width * 4,
@@ -483,66 +691,73 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       },
       [width, height, count]
     );
-    tileset.texture = texture;
+    tileset.texture = texture.resource;
   }
-
   registerLevel(level: Level): void {
     const volume = level.volume;
     const resources = this.resourceMap.get(level) || {};
-    
-    resources.texture = this.device.createTexture({
+      resources.texture = gpuResourceManager.createTexture({
       size: [volume.sizeX, volume.sizeY, volume.sizeZ],
       dimension: '3d',
       format: 'r16uint',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      label: `level-texture-${level.url}`
     });
-      this.device.queue.writeTexture(
-      { texture: resources.texture },
+    
+    this.device.queue.writeTexture(
+      { texture: resources.texture.resource },
       volume.voxels,
       {
         bytesPerRow: volume.sizeX * 2,
         rowsPerImage: volume.sizeY
       },
-      [volume.sizeX, volume.sizeY, volume.sizeZ]    );    // Generate both original and greedy mesh data
+      [volume.sizeX, volume.sizeY, volume.sizeZ]
+    );
+
+    // Generate both original and greedy mesh data
     const meshStartTime = performance.now();
     const originalFaces = volume.generateFaces();
     const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
-    const meshEndTime = performance.now();    this.logger.performance('Level mesh generation', meshEndTime - meshStartTime, 
-      `Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces`);
+    const meshEndTime = performance.now();
     
-    // Store both mesh types in resources
+    this.logger.performance('Level mesh generation', meshEndTime - meshStartTime, 
+      `Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces`);
+      // Store both mesh types in resources using GPU resource manager
     const bufferStartTime = performance.now();
-    resources.originalBuffer = this.device.createBuffer({
+    resources.originalBuffer = gpuResourceManager.createBuffer({
       size: originalFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      label: `level-original-buffer-${level.url}`
     });
-    this.device.queue.writeBuffer(resources.originalBuffer, 0, originalFaces);
+    this.device.queue.writeBuffer(resources.originalBuffer.resource, 0, originalFaces);
     
-    resources.greedyBuffer = this.device.createBuffer({
+    resources.greedyBuffer = gpuResourceManager.createBuffer({
       size: greedyFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      label: `level-greedy-buffer-${level.url}`
     });
-    this.device.queue.writeBuffer(resources.greedyBuffer, 0, greedyFaces);
+    this.device.queue.writeBuffer(resources.greedyBuffer.resource, 0, greedyFaces);
     
     // Set the active buffer based on current setting
     const useGreedy = (globalThis as any).useGreedyMesh || false;
     resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
-      const bufferEndTime = performance.now();
+    
+    const bufferEndTime = performance.now();
     this.logger.performance('Buffer creation and upload', bufferEndTime - bufferStartTime);
 
     this.resourceMap.set(level, resources);
     this.logger.info('RENDERER', 'Level terrain mesh registered with renderer');
-  }
-
-  createDepthTexture(): void {
+  }  createDepthTexture(): void {
+    // Dispose of existing depth texture if it exists
     if (this.depthTexture) {
-      this.depthTexture.destroy();
+      gpuResourceManager.disposeResource(this.depthTexture);
     }
 
-    this.depthTexture = this.device.createTexture({
+    this.depthTexture = gpuResourceManager.createTexture({
       size: [this.viewport[0], this.viewport[1], 1],
       format: 'depth24plus',
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      label: 'depth-texture'
     });
   }
   async draw(): Promise<void> {
@@ -558,25 +773,24 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
         loadOp: 'clear',
         storeOp: 'store',
-      }],
-      depthStencilAttachment: {
-        view: this.depthTexture.createView(),
+      }],      depthStencilAttachment: {
+        view: this.depthTexture.resource.createView(),
         depthClearValue: 1.0,
         depthLoadOp: 'clear',
         depthStoreOp: 'store',
       },
       timestampWrites: {
-        querySet: this.querySet,
+        querySet: this.querySet.resource,
         beginningOfPassWriteIndex: 0,
         endOfPassWriteIndex: 1,
       }
-    });const camera = globalThis.camera;
-    this.device.queue.writeBuffer(this.frameUniforms, 0, camera.projection as Float32Array);
-    this.device.queue.writeBuffer(this.frameUniforms, 64, camera.view as Float32Array);
+    });    const camera = globalThis.camera;
+    this.device.queue.writeBuffer(this.frameUniforms.resource, 0, camera.projection as Float32Array);
+    this.device.queue.writeBuffer(this.frameUniforms.resource, 64, camera.view as Float32Array);
     if (camera.entity) {
-      this.device.queue.writeBuffer(this.frameUniforms, 128, camera.entity.worldPosition as Float32Array);
+      this.device.queue.writeBuffer(this.frameUniforms.resource, 128, camera.entity.worldPosition as Float32Array);
     }
-    this.device.queue.writeBuffer(this.frameUniforms, 144, new Float32Array(this.viewport));
+    this.device.queue.writeBuffer(this.frameUniforms.resource, 144, new Float32Array(this.viewport));
 
     this.objectUniformsOffset = 0;    const viewProjectionMatrix = mat4.create();
     mat4.multiply(viewProjectionMatrix, camera.projection, camera.view);
@@ -643,23 +857,19 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
         }
         e.animationFrame = 0;
       }
-    }
-
-    this.device.queue.writeBuffer(this.objectUniforms, 0, this.transferBuffer, 0, this.objectUniformsOffset);
+    }    this.device.queue.writeBuffer(this.objectUniforms.resource, 0, this.transferBuffer, 0, this.objectUniformsOffset);
 
     renderPass.end();
-    commandEncoder.resolveQuerySet(this.querySet, 0, 2, this.queryResolve, 0);
-    if (this.queryResult.mapState === 'unmapped') {
-      commandEncoder.copyBufferToBuffer(this.queryResolve, 0, this.queryResult, 0, this.queryResult.size);
-    }
+    commandEncoder.resolveQuerySet(this.querySet.resource, 0, 2, this.queryResolve.resource, 0);
+    if (this.queryResult.resource.mapState === 'unmapped') {
+      commandEncoder.copyBufferToBuffer(this.queryResolve.resource, 0, this.queryResult.resource, 0, this.queryResult.resource.size);
+    }    this.device.queue.submit([commandEncoder.finish()]);
 
-    this.device.queue.submit([commandEncoder.finish()]);
-
-    if (this.queryResult.mapState === 'unmapped') {
-      await this.queryResult.mapAsync(GPUMapMode.READ);
-      const queryData = new BigUint64Array(this.queryResult.getMappedRange());
+    if (this.queryResult.resource.mapState === 'unmapped') {
+      await this.queryResult.resource.mapAsync(GPUMapMode.READ);
+      const queryData = new BigUint64Array(this.queryResult.resource.getMappedRange());
       const delta = queryData[1] - queryData[0];
-      this.queryResult.unmap();
+      this.queryResult.resource.unmap();
       const frameTimeMs = Number(delta) / 1e6;
       this.frameTimes.push(frameTimeMs);
       const now = performance.now();      if (now - this.lastTimePrint >= 1000) {
@@ -685,25 +895,24 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       resources.rasterBuffer = resources.greedyBuffer;
       
       // Create greedy bind group if needed
-      if (!resources.greedyBindGroup) {
-        resources.greedyBindGroup = this.device.createBindGroup({
+      if (!resources.greedyBindGroup) {        resources.greedyBindGroup = this.device.createBindGroup({
           layout: this.greedyBindGroupLayout,
           entries: [
             {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
-              resource: resources.texture.createView()
+              resource: resources.texture.resource.createView()
             },
             {
               binding: 3,
-              resource: this.paletteTexture.createView()
+              resource: this.paletteTexture.resource.createView()
             },
             {
               binding: 4,
@@ -711,7 +920,7 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
             },
             {
               binding: 5,
-              resource: this.tileSampler
+              resource: this.tileSampler.resource
             }
           ],
         });
@@ -722,25 +931,24 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
     } else {
       resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
         // Create original bind group if needed
-      if (!resources.bindGroup) {
-        resources.bindGroup = this.device.createBindGroup({
+      if (!resources.bindGroup) {        resources.bindGroup = this.device.createBindGroup({
           layout: this.bindGroupLayout,
           entries: [
             {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
-              resource: resources.texture.createView()
+              resource: resources.texture.resource.createView()
             },
             {
               binding: 3,
-              resource: this.paletteTexture.createView()
+              resource: this.paletteTexture.resource.createView()
             },
             {
               binding: 4,
@@ -748,7 +956,7 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
             },
             {
               binding: 5,
-              resource: this.tileSampler
+              resource: this.tileSampler.resource
             }
           ],
         });
@@ -757,23 +965,22 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       renderPass.setPipeline(this.terrainPipeline);
       renderPass.setBindGroup(0, resources.bindGroup, [this.objectUniformsOffset]);
     }
-    
-    renderPass.setVertexBuffer(0, resources.rasterBuffer);    // Count the faces in the level
-    const levelFaceCount = useGreedy ? resources.rasterBuffer.size / 32 : resources.rasterBuffer.size / 4;
+      renderPass.setVertexBuffer(0, resources.rasterBuffer.resource);    // Count the faces in the level
+    const levelFaceCount = useGreedy ? resources.rasterBuffer.resource.size / 32 : resources.rasterBuffer.resource.size / 4;
     this.renderedFacesCount += levelFaceCount;
       // Update face counts based on which pipeline we're using
     if (useGreedy) {
       this.renderedGreedyFacesCount += levelFaceCount;
       // If we have original buffer, get its actual size for comparison
       if (resources.originalBuffer) {
-        this.renderedOriginalFacesCount += resources.originalBuffer.size / 4;
+        this.renderedOriginalFacesCount += resources.originalBuffer.resource.size / 4;
       } else {
         this.renderedOriginalFacesCount += Math.floor(levelFaceCount * 2);
       }
     } else {
       this.renderedOriginalFacesCount += levelFaceCount;      // If we have greedy buffer, get its actual size for comparison
       if (resources.greedyBuffer) {
-        this.renderedGreedyFacesCount += resources.greedyBuffer.size / 32;
+        this.renderedGreedyFacesCount += resources.greedyBuffer.resource.size / 32;
       } else {
         this.renderedGreedyFacesCount += Math.floor(levelFaceCount * 0.5);
       }
@@ -798,25 +1005,24 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       resources.rasterBuffer = resources.greedyBuffer;
       
       // Create greedy bind group if needed
-      if (!resources.greedyBindGroup) {
-        resources.greedyBindGroup = this.device.createBindGroup({          label: 'greedy-model',
+      if (!resources.greedyBindGroup) {        resources.greedyBindGroup = this.device.createBindGroup({          label: 'greedy-model',
           layout: this.greedyBindGroupLayout,
           entries: [
             {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
-              resource: resources.texture.createView()
+              resource: resources.texture.resource.createView()
             },
             {
               binding: 3,
-              resource: this.paletteTexture.createView()
+              resource: this.paletteTexture.resource.createView()
             },
             {
               binding: 4,
@@ -824,7 +1030,7 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
             },
             {
               binding: 5,
-              resource: this.tileSampler
+              resource: this.tileSampler.resource
             }
           ],
         });
@@ -835,25 +1041,24 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       resources.rasterBuffer = resources.originalBuffer || resources.rasterBuffer;
       
       // Create original bind group if needed
-      if (!resources.bindGroup) {
-        const descriptor: GPUBindGroupDescriptor = {
+      if (!resources.bindGroup) {        const descriptor: GPUBindGroupDescriptor = {
           label: 'model',
           layout: this.bindGroupLayout,
           entries: [            {
               binding: 0,
-              resource: { buffer: this.frameUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.frameUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 1,
-              resource: { buffer: this.objectUniforms, size: gpuConfig.uniformBufferSize }
+              resource: { buffer: this.objectUniforms.resource, size: gpuConfig.uniformBufferSize }
             },
             {
               binding: 2,
-              resource: resources.texture.createView()
+              resource: resources.texture.resource.createView()
             },
             {
               binding: 3,
-              resource: this.paletteTexture.createView()
+              resource: this.paletteTexture.resource.createView()
             },
             {
               binding: 4,
@@ -861,7 +1066,7 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
             },
             {
               binding: 5,
-              resource: this.tileSampler
+              resource: this.tileSampler.resource
             }
           ],
         };
@@ -871,9 +1076,8 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       
       renderPass.setBindGroup(0, resources.bindGroup, [this.objectUniformsOffset]);
     }
-    
-    renderPass.setVertexBuffer(0, resources.rasterBuffer);    // Count the faces in the model
-    const modelFaceCount = useGreedy ? resources.rasterBuffer.size / 32 : resources.rasterBuffer.size / 4;
+      renderPass.setVertexBuffer(0, resources.rasterBuffer.resource);    // Count the faces in the model
+    const modelFaceCount = useGreedy ? resources.rasterBuffer.resource.size / 32 : resources.rasterBuffer.resource.size / 4;
     this.renderedFacesCount += modelFaceCount;
     
     // Update face counts based on which pipeline we're using and available buffers
@@ -881,7 +1085,7 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       this.renderedGreedyFacesCount += modelFaceCount;
       // If we have original buffer, get its actual size for comparison
       if (resources.originalBuffer) {
-        this.renderedOriginalFacesCount += resources.originalBuffer.size / 4;
+        this.renderedOriginalFacesCount += resources.originalBuffer.resource.size / 4;
       } else {
         this.renderedOriginalFacesCount += Math.floor(modelFaceCount * 2);
       }
@@ -889,7 +1093,7 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
       this.renderedOriginalFacesCount += modelFaceCount;
       // If we have greedy buffer, get its actual size for comparison
       if (resources.greedyBuffer) {
-        this.renderedGreedyFacesCount += resources.greedyBuffer.size / 6;
+        this.renderedGreedyFacesCount += resources.greedyBuffer.resource.size / 6;
       } else {
         this.renderedGreedyFacesCount += Math.floor(modelFaceCount * 0.5);
       }
@@ -932,14 +1136,13 @@ private getFaceCountsByDirection(faces: Uint8Array | Uint32Array, stride: number
           totalGreedyFaces += model.greedyFaceCount;
         }
       }
-    }
-      // Also count level faces if available
+    }      // Also count level faces if available
     if (globalThis.level) {
       // If the level has a rasterBuffer in the resourceMap, use that
       if (this.resourceMap.has(globalThis.level)) {
         const resources = this.resourceMap.get(globalThis.level);
         if (resources && resources.rasterBuffer) {
-          const levelFaceCount = resources.rasterBuffer.size / 16; 
+          const levelFaceCount = resources.rasterBuffer.resource.size / 16; 
           totalFaces += levelFaceCount;
         }
       }

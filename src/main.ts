@@ -16,10 +16,20 @@ import type { GameSettings, GameState } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
 import { MeshStats } from './MeshStats.js';
-import { Logger } from './Logger.js';
+import { Logger, configureLogging } from './Logger.js';
+import { errorHandler, ValidationError, Result } from './ErrorHandler.js';
+import { AutoCleanup } from './ResourceManager.js';
 
 // Create logger instance for this module
 const logger = Logger.getInstance();
+
+// Enable development mode logging for performance stats
+configureLogging(true);
+
+// Also enable physics logging for detailed performance tracking
+logger.configure({
+	enablePhysicsLogs: true
+});
 
 // Message types for networking
 export const MessageType = {
@@ -183,119 +193,232 @@ function playHitSound(): void {
 (globalThis as any).playAttackSound = playAttackSound;
 (globalThis as any).playHitSound = playHitSound;
 
+/**
+ * Safely load data from localStorage with error handling
+ */
+function safeLoadFromStorage<T>(key: string, defaultValue: T): Result<T> {
+	return errorHandler.safe(() => {
+		const item = localStorage.getItem(key);
+		if (!item) {
+			return defaultValue;
+		}
+		
+		const parsed = JSON.parse(item) as T;
+		return parsed;
+	}, `loadFromStorage:${key}`);
+}
+
+/**
+ * Safely save data to localStorage with error handling
+ */
+function safeSaveToStorage<T>(key: string, data: T): Result<void> {
+	return errorHandler.safe(() => {
+		const serialized = JSON.stringify(data);
+		localStorage.setItem(key, serialized);
+	}, `saveToStorage:${key}`);
+}
+
+/**
+ * Load game settings with validation and error handling
+ */
+function loadGameSettings(): GameSettings {
+	const loadResult = safeLoadFromStorage<GameSettings | null>('gameSettings', null);
+	
+	if (!loadResult.success) {
+		logger.warn('GAME', `Failed to load settings: ${loadResult.error.message}, using defaults`);
+		return settings;
+	}
+	
+	const savedSettings = loadResult.data;
+	if (!savedSettings) {
+		logger.info('GAME', 'No saved settings found, using defaults');
+		return settings;
+	}
+	
+	// Validate settings structure and version
+	if (typeof savedSettings !== 'object' || savedSettings.version !== settings.version) {
+		logger.warn('GAME', 'Invalid or outdated settings format, using defaults');
+		// Save current defaults to replace invalid settings
+		const saveResult = safeSaveToStorage('gameSettings', settings);
+		if (!saveResult.success) {
+			logger.error('GAME', `Failed to save default settings: ${saveResult.error.message}`);
+		}
+		return settings;
+	}
+	
+	// Validate required fields
+	if (!savedSettings.keybinds || typeof savedSettings.keybinds !== 'object') {
+		logger.warn('GAME', 'Settings missing keybinds, using defaults');
+		return settings;
+	}
+	
+	logger.info('GAME', 'Successfully loaded settings from storage');
+	return savedSettings as GameSettings;
+}
+
+/**
+ * Load game state with validation and error handling
+ */
+function loadGameState(): GameState | null {
+	const loadResult = safeLoadFromStorage<GameState | null>('gameState', null);
+	
+	if (!loadResult.success) {
+		logger.warn('GAME', `Failed to load game state: ${loadResult.error.message}`);
+		return null;
+	}
+	
+	const savedState = loadResult.data;
+	if (!savedState) {
+		logger.info('GAME', 'No saved game state found');
+		return null;
+	}
+	
+	// Validate state structure
+	if (typeof savedState !== 'object' || 
+		!Array.isArray(savedState.playerPos) || 
+		!Array.isArray(savedState.playerOrientation) ||
+		!Array.isArray(savedState.playerHeadRotation)) {
+		logger.warn('GAME', 'Invalid game state format, ignoring saved state');
+		return null;
+	}
+	
+	logger.info('GAME', 'Successfully loaded game state from storage');
+	return savedState as GameState;
+}
+
 // ...existing code...
 
-function setupUI(): void {	// Set up keybind buttons
+/**
+ * Initialize keybind buttons with current settings
+ */
+function initializeKeybindButtons(): void {
 	for (const button of document.getElementsByClassName('bind-button')) {
 		const bindButton = button as HTMLButtonElement;
 		const binding = settings.keybinds[bindButton.id as keyof typeof settings.keybinds];
 		bindButton.textContent = binding || '';
 	}
+}
 
-	// Set up mouse invert checkbox
+/**
+ * Initialize settings UI elements (checkboxes, etc.)
+ */
+function initializeSettingsUI(): void {
 	const invertMouseCheckbox = document.getElementById('invert-mouse') as HTMLInputElement;
 	if (invertMouseCheckbox) {
 		invertMouseCheckbox.checked = settings.invertMouse;
 	}
+}
 
+/**
+ * Map mouse button number to consistent string naming
+ */
+function mapMouseButtonToString(buttonNumber: number): string {
+	switch (buttonNumber) {
+		case 0: return 'Mouse0'; // Left click
+		case 1: return 'Mouse1'; // Middle click
+		case 2: return 'Mouse2'; // Right click
+		case 3: return 'Mouse3'; // Back button
+		case 4: return 'Mouse4'; // Forward button
+		default: return `Mouse${buttonNumber}`;
+	}
+}
+
+/**
+ * Update keybinding and save to localStorage
+ */
+function updateKeybinding(bindingId: string, newValue: string): void {
+	// Check if this key is already bound to another action
+	const existingBinding = Object.entries(settings.keybinds).find(([key, value]) =>
+		value === newValue && key !== bindingId
+	);
+
+	if (existingBinding) {
+		// Clear the old binding
+		const [oldActionKey] = existingBinding;
+		settings.keybinds[oldActionKey as keyof typeof settings.keybinds] = '';
+
+		// Update the UI for the old binding
+		const oldButton = document.getElementById(oldActionKey) as HTMLButtonElement;
+		if (oldButton) {
+			oldButton.textContent = '';
+		}
+	}
+
+	// Update the new binding
+	settings.keybinds[bindingId as keyof typeof settings.keybinds] = newValue;
+	
+	const saveResult = safeSaveToStorage('gameSettings', settings);
+	if (!saveResult.success) {
+		logger.error('GAME', `Failed to save settings after keybind update: ${saveResult.error.message}`);
+	}
+
+	// Update weapon position adjuster if this is the adjustWeapon keybinding
+	if (bindingId === 'adjustWeapon') {
+		WeaponPositionAdjuster.getInstance().updateKeyBindString(newValue);
+	}
+}
+
+/**
+ * Setup keybinding listeners for the menu
+ */
+function setupKeybindingListeners(): void {
 	const menu = document.getElementById('main-menu');
 	if (!menu) return;
+
 	let activeBinding: HTMLButtonElement | null = null;
 	let bindingJustCompleted = false;
+
+	// Keyboard event for keybinding
+	menu.addEventListener('keydown', (event) => {
+		event.stopPropagation();
+		if (!activeBinding) return;
+
+		const button = document.getElementById(activeBinding.id) as HTMLButtonElement;
+		if (button) {
+			button.textContent = event.code;
+			button.classList.remove('listening');
+		}
+
+		updateKeybinding(activeBinding.id, event.code);
+		activeBinding = null;
+		bindingJustCompleted = true;
+		event.preventDefault();
+	});
+
+	// Mouse event for keybinding
+	menu.addEventListener('mousedown', (event) => {
+		event.stopPropagation();
+		if (!activeBinding) return;
+
+		const mouseButton = mapMouseButtonToString(event.button);
+		const button = document.getElementById(activeBinding.id) as HTMLButtonElement;
+		if (button) {
+			button.textContent = mouseButton;
+			button.classList.remove('listening');
+		}
+
+		updateKeybinding(activeBinding.id, mouseButton);
+		activeBinding = null;
+		bindingJustCompleted = true;
+		event.preventDefault();
+	});
+
+	// Handle keyup to prevent re-activation
 	menu.addEventListener('keyup', (event) => {
 		event.stopPropagation();
 		if (activeBinding) {
 			event.preventDefault();
 		}
 
-		// If we just completed a binding, ignore this keyup to prevent re-activation
 		if (bindingJustCompleted) {
 			bindingJustCompleted = false;
 			event.preventDefault();
 			return;
 		}
-	}); menu.addEventListener('keydown', (event) => {
-		event.stopPropagation();
-		if (!activeBinding) return;
+	});
 
-		// Check if this key is already bound to another action
-		const existingBinding = Object.entries(settings.keybinds).find(([key, value]) =>
-			value === event.code && key !== activeBinding!.id
-		);
-
-		if (existingBinding) {
-			// Clear the old binding
-			const [oldActionKey] = existingBinding;
-			settings.keybinds[oldActionKey as keyof typeof settings.keybinds] = '';
-
-			// Update the UI for the old binding
-			const oldButton = document.getElementById(oldActionKey) as HTMLButtonElement;
-			if (oldButton) {
-				oldButton.textContent = '';
-			}
-		}
-		activeBinding.textContent = event.code;
-		activeBinding.classList.remove('listening');
-		settings.keybinds[activeBinding.id as keyof typeof settings.keybinds] = event.code;
-		localStorage.setItem('gameSettings', JSON.stringify(settings));
-		
-		// Update weapon position adjuster if this is the adjustWeapon keybinding
-		if (activeBinding.id === 'adjustWeapon') {
-			WeaponPositionAdjuster.getInstance().updateKeyBindString(event.code);
-		}
-		
-		activeBinding = null;
-		bindingJustCompleted = true;
-
-		// Prevent the key from activating the button
-		event.preventDefault();
-	}); menu.addEventListener('mousedown', (event) => {
-		event.stopPropagation();
-		if (!activeBinding) return;
-
-		// Map mouse buttons to consistent naming
-		let mouseButton: string;
-		switch (event.button) {
-			case 0: mouseButton = 'Mouse0'; break; // Left click
-			case 1: mouseButton = 'Mouse1'; break; // Middle click
-			case 2: mouseButton = 'Mouse2'; break; // Right click
-			case 3: mouseButton = 'Mouse3'; break; // Back button
-			case 4: mouseButton = 'Mouse4'; break; // Forward button
-			default: mouseButton = `Mouse${event.button}`; break;
-		}
-
-		// Check if this mouse button is already bound to another action
-		const existingBinding = Object.entries(settings.keybinds).find(([key, value]) =>
-			value === mouseButton && key !== activeBinding!.id
-		);
-
-		if (existingBinding) {
-			// Clear the old binding
-			const [oldActionKey] = existingBinding;
-			settings.keybinds[oldActionKey as keyof typeof settings.keybinds] = '';
-
-			// Update the UI for the old binding
-			const oldButton = document.getElementById(oldActionKey) as HTMLButtonElement;
-			if (oldButton) {
-				oldButton.textContent = '';
-			}
-		}
-		activeBinding.textContent = mouseButton;
-		activeBinding.classList.remove('listening');
-		settings.keybinds[activeBinding.id as keyof typeof settings.keybinds] = mouseButton;
-		localStorage.setItem('gameSettings', JSON.stringify(settings));
-		
-		// Update weapon position adjuster if this is the adjustWeapon keybinding
-		if (activeBinding.id === 'adjustWeapon') {
-			WeaponPositionAdjuster.getInstance().updateKeyBindString(mouseButton);
-		}
-		
-		activeBinding = null;
-		bindingJustCompleted = true;
-
-		// Prevent the subsequent click event
-		event.preventDefault();
-	}); menu.addEventListener('blur', (event) => {
+	// Handle blur to reset binding state
+	menu.addEventListener('blur', (event) => {
 		if (activeBinding && event.target === activeBinding) {
 			const currentBinding = settings.keybinds[activeBinding.id as keyof typeof settings.keybinds];
 			activeBinding.textContent = currentBinding || '';
@@ -304,48 +427,63 @@ function setupUI(): void {	// Set up keybind buttons
 		}
 	}, true);
 
+	// Handle menu button clicks
 	menu.addEventListener('click', (event) => {
 		event.stopPropagation();
 
-		// If we just completed a binding, ignore this click
 		if (bindingJustCompleted) {
 			bindingJustCompleted = false;
 			return;
 		}
+
 		const button = event.target as HTMLButtonElement;
 		if (button.classList?.contains('bind-button')) {
 			activeBinding = button;
 			activeBinding.classList.add('listening');
-			// Don't change textContent - CSS will show "Press key..." via ::before
 			return;
 		}
 
-		switch (button.id) {
-			case 'close-menu':
-				showingMenu = false;
-				menu.hidden = true;
-				break;
-			case 'host':
-				net.isHost = true;
-				const hostIdInput = document.getElementById('hostid') as HTMLInputElement;
-				if (hostIdInput) {
-					net.host(hostIdInput.value);
-				}
-				break;
-			case 'join':
-				const joinHostIdInput = document.getElementById('hostid') as HTMLInputElement;
-				if (joinHostIdInput) {
-					net.join(joinHostIdInput.value);
-				}
-				break;
-		}
+		handleMenuButtonClick(button.id);
 	});
 
 	if (showingMenu) {
 		menu.hidden = false;
 	}
+}
 
-	// Event listeners
+/**
+ * Handle menu button clicks (close, host, join)
+ */
+function handleMenuButtonClick(buttonId: string): void {
+	const menu = document.getElementById('main-menu');
+	if (!menu) return;
+
+	switch (buttonId) {
+		case 'close-menu':
+			showingMenu = false;
+			menu.hidden = true;
+			break;
+		case 'host':
+			net.isHost = true;
+			const hostIdInput = document.getElementById('hostid') as HTMLInputElement;
+			if (hostIdInput) {
+				net.host(hostIdInput.value);
+			}
+			break;
+		case 'join':
+			const joinHostIdInput = document.getElementById('hostid') as HTMLInputElement;
+			if (joinHostIdInput) {
+				net.join(joinHostIdInput.value);
+			}
+			break;
+	}
+}
+
+/**
+ * Setup global document event listeners
+ */
+function setupGlobalEventListeners(): void {
+	// Core input listeners
 	document.addEventListener('keydown', onKeydown);
 	document.addEventListener('keyup', (event) => {
 		key_states.delete(event.code);
@@ -358,6 +496,7 @@ function setupUI(): void {	// Set up keybind buttons
 		}
 	});
 
+	// Menu toggle and pointer lock management
 	document.addEventListener('click', (event) => {
 		const target = event.target as HTMLElement;
 		if (target instanceof HTMLButtonElement && target.id === 'toggle-menu') {
@@ -379,43 +518,30 @@ function setupUI(): void {	// Set up keybind buttons
 		}
 		if (showingMenu) {
 			showingMenu = false;
-			menu.hidden = true;
+			const mainMenu = document.getElementById('main-menu');
+			if (mainMenu) {
+				mainMenu.hidden = true;
+			}
 		}
 	});
 
 	document.addEventListener('visibilitychange', () => {
 		lastTime = performance.now();
 	});
-	// Mouse button handlers for combat
+}
+
+/**
+ * Setup mouse input handlers for combat
+ */
+function setupMouseInputHandlers(): void {
 	document.addEventListener('mousedown', (event) => {
 		if (!document.pointerLockElement || showingMenu) return;
-
-		// Map mouse buttons to consistent naming
-		let mouseButton: string;
-		switch (event.button) {
-			case 0: mouseButton = 'Mouse0'; break; // Left click
-			case 1: mouseButton = 'Mouse1'; break; // Middle click
-			case 2: mouseButton = 'Mouse2'; break; // Right click
-			case 3: mouseButton = 'Mouse3'; break; // Back button
-			case 4: mouseButton = 'Mouse4'; break; // Forward button
-			default: mouseButton = `Mouse${event.button}`; break;
-		}
-
+		const mouseButton = mapMouseButtonToString(event.button);
 		key_states.add(mouseButton);
 	});
 
 	document.addEventListener('mouseup', (event) => {
-		// Map mouse buttons to consistent naming
-		let mouseButton: string;
-		switch (event.button) {
-			case 0: mouseButton = 'Mouse0'; break;
-			case 1: mouseButton = 'Mouse1'; break;
-			case 2: mouseButton = 'Mouse2'; break;
-			case 3: mouseButton = 'Mouse3'; break;
-			case 4: mouseButton = 'Mouse4'; break;
-			default: mouseButton = `Mouse${event.button}`; break;
-		}
-
+		const mouseButton = mapMouseButtonToString(event.button);
 		key_states.delete(mouseButton);
 	});
 
@@ -428,7 +554,12 @@ function setupUI(): void {	// Set up keybind buttons
 			key_states.clear();
 		}
 	});
+}
 
+/**
+ * Setup error handling listeners
+ */
+function setupErrorHandlers(): void {
 	window.addEventListener('error', (event) => {
 		const debug = document.getElementById('debug');
 		if (debug) {
@@ -441,7 +572,13 @@ function setupUI(): void {	// Set up keybind buttons
 		if (debug) {
 			debug.innerHTML = `${event.reason}<br>${debug.innerHTML}`;
 		}
-	});	// Create time label
+	});
+}
+
+/**
+ * Create and append the time display label
+ */
+function createTimeLabel(): void {
 	timeLabel = document.createElement('div');
 	timeLabel.style.position = 'fixed';
 	timeLabel.style.top = '0px';
@@ -450,12 +587,19 @@ function setupUI(): void {	// Set up keybind buttons
 	timeLabel.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
 	timeLabel.style.borderRadius = '5px';
 	timeLabel.style.fontFamily = 'monospace';
-	timeLabel.style.fontSize = '14px'; timeLabel.style.lineHeight = '1.4';
+	timeLabel.style.fontSize = '14px';
+	timeLabel.style.lineHeight = '1.4';
 	document.body.appendChild(timeLabel);
-	// Create crosshair
+}
+
+/**
+ * Create and append the crosshair element
+ */
+function createCrosshair(): void {
 	const crosshair = document.createElement('div');
 	crosshair.id = 'crosshair';
 	crosshair.style.position = 'fixed';
+	
 	const uiConfig = getConfig().getUIConfig();
 	crosshair.style.top = `${uiConfig.centerPosition}%`;
 	crosshair.style.left = `${uiConfig.centerPosition}%`;
@@ -463,13 +607,20 @@ function setupUI(): void {	// Set up keybind buttons
 	crosshair.style.width = '20px';
 	crosshair.style.height = '20px';
 	crosshair.style.pointerEvents = 'none';
-	crosshair.style.zIndex = '1000'; crosshair.innerHTML = `
+	crosshair.style.zIndex = '1000';
+	
+	crosshair.innerHTML = `
 		<div style="position: absolute; top: ${uiConfig.centerPosition}%; left: 0; right: 0; height: 2px; background: white; transform: translateY(-${uiConfig.centerPosition}%);"></div>
 		<div style="position: absolute; left: ${uiConfig.centerPosition}%; top: 0; bottom: 0; width: 2px; background: white; transform: translateX(-${uiConfig.centerPosition}%);"></div>
 	`;
+	
 	document.body.appendChild(crosshair);
+}
 
-	// Create attack flash overlay
+/**
+ * Create and append the attack flash overlay
+ */
+function createAttackFlash(): void {
 	const attackFlash = document.createElement('div');
 	attackFlash.id = 'attack-flash';
 	attackFlash.style.position = 'fixed';
@@ -482,6 +633,26 @@ function setupUI(): void {	// Set up keybind buttons
 	attackFlash.style.zIndex = '999';
 	attackFlash.style.transition = 'background-color 0.1s ease-out';
 	document.body.appendChild(attackFlash);
+}
+
+/**
+ * Main UI setup function - coordinates all UI initialization
+ */
+function setupUI(): void {
+	// Initialize UI components
+	initializeKeybindButtons();
+	initializeSettingsUI();
+	
+	// Setup event handling
+	setupKeybindingListeners();
+	setupGlobalEventListeners();
+	setupMouseInputHandlers();
+	setupErrorHandlers();
+	
+	// Create UI elements
+	createTimeLabel();
+	createCrosshair();
+	createAttackFlash();
 }
 
 /**
@@ -697,9 +868,10 @@ function performRaycast(): void {
 	}
 }
 
-function loop(): void {
-	const elapsed = performance.now() - lastTime;
-	lastTime = performance.now();	// Save game state
+/**
+ * Save current game state to localStorage
+ */
+function saveGameState(): void {
 	const gameState: GameState = {
 		playerPos: Array.from(player.localPosition) as [number, number, number],
 		playerOrientation: Array.from(player.localRotation) as [number, number, number, number],
@@ -707,93 +879,229 @@ function loop(): void {
 		showingMenu,
 		godMode
 	};
-	localStorage.setItem('gameState', JSON.stringify(gameState));
+	
+	const saveResult = safeSaveToStorage('gameState', gameState);
+	if (!saveResult.success) {
+		logger.error('GAME', `Failed to save game state: ${saveResult.error.message}`);
+	}
 
 	// Ensure globalThis.godMode is always in sync
 	if ((globalThis as any).godMode !== godMode) {
 		(globalThis as any).godMode = godMode;
 	}
+}
 
-	// Monitor for fall-through (player falling below reasonable level)
-	if (player.localPosition[2] < -2 && !godMode) {		logger.warn('PHYSICS', `⚠️ Potential fall-through detected! Player Z position: ${player.localPosition[2].toFixed(2)}`);
+/**
+ * Monitor for physics anomalies like fall-through
+ */
+function monitorPhysicsAnomalies(): void {
+	if (player.localPosition[2] < -2 && !godMode) {
+		logger.warn('PHYSICS', `⚠️ Potential fall-through detected! Player Z position: ${player.localPosition[2].toFixed(2)}`);
 		logger.warn('PHYSICS', `Current mesh algorithm: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
 		logger.warn('PHYSICS', `Player velocity: [${player.vel[0].toFixed(2)}, ${player.vel[1].toFixed(2)}, ${player.vel[2].toFixed(2)}]`);
 		logger.warn('PHYSICS', `On ground: ${physicsSystem.isEntityOnGround(player)}`);
-	}// Update UI
-	if (timeLabel) {
-		const playerStats = combatSystem.getCombatStats(player);
-		const currentWeapon = combatSystem.getWeapon(player);
-		const healthInfo = playerStats ? `HP: ${Math.ceil(playerStats.health)}/${playerStats.maxHealth}` : '';
-		const weaponInfo = currentWeapon ? `Weapon: ${currentWeapon.weaponData.name}` : '';
-		const attackInfo = currentWeapon?.swing.isSwinging ?
-			`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING! (${Math.round(currentWeapon.swing.progress * 100)}%)</span>` :
-			`<span style="color: #888888;">Ready to attack</span>`;
-
-		// Get physics info
-		const physicsInfo = physicsSystem.getDebugStatus();
-		const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
-		const groundedInfo = physicsSystem.isEntityOnGround(player) ?
-			'<span style="color: #4ECDC4;">On Ground</span>' :
-			'<span style="color: #FF6B6B;">Airborne</span>';		// Get mesh statistics
-		const meshStats = renderer.getMeshStats();
-		const meshAlgorithm = useGreedyMesh ? "Greedy" : "Original";
-		// Make sure we always have a valid face count
-		const faceCount = meshStats.faces > 0 ? meshStats.faces : 1000;
-		const simpleMeshInfo = `Faces: ${faceCount.toLocaleString()} (${meshAlgorithm} mesh)`;
-
-		timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity?.worldPosition[0].toFixed(2)}, ${camera.entity?.worldPosition[1].toFixed(2)}, ${camera.entity?.worldPosition[2].toFixed(2)}<br>
-			${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
-			<span style="color: #FF6B6B;">${healthInfo}</span><br>
-			<span style="color: #4ECDC4;">${weaponInfo}</span><br>
-			${attackInfo}</span><br>
-			<span style="color: #AAFFAA;">${velocityInfo} | ${groundedInfo}</span><br>
-			<span style="color: #FFB74D; font-size: 0.9em;">${simpleMeshInfo}</span><br>
-			<span style="color: #AAAAFF; font-size: 0.9em;">${physicsInfo}</span>`;
-
-		// Update crosshair color based on attack state
-		const crosshair = document.getElementById('crosshair');
-		if (crosshair && currentWeapon) {
-			const color = currentWeapon.swing.isSwinging ? '#FF4444' : '#FFFFFF';
-			const lines = crosshair.getElementsByTagName('div');
-			for (let i = 0; i < lines.length; i++) {
-				(lines[i] as HTMLElement).style.background = color;
-			}
-		}
-	}	// CRITICAL: Only process input after level is fully loaded to prevent race condition
-	// Input processing can modify entity velocities, which should only happen after terrain is ready
-	if (level.isFullyLoaded) {
-		processInput(elapsed);
 	}
+}
 
-	// Update systems
+/**
+ * Update the UI display with game information
+ */
+function updateGameUI(): void {
+	if (!timeLabel) return;
+
+	// Get player combat stats
+	const playerStats = combatSystem.getCombatStats(player);
+	const currentWeapon = combatSystem.getWeapon(player);
+	const healthInfo = playerStats ? `HP: ${Math.ceil(playerStats.health)}/${playerStats.maxHealth}` : '';
+	const weaponInfo = currentWeapon ? `Weapon: ${currentWeapon.weaponData.name}` : '';
+	const attackInfo = currentWeapon?.swing.isSwinging ?
+		`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING! (${Math.round(currentWeapon.swing.progress * 100)}%)</span>` :
+		`<span style="color: #888888;">Ready to attack</span>`;
+
+	// Get physics and movement info
+	const physicsInfo = physicsSystem.getDebugStatus();
+	const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
+	const groundedInfo = physicsSystem.isEntityOnGround(player) ?
+		'<span style="color: #4ECDC4;">On Ground</span>' :
+		'<span style="color: #FF6B6B;">Airborne</span>';
+
+	// Get rendering info
+	const meshStats = renderer.getMeshStats();
+	const meshAlgorithm = useGreedyMesh ? "Greedy" : "Original";
+	const faceCount = meshStats.faces > 0 ? meshStats.faces : 1000;
+	const simpleMeshInfo = `Faces: ${faceCount.toLocaleString()} (${meshAlgorithm} mesh)`;
+
+	// Update main UI display
+	timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity?.worldPosition[0].toFixed(2)}, ${camera.entity?.worldPosition[1].toFixed(2)}, ${camera.entity?.worldPosition[2].toFixed(2)}<br>
+		${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
+		<span style="color: #FF6B6B;">${healthInfo}</span><br>
+		<span style="color: #4ECDC4;">${weaponInfo}</span><br>
+		${attackInfo}</span><br>
+		<span style="color: #AAFFAA;">${velocityInfo} | ${groundedInfo}</span><br>
+		<span style="color: #FFB74D; font-size: 0.9em;">${simpleMeshInfo}</span><br>
+		<span style="color: #AAAAFF; font-size: 0.9em;">${physicsInfo}</span>`;
+
+	// Update crosshair color based on attack state
+	updateCrosshairDisplay(currentWeapon);
+}
+
+/**
+ * Update crosshair visual state
+ */
+function updateCrosshairDisplay(currentWeapon: any): void {
+	const crosshair = document.getElementById('crosshair');
+	if (!crosshair || !currentWeapon) return;
+
+	const color = currentWeapon.swing.isSwinging ? '#FF4444' : '#FFFFFF';
+	const lines = crosshair.getElementsByTagName('div');
+	for (let i = 0; i < lines.length; i++) {
+		(lines[i] as HTMLElement).style.background = color;
+	}
+}
+
+/**
+ * Process game input with performance monitoring
+ */
+function processGameInput(elapsed: number): number {
+	if (!level.isFullyLoaded) return 0;
+
+	const inputStartTime = performance.now();
+	processInput(elapsed);
+	const inputTime = performance.now() - inputStartTime;
+	
+	// Log input performance if it takes too long
+	if (inputTime > 5) {
+		logger.performance('Input processing', inputTime, 'Input processing took longer than expected');
+	}
+	
+	return inputTime;
+}
+
+/**
+ * Update combat system with performance monitoring
+ */
+function updateCombatSystem(elapsed: number): number {
+	const combatStartTime = performance.now();
 	combatSystem.update(elapsed);
-	// CRITICAL: Only run physics after level is fully loaded to prevent race condition
-	// Greedy mesh takes longer to generate, so physics must wait for terrain data
-	if (level.isFullyLoaded) {
-		if (!physicsStarted) {
-			logger.info('PHYSICS', '🎮 Physics system started - level fully loaded and terrain collision data ready');
-			physicsStarted = true;
-		}
-		physicsSystem.update(elapsed);
+	return performance.now() - combatStartTime;
+}
+
+/**
+ * Update physics system with performance monitoring
+ */
+function updatePhysicsSystem(elapsed: number): number {
+	if (!level.isFullyLoaded) return 0;
+
+	if (!physicsStarted) {
+		logger.info('PHYSICS', '🎮 Physics system started - level fully loaded and terrain collision data ready');
+		physicsStarted = true;
 	}
-	// Update all entities (gameplay logic only, physics handled separately)
-	// Wait for level to be fully loaded before running entity updates to prevent race conditions
-	if (level.isFullyLoaded) {
-		for (const e of Entity.all) {
-			e.update(elapsed);
+
+	const physicsStartTime = performance.now();
+	physicsSystem.update(elapsed);
+	const physicsTime = performance.now() - physicsStartTime;
+
+	// Log physics performance if it takes too long (>5ms indicates potential optimization needed)
+	if (physicsTime > 5) {
+		logger.performance('Physics update', physicsTime, 'Physics processing took longer than expected');
+	}
+
+	// Log physics performance metrics every 5 seconds for debugging
+	if (performance.now() % 5000 < 16.67) { // Log approximately every 5 seconds
+		const metrics = physicsSystem.getPerformanceMetrics();
+		if (metrics.collisionChecks > 0) {
+			logger.performance('Physics metrics', physicsTime, 
+				`Collision checks: ${metrics.collisionChecks}, Hits: ${metrics.collisionHits}, ` +
+				`Hit rate: ${(metrics.collisionHitRate * 100).toFixed(1)}%, ` +
+				`Grid update: ${metrics.gridUpdateTime.toFixed(2)}ms`);
 		}
 	}
 
-	// Update transforms
+	return physicsTime;
+}
+
+/**
+ * Update all game entities
+ */
+function updateGameEntities(elapsed: number): void {
+	if (!level.isFullyLoaded) return;
+
+	for (const e of Entity.all) {
+		e.update(elapsed);
+	}
+}
+
+/**
+ * Update entity transforms with performance monitoring
+ */
+function updateEntityTransforms(): number {
+	const transformStartTime = performance.now();
 	for (const e of Entity.all) {
 		if (!e.parent) {
 			e.updateTransforms(null);
 		}
 	}
+	return performance.now() - transformStartTime;
+}
 
+/**
+ * Render the current frame with performance monitoring
+ */
+function renderFrame(): number {
+	const renderStartTime = performance.now();
 	camera.update();
 	renderer.draw();
+	return performance.now() - renderStartTime;
+}
+
+/**
+ * Update network systems with performance monitoring
+ */
+function updateNetworking(): number {
+	const netStartTime = performance.now();
 	net.update();
+	return performance.now() - netStartTime;
+}
+
+/**
+ * Log performance statistics periodically
+ */
+function logPerformanceStats(totalFrameTime: number, transformTime: number, renderTime: number, netTime: number): void {
+	// Log performance breakdown every 60 frames (~1 second at 60fps)
+	if (performance.now() % 1000 < 16.67) { // Log approximately once per second
+		logger.performance('Frame breakdown', totalFrameTime, 
+			`Transform: ${transformTime.toFixed(2)}ms, Render: ${renderTime.toFixed(2)}ms, Network: ${netTime.toFixed(2)}ms`);
+	}
+}
+
+/**
+ * Main game loop - coordinates all game systems and updates
+ */
+function loop(): void {
+	const frameStartTime = performance.now();
+	const elapsed = frameStartTime - lastTime;
+	lastTime = frameStartTime;
+
+	// Game state management
+	saveGameState();
+	monitorPhysicsAnomalies();
+	updateGameUI();
+
+	// System updates
+	const inputTime = processGameInput(elapsed);
+	const combatTime = updateCombatSystem(elapsed);
+	const physicsTime = updatePhysicsSystem(elapsed);
+	
+	updateGameEntities(elapsed);
+	const transformTime = updateEntityTransforms();
+	const renderTime = renderFrame();
+	const netTime = updateNetworking();
+
+	// Performance monitoring
+	const frameEndTime = performance.now();
+	const totalFrameTime = frameEndTime - frameStartTime;
+	logPerformanceStats(totalFrameTime, transformTime, renderTime, netTime);
+
 	requestAnimationFrame(loop);
 }
 
