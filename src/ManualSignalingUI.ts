@@ -1,4 +1,5 @@
 import { Net } from './Net';
+import { MultiplayerManager } from './MultiplayerManager';
 import { Logger } from './Logger.js';
 
 const logger = Logger.getInstance();
@@ -14,6 +15,7 @@ export interface SignalingStep {
 export class ManualSignalingUI {
   private container: HTMLElement | null = null;
   private net: Net;
+  private mpManager: MultiplayerManager;
   private currentStep: number = 0;
   private steps: SignalingStep[] = [];
   private isHost: boolean = false;
@@ -22,8 +24,9 @@ export class ManualSignalingUI {
   private connectionEstablished: boolean = false;
   private connectionCheckInterval?: number;
 
-  constructor(net: Net) {
+  constructor(net: Net, mpManager: MultiplayerManager) {
     this.net = net;
+    this.mpManager = mpManager;
     this.setupConnectionStateListener();
   }  private setupConnectionStateListener(): void {
     this.net.onConnectionStateChange((isConnected) => {
@@ -33,15 +36,12 @@ export class ManualSignalingUI {
         this.updateConnectionStatus();
         this.stopConnectionCheck();
         
-        // Automatically close signaling UI and start the game
-        setTimeout(() => {
-          logger.info('SIGNALING', 'Connection established, automatically starting game');
-          this.finishSignaling();
-        }, 1000); // Small delay to show success message
+        // Automatically close signaling UI and start the game immediately
+        logger.info('SIGNALING', 'Connection established, automatically starting game');
+        this.finishSignaling();
       }
     });
-  }
-  private startConnectionCheck(): void {
+  }  private startConnectionCheck(): void {
     // Stop any existing check
     this.stopConnectionCheck();
     
@@ -52,11 +52,9 @@ export class ManualSignalingUI {
         this.updateConnectionStatus();
         this.stopConnectionCheck();
         
-        // Automatically close signaling UI and start the game
-        setTimeout(() => {
-          logger.info('SIGNALING', 'Connection detected via polling, automatically starting game');
-          this.finishSignaling();
-        }, 1000); // Small delay to show success message
+        // Automatically close signaling UI and start the game immediately
+        logger.info('SIGNALING', 'Connection detected via polling, automatically starting game');
+        this.finishSignaling();
       }
     }, 500);
   }
@@ -89,8 +87,7 @@ export class ManualSignalingUI {
     this.createContainer();
     if (!this.container) return;
     this.startJoinFlow();
-  }
-  // Start the host signaling flow
+  }  // Start the host signaling flow
   private async startHostFlow(): Promise<void> {
     this.isHost = true;
     this.connectionEstablished = false;
@@ -98,8 +95,14 @@ export class ManualSignalingUI {
     try {
       logger.info('SIGNALING', 'Starting host signaling flow');
       
-      // Generate offer
+      // Create the game (this sets up multiplayer manager as host)
+      logger.info('SIGNALING', 'Calling mpManager.createGame()...');
+      const gameId = await this.mpManager.createGame();      logger.info('SIGNALING', `Game created with ID: ${gameId}`);
+      logger.info('SIGNALING', `MultiplayerManager isHost: ${this.mpManager.isHost}`);
+      
+      // Generate offer through Net
       const offer = await this.net.createOffer();
+      logger.info('SIGNALING', `Net isHost: ${(this.net as any).isHost}`);
       
       this.steps = [
         {
@@ -129,28 +132,39 @@ export class ManualSignalingUI {
       this.showError('Failed to create offer: ' + error);
     }
   }  // Start the client signaling flow
-  private startJoinFlow(): void {
+  private async startJoinFlow(): Promise<void> {
     this.isHost = false;
     this.connectionEstablished = false;
     
-    this.steps = [
-      {
-        type: 'offer',
-        title: 'Step 1: Enter Host Offer',
-        instruction: 'Paste the offer you received from the host:',
-        isInput: true
-      },
-      {
-        type: 'complete',
-        title: 'Step 2: Share Your Answer & Wait',
-        instruction: 'Copy this answer and send it back to the host. Waiting for the host to complete the connection...',
-        data: '' // Will be filled after processing offer
-      }
-    ];
-    
-    this.currentStep = 0;
-    this.showCurrentStep();
-  }  private showCurrentStep(): void {
+    try {
+      logger.info('SIGNALING', 'Starting client signaling flow');
+        // Initialize as client (this sets isHost to false)
+      await this.mpManager.joinGame('manual_join');
+      logger.info('SIGNALING', `MultiplayerManager isHost: ${this.mpManager.isHost}`);
+      
+      this.steps = [
+        {
+          type: 'offer',
+          title: 'Step 1: Enter Host Offer',
+          instruction: 'Paste the offer you received from the host:',
+          isInput: true
+        },
+        {
+          type: 'complete',
+          title: 'Step 2: Share Your Answer & Wait',
+          instruction: 'Copy this answer and send it back to the host. Waiting for the host to complete the connection...',
+          data: '' // Will be filled after processing offer
+        }
+      ];
+      
+      this.currentStep = 0;
+      this.showCurrentStep();
+      
+    } catch (error) {
+      logger.error('SIGNALING', 'Client flow error:', error);
+      this.showError('Failed to initialize client: ' + error);
+    }
+  }private showCurrentStep(): void {
     if (!this.container || this.currentStep >= this.steps.length) return;
     
     const step = this.steps[this.currentStep];
@@ -227,11 +241,25 @@ export class ManualSignalingUI {
 
     try {
       const data = input.value.trim();
-      
-      if (this.isHost) {
+        if (this.isHost) {
         // Host processing client answer
         await this.net.processAnswer(data);
         logger.info('SIGNALING', 'Host processed client answer');
+        
+        // Start connection checking for host after processing answer
+        this.startConnectionCheck();
+        
+        // Also check immediately if already connected
+        if (this.net.isConnectionActive() && !this.connectionEstablished) {
+          this.connectionEstablished = true;
+          this.updateConnectionStatus();
+          this.stopConnectionCheck();
+          
+          // Automatically close signaling UI and start the game immediately
+          logger.info('SIGNALING', 'Host connection detected immediately after processing answer');
+          this.finishSignaling();
+          return; // Don't continue to nextStep
+        }
       } else {
         // Client processing host offer
         const answer = await this.net.createAnswer(data);
@@ -243,18 +271,15 @@ export class ManualSignalingUI {
         // For clients, immediately start connection checking after generating answer
       if (!this.isHost && this.currentStep === 1) {
         this.startConnectionCheck();
-        
-        // Also check immediately if already connected
+          // Also check immediately if already connected
         if (this.net.isConnectionActive() && !this.connectionEstablished) {
           this.connectionEstablished = true;
           this.updateConnectionStatus();
           this.stopConnectionCheck();
           
-          // Automatically close signaling UI and start the game
-          setTimeout(() => {
-            logger.info('SIGNALING', 'Connection detected immediately, automatically starting game');
-            this.finishSignaling();
-          }, 1000); // Small delay to show success message
+          // Automatically close signaling UI and start the game immediately
+          logger.info('SIGNALING', 'Connection detected immediately, automatically starting game');
+          this.finishSignaling();
         }
       }
       
@@ -268,18 +293,15 @@ export class ManualSignalingUI {
     // If client reaches the final step (step 1, which is the answer display), start checking for connection immediately
     if (!this.isHost && this.currentStep === 1) {
       this.startConnectionCheck();
-      
-      // Also check immediately if already connected
+        // Also check immediately if already connected
       if (this.net.isConnectionActive() && !this.connectionEstablished) {
         this.connectionEstablished = true;
         this.updateConnectionStatus();
         this.stopConnectionCheck();
         
-        // Automatically close signaling UI and start the game
-        setTimeout(() => {
-          logger.info('SIGNALING', 'Connection detected in nextStep, automatically starting game');
-          this.finishSignaling();
-        }, 1000); // Small delay to show success message
+        // Automatically close signaling UI and start the game immediately
+        logger.info('SIGNALING', 'Connection detected in nextStep, automatically starting game');
+        this.finishSignaling();
       }
     }
     
@@ -656,11 +678,10 @@ export class ManualSignalingUI {
 
   isVisible(): boolean {
     return this.container !== null;
-  }
-  // Static helper for easy integration
-  static show(net: Net, isHost: boolean): Promise<void> {
+  }  // Static helper for easy integration
+  static show(net: Net, mpManager: MultiplayerManager, isHost: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
-      const ui = new ManualSignalingUI(net);
+      const ui = new ManualSignalingUI(net, mpManager);
       
       ui.onComplete(() => {
         ui.close();

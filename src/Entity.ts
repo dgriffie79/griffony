@@ -128,9 +128,15 @@ export class Entity {
       child.updateTransforms(this.localToWorldTransform);
     }
   }
-
   // Network synchronization methods
   applyNetworkUpdate(state: NetworkState, isAuthoritative: boolean = false): void {
+    // CRITICAL: Never apply network updates to local players
+    // This is a safety check at the Entity level
+    if ((this as any).isLocalPlayer === true) {
+      console.warn('ENTITY', `Attempted to apply network update to local player entity (ID: ${this.id}) - BLOCKED`);
+      return;
+    }
+    
     this.lastNetworkUpdate = Date.now();
     
     // Store network state for interpolation
@@ -380,12 +386,17 @@ export class Entity {
       height: this.height,
       radius: this.radius
     };
-  }
-
-  static fromSnapshot(snapshot: any): Entity {
+  }  static fromSnapshot(snapshot: any): Entity {
     const entity = new Entity();
     
+    // Override the auto-assigned ID with the snapshot ID
     entity.id = parseInt(snapshot.entityId);
+    
+    // Update the nextId to ensure no conflicts
+    if (entity.id >= Entity.nextId) {
+      Entity.nextId = entity.id + 1;
+    }
+    
     vec3.copy(entity.localPosition, snapshot.position);
     quat.copy(entity.localRotation, snapshot.rotation);
     if (snapshot.scale) {

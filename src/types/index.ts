@@ -213,6 +213,7 @@ export interface EntityUpdateMessage extends NetworkMessage {
   type: typeof MessageType.ENTITY_UPDATE;
   data: {
     entityId: string;
+    networkPlayerId?: string; // For remote player identification
     position: vec3;
     rotation: quat;
     velocity?: vec3;
