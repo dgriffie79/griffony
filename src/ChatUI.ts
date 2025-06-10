@@ -1,8 +1,5 @@
 import { Net } from './Net';
 import { MessageType, MessagePriority, type ChatMessage } from './types';
-import { Logger } from './Logger.js';
-
-const logger = Logger.getInstance();
 
 export interface ChatUIOptions {
   maxMessages?: number;
@@ -110,9 +107,7 @@ export class ChatUI {
     this.inputContainer.appendChild(this.sendButton);
     this.container.appendChild(this.messagesContainer);
     this.container.appendChild(this.inputContainer);
-    document.body.appendChild(this.container);
-
-    logger.info('CHAT', 'Chat UI created');
+    document.body.appendChild(this.container);    console.log('Chat UI created');
   }
 
   private getPositionStyles(): string {
@@ -187,10 +182,9 @@ export class ChatUI {
     // Add to local chat immediately
     this.addMessage(chatMessage.data.playerName, message, Date.now());
     
-    // Send to network
-    this.net.sendMessage(chatMessage);
+    // Send to network    this.net.sendMessage(chatMessage);
     
-    logger.info('CHAT', `Sent message: ${message}`);
+    console.log(`Sent message: ${message}`);
     
     // Close chat after sending
     this.close();
@@ -233,9 +227,7 @@ export class ChatUI {
     }
 
     // Show chat temporarily
-    this.showTemporary();
-
-    logger.debug('CHAT', `Added message from ${sender}: ${message}`);
+    this.showTemporary();    console.log(`Added message from ${sender}: ${message}`);
   }
 
   private escapeHtml(text: string): string {
@@ -249,7 +241,7 @@ export class ChatUI {
     // Don't open chat if signaling UI is active
     const signalingUI = document.getElementById('manualSignalingUI');
     if (signalingUI) {
-      logger.debug('CHAT', 'Cannot open chat while signaling UI is active');
+      console.log('Cannot open chat while signaling UI is active');
       return;
     }
 
@@ -268,7 +260,7 @@ export class ChatUI {
       this.chatInput!.focus();
     }, 50);
 
-    logger.debug('CHAT', 'Chat opened');
+    console.log('Chat opened');
   }
 
   public close(): void {
@@ -283,7 +275,7 @@ export class ChatUI {
     // Hide after delay if no messages
     this.scheduleHide();
 
-    logger.debug('CHAT', 'Chat closed');
+    console.log('Chat closed');
   }
 
   public toggle(): void {
@@ -333,6 +325,6 @@ export class ChatUI {
       this.container = null;
     }
 
-    logger.info('CHAT', 'Chat UI destroyed');
+    console.log('Chat UI destroyed');
   }
 }

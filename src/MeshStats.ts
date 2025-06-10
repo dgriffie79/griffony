@@ -1,8 +1,3 @@
-import { Logger } from './Logger.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
-
 /**
  * Utility class for tracking mesh statistics
  */
@@ -47,16 +42,16 @@ export class MeshStats {
     this.originalFaceCount = originalFaces;
     this.greedyFaceCount = greedyMergedFaces;
     this.maxMergedWidth = Math.max(this.maxMergedWidth, maxWidth);
-    this.maxMergedHeight = Math.max(this.maxMergedHeight, maxHeight);
-    this.totalMergedFaces = newTotalMergedFaces;
+    this.maxMergedHeight = Math.max(this.maxMergedHeight, maxHeight);    this.totalMergedFaces = newTotalMergedFaces;
     this.totalSavedFaces = newSavedFaces;
     this.largestSavedRegion = Math.max(this.largestSavedRegion, largestMerge);
-      // Log statistics to console for debugging
+    
+    // Log statistics to console for debugging
     const savingsPercent = this.originalFaceCount > 0 
       ? ((this.totalSavedFaces / this.originalFaceCount) * 100).toFixed(2) 
       : '0.00';
     
-    logger.debug('MESH', `Greedy Mesh Stats: 
+    console.log(`Greedy Mesh Stats: 
       Original Faces: ${this.originalFaceCount.toLocaleString()} 
       Merged Faces: ${this.greedyFaceCount.toLocaleString()} 
       Saved: ${this.totalSavedFaces.toLocaleString()} (${savingsPercent}%)`);

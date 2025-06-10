@@ -3,11 +3,7 @@ import { Entity } from './Entity';
 import { Player } from './Player';
 import { Weapon, WeaponConfigs } from './Weapon';
 import type { CombatStats, AttackInfo, CombatEvent } from './types/index';
-import { Logger } from './Logger.js';
 import { getConfig } from './Config.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
 
 export class CombatSystem {
   private static instance: CombatSystem | null = null;
@@ -189,13 +185,13 @@ export class CombatSystem {
 
   // Dispatch combat events for logging/UI updates
   private dispatchCombatEvent(event: CombatEvent): void {
-    logger.info('COMBAT', `Event: ${event.type}`, event);
+    console.log(`Event: ${event.type}`, event);
     // Future: Could dispatch to event system for UI updates
   }
 
   // Handle entity death
   private onEntityDeath(entity: Entity, killer?: Entity): void {
-    logger.info('COMBAT', `Entity ${entity.id} died`, { killer: killer?.id });
+    console.log(`Entity ${entity.id} died`, { killer: killer?.id });
     // Future: Handle loot drops, experience, etc.
   }
 }

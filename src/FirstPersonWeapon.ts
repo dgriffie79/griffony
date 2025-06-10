@@ -4,11 +4,8 @@ import type { Player } from './Player';
 import type { Weapon } from './Weapon';
 import type { Model } from './Model';
 import type { WeaponType } from './types/index';
-import { Logger } from './Logger.js';
 import { getConfig } from './Config.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
+import { gameResources } from './GameResources.js';
 
 /**
  * Default weapon positioning configurations for first-person view
@@ -117,25 +114,30 @@ export class FirstPersonWeapon extends Entity {
   
   /**
    * Update the weapon model based on the player's equipped weapon
-   */
-  updateWeaponModel(weapon: Weapon | null): void {
+   */  updateWeaponModel(weapon: Weapon | null): void {
     if (!weapon) {
       this.weaponModel = null;
-      this.model = null;
+      this.modelId = -1;
       return;
-    }
-    
-    // Set the model based on weapon type
+    }    // Set the modelId based on weapon type
     const modelName = weapon.weaponData.modelName;
-    this.model = globalThis.models?.[modelName] || null;
-    this.weaponModel = this.model;
+    console.log(`🔍 DEBUG: Looking for weapon model "${modelName}"`);
+    console.log(`🔍 DEBUG: Resource manager models ready: ${gameResources.areModelsReady()}`);
+    console.log(`🔍 DEBUG: Available models: ${gameResources.modelNames.join(', ')}`);
     
-    if (!this.model) {
-      logger.warn('WEAPON', `First-person weapon: Model "${modelName}" not found for ${weapon.weaponData.name}`);
+    this.modelId = gameResources.getModelId(modelName);
+    console.log(`🔍 DEBUG: Model "${modelName}" -> modelId: ${this.modelId}`);
+    
+    // Get the actual model for local reference (but don't store it)
+    const model = gameResources.getModel(this.modelId);
+    this.weaponModel = model;
+    
+    if (!model) {
+      console.warn(`First-person weapon: Model "${modelName}" not found for ${weapon.weaponData.name}`);
     } else {
       // Apply weapon-specific position configuration
       this.applyWeaponPositionConfig(modelName);
-      logger.debug('WEAPON', `Applied ${modelName} first-person positioning configuration`);
+      console.log(`Applied ${modelName} first-person positioning configuration`);
     }
     
     // Update attack animation duration from weapon config

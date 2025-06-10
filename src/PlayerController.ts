@@ -1,10 +1,7 @@
 import { vec3, quat } from 'gl-matrix';
-import { InputManager } from './InputManager';
-import { PlayerEntity } from './PlayerEntity';
-import { Camera } from './Camera';
-import { Logger } from './Logger.js';
-
-const logger = Logger.getInstance();
+import { InputManager } from './InputManager.js';
+import { PlayerEntity } from './PlayerEntity.js';
+import { Camera } from './Camera.js';
 
 /**
  * Base class for player controllers
@@ -39,13 +36,12 @@ export abstract class PlayerController {
 export class LocalPlayerController extends PlayerController {
   private inputManager: InputManager;
   private camera: Camera;
-  
-  constructor(playerId: string) {
+    constructor(playerId: string) {
     super(playerId);
     this.inputManager = InputManager.getInstance();
     this.camera = new Camera();
     
-    logger.info('PLAYER_CONTROLLER', `Created local player controller: ${playerId}`);
+    console.log(`Created local player controller: ${playerId}`);
   }
   
   update(deltaTime: number): void {
@@ -78,10 +74,9 @@ export class LocalPlayerController extends PlayerController {
  */
 export class RemotePlayerController extends PlayerController {
   private lastNetworkUpdate: number = 0;
-  
-  constructor(playerId: string) {
+    constructor(playerId: string) {
     super(playerId);
-    logger.info('PLAYER_CONTROLLER', `Created remote player controller: ${playerId}`);
+    console.log(`Created remote player controller: ${playerId}`);
   }
   
   update(deltaTime: number): void {

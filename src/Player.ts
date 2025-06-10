@@ -1,9 +1,6 @@
 import { vec3, quat } from 'gl-matrix';
 import { Entity } from './Entity';
 import { FirstPersonWeapon } from './FirstPersonWeapon';
-import { Logger } from './Logger.js';
-
-const logger = Logger.getInstance();
 
 export class Player extends Entity {
   gravity: boolean = true;
@@ -12,17 +9,22 @@ export class Player extends Entity {
   radius: number = 0.25;
   head: Entity = new Entity();
   fpWeapon: FirstPersonWeapon;
-  
-  // Network properties for multiplayer
+    // Network properties for multiplayer
   playerName: string = '';
   isLocalPlayer: boolean = true;
   networkPlayerId: string = ''; // Separate network ID for remote players
-  constructor(id: number = Entity.nextId++, isLocal: boolean = true, networkId: string = '') {
-    super();
+  
+  constructor(id: number = Entity.nextId++, isLocal: boolean = true, networkId: string = '') {    super();
     this.id = id;
     this.isLocalPlayer = isLocal;
     this.networkPlayerId = networkId;
-    this.model = globalThis.models?.['player'] || null;
+      // Look up player model ID
+    this.modelId = globalThis.modelNames?.indexOf('player') ?? -1;
+    if (this.modelId >= 0) {
+      console.log(`✅ Player ${id} assigned modelId: ${this.modelId} ('player')`);
+    } else {
+      console.warn(`❌ Player ${id} could not find 'player' model. Available: ${globalThis.modelNames?.join(', ') || 'none'}`);
+    }
     this.head.id = Entity.nextId++;
     this.head.parent = this;
     this.head.localPosition = vec3.fromValues(0, 0, 0.8 * this.height);
@@ -32,19 +34,18 @@ export class Player extends Entity {
       this.isNetworkEntity = true;
       this.ownerId = networkId;
       this.playerName = `Player_${networkId}`;
-      
-      // Remote players don't need first-person weapon view
+        // Remote players don't need first-person weapon view
       this.fpWeapon = new FirstPersonWeapon(this);
-      // For remote players, disable the weapon rendering by removing the model
-      this.fpWeapon.model = null;
+      // For remote players, disable the weapon rendering by removing the modelId
+      this.fpWeapon.modelId = -1;
       
-      logger.info('PLAYER', `Created remote player: ${this.playerName} (ID: ${this.id}, Network ID: ${networkId})`);
+      console.log(`Created remote player: ${this.playerName} (ID: ${this.id}, Network ID: ${networkId})`);
     } else {
       // Local player setup - NEVER make local player a network entity
       this.isNetworkEntity = false;
       this.playerName = networkId ? `Local_${networkId}` : 'Player_Local';
       this.fpWeapon = new FirstPersonWeapon(this);
-        logger.info('PLAYER', `Created local player: ${this.playerName} (ID: ${this.id})`);
+        console.log(`Created local player: ${this.playerName} (ID: ${this.id})`);
     }
   }
   // Override serialize to include player-specific data
@@ -115,7 +116,7 @@ export class Player extends Entity {
     // Add to entity list
     Entity.all.push(remotePlayer);
     
-    logger.info('PLAYER', `Created remote player with ID ${remoteId} for network ID ${networkPlayerId}`);
+    console.log(`Created remote player with ID ${remoteId} for network ID ${networkPlayerId}`);
     return remotePlayer;
   }
 

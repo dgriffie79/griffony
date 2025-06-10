@@ -1,8 +1,5 @@
 import { Net } from './Net';
 import { MultiplayerManager } from './MultiplayerManager';
-import { Logger } from './Logger.js';
-
-const logger = Logger.getInstance();
 
 export interface SignalingStep {
   type: 'offer' | 'answer' | 'complete';
@@ -28,20 +25,24 @@ export class ManualSignalingUI {
     this.net = net;
     this.mpManager = mpManager;
     this.setupConnectionStateListener();
-  }  private setupConnectionStateListener(): void {
+  }
+
+  private setupConnectionStateListener(): void {
     this.net.onConnectionStateChange((isConnected) => {
-      logger.info('SIGNALING', `Connection state changed: ${isConnected}`);
+      console.log(`Connection state changed: ${isConnected}`);
       if (isConnected && !this.connectionEstablished) {
         this.connectionEstablished = true;
         this.updateConnectionStatus();
         this.stopConnectionCheck();
         
         // Automatically close signaling UI and start the game immediately
-        logger.info('SIGNALING', 'Connection established, automatically starting game');
+        console.log('Connection established, automatically starting game');
         this.finishSignaling();
       }
     });
-  }  private startConnectionCheck(): void {
+  }
+
+  private startConnectionCheck(): void {
     // Stop any existing check
     this.stopConnectionCheck();
     
@@ -53,7 +54,7 @@ export class ManualSignalingUI {
         this.stopConnectionCheck();
         
         // Automatically close signaling UI and start the game immediately
-        logger.info('SIGNALING', 'Connection detected via polling, automatically starting game');
+        console.log('Connection detected via polling, automatically starting game');
         this.finishSignaling();
       }
     }, 500);
@@ -64,45 +65,36 @@ export class ManualSignalingUI {
       clearInterval(this.connectionCheckInterval);
       this.connectionCheckInterval = undefined;
     }
-  }  private updateConnectionStatus(): void {
-    if (!this.isHost && this.currentStep === 1 && this.steps[1]) {
-      // Update the final step instruction for clients
-      this.steps[1].instruction = 'Connection established successfully! Starting game...';
-      this.showCurrentStep();
-    } else if (this.isHost && this.currentStep === 2 && this.steps[2]) {
-      // Update the final step instruction for hosts
-      this.steps[2].instruction = 'Connection established successfully! Starting game...';
-      this.showCurrentStep();
-    }
-  }
-  // Show host signaling flow directly
-  showHostFlow(): void {
-    this.createContainer();
-    if (!this.container) return;
-    this.startHostFlow();
   }
 
-  // Show join signaling flow directly  
-  showJoinFlow(): void {
-    this.createContainer();
+  private updateConnectionStatus(): void {
     if (!this.container) return;
-    this.startJoinFlow();
-  }  // Start the host signaling flow
-  private async startHostFlow(): Promise<void> {
+    
+    const statusElement = this.container.querySelector('.connection-status');
+    if (statusElement) {
+      statusElement.textContent = '✅ Connected! Starting game...';
+      statusElement.className = 'connection-status connected';
+    }
+  }
+
+  // Start the host signaling flow
+  public async showHostFlow(): Promise<void> {
     this.isHost = true;
     this.connectionEstablished = false;
+    this.createContainer();
     
     try {
-      logger.info('SIGNALING', 'Starting host signaling flow');
+      console.log('Starting host signaling flow');
       
       // Create the game (this sets up multiplayer manager as host)
-      logger.info('SIGNALING', 'Calling mpManager.createGame()...');
-      const gameId = await this.mpManager.createGame();      logger.info('SIGNALING', `Game created with ID: ${gameId}`);
-      logger.info('SIGNALING', `MultiplayerManager isHost: ${this.mpManager.isHost}`);
+      console.log('Calling mpManager.createGame()...');
+      const gameId = await this.mpManager.createGame();
+      console.log(`Game created with ID: ${gameId}`);
+      console.log(`MultiplayerManager isHost: ${this.mpManager.isHost}`);
       
       // Generate offer through Net
       const offer = await this.net.createOffer();
-      logger.info('SIGNALING', `Net isHost: ${(this.net as any).isHost}`);
+      console.log(`Net isHost: ${(this.net as any).isHost}`);
       
       this.steps = [
         {
@@ -113,14 +105,14 @@ export class ManualSignalingUI {
         },
         {
           type: 'answer',
-          title: 'Step 2: Enter Client Answer',
-          instruction: 'Paste the answer you received from the joining player:',
+          title: 'Step 2: Enter Their Answer',
+          instruction: 'Paste the answer you received from the other player:',
           isInput: true
         },
         {
           type: 'complete',
-          title: 'Connection Complete!',
-          instruction: 'The connection has been established successfully.'
+          title: 'Step 3: Connection Complete',
+          instruction: 'Connection established! The game will start automatically.'
         }
       ];
       
@@ -128,32 +120,41 @@ export class ManualSignalingUI {
       this.showCurrentStep();
       
     } catch (error) {
-      logger.error('SIGNALING', 'Host flow error:', error);
+      console.error('Host flow error:', error);
       this.showError('Failed to create offer: ' + error);
     }
-  }  // Start the client signaling flow
-  private async startJoinFlow(): Promise<void> {
+  }
+
+  // Start the client signaling flow
+  public async showJoinFlow(): Promise<void> {
     this.isHost = false;
     this.connectionEstablished = false;
+    this.createContainer();
     
     try {
-      logger.info('SIGNALING', 'Starting client signaling flow');
-        // Initialize as client (this sets isHost to false)
+      console.log('Starting client signaling flow');
+      
+      // Initialize as client (this sets isHost to false)
       await this.mpManager.joinGame('manual_join');
-      logger.info('SIGNALING', `MultiplayerManager isHost: ${this.mpManager.isHost}`);
+      console.log(`MultiplayerManager isHost: ${this.mpManager.isHost}`);
       
       this.steps = [
         {
           type: 'offer',
-          title: 'Step 1: Enter Host Offer',
+          title: 'Step 1: Enter Host\'s Offer',
           instruction: 'Paste the offer you received from the host:',
           isInput: true
         },
         {
+          type: 'answer',
+          title: 'Step 2: Share Your Answer',
+          instruction: 'Copy this answer and send it back to the host:',
+          data: ''
+        },
+        {
           type: 'complete',
-          title: 'Step 2: Share Your Answer & Wait',
-          instruction: 'Copy this answer and send it back to the host. Waiting for the host to complete the connection...',
-          data: '' // Will be filled after processing offer
+          title: 'Step 3: Connection Complete',
+          instruction: 'Connection established! The game will start automatically.'
         }
       ];
       
@@ -161,90 +162,74 @@ export class ManualSignalingUI {
       this.showCurrentStep();
       
     } catch (error) {
-      logger.error('SIGNALING', 'Client flow error:', error);
+      console.error('Client flow error:', error);
       this.showError('Failed to initialize client: ' + error);
     }
-  }private showCurrentStep(): void {
+  }
+
+  private showCurrentStep(): void {
     if (!this.container || this.currentStep >= this.steps.length) return;
     
     const step = this.steps[this.currentStep];
     
     this.container.innerHTML = `
       <div class="signaling-step">
-        <div class="step-header">
-          <h2>${step.title}</h2>
-          <div class="step-progress">
-            Step ${this.currentStep + 1} of ${this.steps.length}
-          </div>
-        </div>
-        
-        <p class="step-instruction">${step.instruction}</p>
-        
-        ${step.isInput ? this.createInputSection() : this.createDataSection(step.data || '')}
-        
-        <div class="step-buttons">
-          ${step.isInput ? '<button id="processInput" class="primary-btn" disabled>Continue</button>' : ''}
-          ${!step.isInput && this.currentStep < this.steps.length - 1 ? '<button id="nextStep" class="primary-btn">Next</button>' : ''}
-          <button id="cancelSignaling" class="cancel-btn">Cancel</button>
-        </div>
+        <h2>${step.title}</h2>
+        <p>${step.instruction}</p>
+        <div class="connection-status">🔄 Waiting for connection...</div>
+        ${step.isInput ? 
+          `<textarea id="signalingInput" placeholder="Paste data here..." rows="10"></textarea>
+           <button id="processInput">Next</button>` :
+          `<textarea id="signalingOutput" readonly rows="10">${step.data || ''}</textarea>
+           <button id="copyData">Copy to Clipboard</button>
+           ${this.currentStep < this.steps.length - 1 ? '<button id="nextStep">Next</button>' : ''}`
+        }
+        <button id="closeSignaling">Cancel</button>
       </div>
     `;
-
-    this.attachStepEventListeners();
+    
+    this.setupEventListeners();
   }
-  private createInputSection(): string {
-    return `
-      <div class="input-section">
-        <textarea id="signalingInput" placeholder="Paste the signaling data here..." rows="10"></textarea>
-      </div>
-    `;
-  }
-  private createDataSection(data: string): string {
-    return `
-      <div class="output-section">
-        <textarea id="signalingOutput" readonly rows="10">${data}</textarea>
-        <button id="copyData" class="copy-btn">📋 Copy to Clipboard</button>
-      </div>
-    `;
-  }  private attachStepEventListeners(): void {
-    const processBtn = document.getElementById('processInput') as HTMLButtonElement;
-    const nextBtn = document.getElementById('nextStep') as HTMLButtonElement;
-    const cancelBtn = document.getElementById('cancelSignaling') as HTMLButtonElement;
-    const copyBtn = document.getElementById('copyData') as HTMLButtonElement;
-    const signalingInput = document.getElementById('signalingInput') as HTMLTextAreaElement;
 
-    processBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.processInput(); });
-    nextBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.nextStep(); });
-    cancelBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.close(); });
-    copyBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.copyToClipboard(); });
-
-    // Enable/disable continue button based on input content
-    if (signalingInput && processBtn) {
-      const updateButtonState = () => {
-        const hasContent = signalingInput.value.trim().length > 0;
-        processBtn.disabled = !hasContent;
-      };
-
-      // Check initial state
-      updateButtonState();
-
-      // Monitor input changes
-      signalingInput.addEventListener('input', updateButtonState);
-      signalingInput.addEventListener('paste', () => {
-        // Delay check to allow paste to complete
-        setTimeout(updateButtonState, 10);
+  private setupEventListeners(): void {
+    if (!this.container) return;
+    
+    const processBtn = this.container.querySelector('#processInput');
+    const nextBtn = this.container.querySelector('#nextStep');
+    const copyBtn = this.container.querySelector('#copyData');
+    const closeBtn = this.container.querySelector('#closeSignaling');
+    
+    if (processBtn) {
+      processBtn.addEventListener('click', () => this.processInput());
+    }
+    
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => this.nextStep());
+    }
+    
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => this.copyToClipboard());
+    }
+    
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        this.close();
+        this.onErrorCallback?.('User cancelled');
       });
     }
-  }private async processInput(): Promise<void> {
-    const input = document.getElementById('signalingInput') as HTMLTextAreaElement;
-    if (!input) return;
+  }
 
+  private async processInput(): Promise<void> {
+    const input = this.container?.querySelector('#signalingInput') as HTMLTextAreaElement;
+    if (!input?.value.trim()) return;
+    
+    const data = input.value.trim();
+    
     try {
-      const data = input.value.trim();
-        if (this.isHost) {
+      if (this.isHost) {
         // Host processing client answer
         await this.net.processAnswer(data);
-        logger.info('SIGNALING', 'Host processed client answer');
+        console.log('Host processed client answer');
         
         // Start connection checking for host after processing answer
         this.startConnectionCheck();
@@ -256,7 +241,7 @@ export class ManualSignalingUI {
           this.stopConnectionCheck();
           
           // Automatically close signaling UI and start the game immediately
-          logger.info('SIGNALING', 'Host connection detected immediately after processing answer');
+          console.log('Host connection detected immediately after processing answer');
           this.finishSignaling();
           return; // Don't continue to nextStep
         }
@@ -264,80 +249,71 @@ export class ManualSignalingUI {
         // Client processing host offer
         const answer = await this.net.createAnswer(data);
         this.steps[1].data = answer; // Update answer step with generated answer
-        logger.info('SIGNALING', 'Client processed host offer and generated answer');
+        console.log('Client processed host offer and generated answer');
       }
       
       this.nextStep();
-        // For clients, immediately start connection checking after generating answer
+      
+      // For clients, immediately start connection checking after generating answer
       if (!this.isHost && this.currentStep === 1) {
         this.startConnectionCheck();
-          // Also check immediately if already connected
+        
+        // Also check immediately if already connected
         if (this.net.isConnectionActive() && !this.connectionEstablished) {
           this.connectionEstablished = true;
           this.updateConnectionStatus();
           this.stopConnectionCheck();
           
           // Automatically close signaling UI and start the game immediately
-          logger.info('SIGNALING', 'Connection detected immediately, automatically starting game');
+          console.log('Connection detected immediately, automatically starting game');
           this.finishSignaling();
         }
       }
       
     } catch (error) {
-      logger.error('SIGNALING', 'Process input error:', error);
+      console.error('Process input error:', error);
       this.showError('Invalid signaling data: ' + error);
     }
-  }  private nextStep(): void {
+  }
+
+  private nextStep(): void {
     this.currentStep++;
     
-    // If client reaches the final step (step 1, which is the answer display), start checking for connection immediately
-    if (!this.isHost && this.currentStep === 1) {
-      this.startConnectionCheck();
-        // Also check immediately if already connected
-      if (this.net.isConnectionActive() && !this.connectionEstablished) {
-        this.connectionEstablished = true;
-        this.updateConnectionStatus();
-        this.stopConnectionCheck();
-        
-        // Automatically close signaling UI and start the game immediately
-        logger.info('SIGNALING', 'Connection detected in nextStep, automatically starting game');
-        this.finishSignaling();
-      }
+    if (this.currentStep >= this.steps.length) {
+      this.finishSignaling();
+    } else {
+      this.showCurrentStep();
     }
-    
-    this.showCurrentStep();
   }
 
   private async copyToClipboard(): Promise<void> {
-    const output = document.getElementById('signalingOutput') as HTMLTextAreaElement;
+    const output = this.container?.querySelector('#signalingOutput') as HTMLTextAreaElement;
     if (!output) return;
 
     try {
       await navigator.clipboard.writeText(output.value);
       
-      // Show feedback
-      const copyBtn = document.getElementById('copyData');
+      // Visual feedback
+      const copyBtn = this.container?.querySelector('#copyData') as HTMLButtonElement;
       if (copyBtn) {
         const originalText = copyBtn.textContent;
-        copyBtn.textContent = '✅ Copied!';
-        copyBtn.classList.add('copied');
-        
+        copyBtn.textContent = 'Copied!';
+        copyBtn.style.backgroundColor = '#4CAF50';
         setTimeout(() => {
           copyBtn.textContent = originalText;
-          copyBtn.classList.remove('copied');
+          copyBtn.style.backgroundColor = '';
         }, 2000);
       }
-      
     } catch (error) {
-      // Fallback for older browsers
+      console.error('Failed to copy to clipboard:', error);
+      // Fallback: select the text
       output.select();
-      document.execCommand('copy');
-      logger.info('SIGNALING', 'Data copied to clipboard (fallback method)');
+      output.setSelectionRange(0, 99999);
     }
   }
 
   private finishSignaling(): void {
-    logger.info('SIGNALING', 'Signaling process completed');
+    console.log('Signaling process completed');
     this.close();
     this.onCompleteCallback?.();
   }
@@ -348,32 +324,27 @@ export class ManualSignalingUI {
     const errorDiv = document.createElement('div');
     errorDiv.className = 'signaling-error';
     errorDiv.innerHTML = `
-      <div class="error-content">
-        <span class="error-icon">⚠️</span>
-        <span class="error-message">${message}</span>
-        <button class="error-close">×</button>
+      <div style="color: #ff4444; background: rgba(255, 68, 68, 0.1); padding: 10px; border-radius: 5px; margin: 10px 0;">
+        <strong>Error:</strong> ${message}
       </div>
     `;
     
     this.container.prepend(errorDiv);
     
-    // Auto-remove after 5 seconds
+    // Auto-remove error after 5 seconds
     setTimeout(() => {
       errorDiv.remove();
     }, 5000);
     
-    // Manual close
-    const closeBtn = errorDiv.querySelector('.error-close');
-    closeBtn?.addEventListener('click', () => errorDiv.remove());
-    
+    // Call error callback
     this.onErrorCallback?.(message);
   }
 
   private createContainer(): void {
-    // Remove existing container
+    // Remove any existing container
     this.close();
     
-    // Create new container
+    // Create main container
     this.container = document.createElement('div');
     this.container.id = 'manualSignalingUI';
     this.container.className = 'signaling-overlay';
@@ -388,7 +359,8 @@ export class ManualSignalingUI {
     if (document.getElementById('signalingStyles')) return;
     
     const styles = document.createElement('style');
-    styles.id = 'signalingStyles';    styles.textContent = `
+    styles.id = 'signalingStyles';
+    styles.textContent = `
       .signaling-overlay {
         position: fixed;
         top: 0;
@@ -400,296 +372,132 @@ export class ManualSignalingUI {
         justify-content: center;
         align-items: center;
         z-index: 10000;
-        font-family: var(--theme-font-family);
+        font-family: 'Courier New', monospace;
       }
       
       .signaling-step {
-        background: var(--theme-bg-primary);
-        color: var(--theme-text-primary);
-        padding: var(--theme-padding-large);
-        border: var(--theme-border-width) solid var(--theme-border-primary);
-        border-radius: var(--theme-border-radius);
+        background: #1a1a1a;
+        border: 2px solid #333;
+        border-radius: 10px;
+        padding: 30px;
         max-width: 600px;
         width: 90%;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        font-size: 1.2em;
+        color: #fff;
+        text-align: center;
       }
       
       .signaling-step h2 {
-        margin: 0 0 1rem 0;
-        color: var(--theme-text-primary);
-        text-align: center;
-        font-size: 1.5em;
+        color: #4CAF50;
+        margin-bottom: 20px;
+        font-size: 24px;
       }
       
-      .step-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 1.5rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      .signaling-step p {
+        margin-bottom: 20px;
+        font-size: 16px;
+        line-height: 1.5;
       }
       
-      .step-progress {
-        background: rgba(255, 255, 255, 0.1);
-        padding: 0.3rem var(--theme-padding-base);
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        border-radius: var(--theme-border-radius);
-        font-size: 0.8em;
-        color: var(--theme-text-primary);
+      .connection-status {
+        margin: 15px 0;
+        padding: 10px;
+        border-radius: 5px;
+        font-weight: bold;
+        background: rgba(255, 165, 0, 0.2);
+        color: #FFA500;
       }
       
-      .step-instruction {
-        background: rgba(255, 255, 255, 0.05);
-        padding: 1rem;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: var(--theme-border-radius);
-        margin: 1rem 0;
-        color: var(--theme-text-primary);
-        line-height: 1.4;
+      .connection-status.connected {
+        background: rgba(76, 175, 80, 0.2);
+        color: #4CAF50;
       }
       
-      .input-section, .output-section {
-        margin: 1rem 0;
-      }
-      
-      .input-section textarea, .output-section textarea {
+      #signalingInput, #signalingOutput {
         width: 100%;
-        min-height: 120px;
-        background: var(--theme-bg-primary);
-        border: var(--theme-border-width) solid var(--theme-border-primary);
-        border-radius: var(--theme-border-radius);
-        padding: var(--theme-padding-base);
-        color: var(--theme-text-primary);
-        font-family: var(--theme-font-family-mono);
-        font-size: 0.9em;
+        min-height: 150px;
+        background: #2a2a2a;
+        border: 1px solid #555;
+        border-radius: 5px;
+        color: #fff;
+        padding: 15px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
         resize: vertical;
+        margin-bottom: 15px;
         box-sizing: border-box;
       }
       
-      .input-section textarea:focus {
+      #signalingInput:focus, #signalingOutput:focus {
         outline: none;
-        border-color: rgba(255, 255, 255, 0.8);
-        box-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
+        border-color: #4CAF50;
       }
       
-      .input-section textarea::placeholder {
-        color: var(--theme-text-secondary);
-      }
-      
-      .copy-btn, .primary-btn, .success-btn, .cancel-btn {
-        position: relative;
-        padding: 0.6rem 1.2rem;
-        border: var(--theme-border-width) solid var(--theme-border-primary);
-        border-radius: var(--theme-border-radius);
-        background-color: var(--theme-bg-primary);
-        color: var(--theme-text-primary);
-        font-family: var(--theme-font-family);
-        font-size: 0.9em;
+      .signaling-step button {
+        background: #4CAF50;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        margin: 5px;
+        border-radius: 5px;
         cursor: pointer;
-        transition: all var(--theme-transition-fast);
-        margin: 0.5rem 0.5rem 0 0;
+        font-size: 14px;
+        font-weight: bold;
+        transition: background-color 0.2s;
       }
       
-      .copy-btn::after, .primary-btn::after, .success-btn::after, .cancel-btn::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background-color: transparent;
-        border-radius: var(--theme-border-radius);
-        transition: background-color var(--theme-transition-normal);
+      .signaling-step button:hover {
+        background: #45a049;
       }
       
-      .copy-btn:hover::after, .primary-btn:hover::after {
-        background-color: var(--theme-hover-overlay);
+      .signaling-step button:active {
+        transform: translateY(1px);
       }
       
-      .success-btn {
-        background-color: var(--theme-success-bg);
-        border-color: var(--theme-success-border);
+      #closeSignaling {
+        background: #f44336;
       }
       
-      .success-btn:hover::after {
-        background-color: rgba(0, 255, 0, 0.1);
-      }
-        .cancel-btn:hover::after {
-        background-color: rgba(255, 255, 255, 0.05);
-      }
-      
-      .primary-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        border-color: rgba(255, 255, 255, 0.3);
-        color: rgba(255, 255, 255, 0.5);
-      }
-      
-      .primary-btn:disabled::after {
-        display: none;
-      }
-      
-      .copy-btn.copied {
-        background-color: var(--theme-success-bg);
-        border-color: var(--theme-success-border);
-      }
-      
-      .input-help, .copy-help {
-        margin-top: 0.5rem;
-      }
-      
-      .input-help small, .copy-help small {
-        color: var(--theme-text-secondary);
-        font-style: italic;
-        font-size: 0.8em;
-      }
-      
-      .step-buttons {
-        display: flex;
-        gap: var(--theme-gap-base);
-        justify-content: flex-end;
-        margin-top: 2rem;
-        padding-top: 1rem;
-        border-top: 1px solid rgba(255, 255, 255, 0.3);
+      #closeSignaling:hover {
+        background: #d32f2f;
       }
       
       .signaling-error {
-        background: var(--theme-error-bg);
-        color: var(--theme-text-primary);
-        padding: 1rem;
-        border: var(--theme-border-width) solid var(--theme-error-border);
-        border-radius: var(--theme-border-radius);
-        margin-bottom: 1rem;
-        animation: slideIn var(--theme-transition-normal);
-      }      
-      .error-content {
-        display: flex;
-        align-items: center;
-        gap: var(--theme-gap-base);
-      }
-      
-      .error-icon {
-        font-size: 1.2em;
-      }
-      
-      .error-message {
-        flex: 1;
-      }
-      
-      .error-close {
-        background: none;
-        border: none;
-        color: var(--theme-text-primary);
-        font-size: 1.2em;
-        cursor: pointer;
-        padding: 0;
-        margin-left: auto;
-      }
-      
-      @keyframes slideIn {
-        from {
-          transform: translateY(-10px);
-          opacity: 0;
-        }
-        to {
-          transform: translateY(0);
-          opacity: 1;
-        }
-      }
-        align-items: center;
-        gap: 0.8rem;
-      }
-      
-      .error-message {
-        flex: 1;
-        font-size: 0.9em;
-      }
-      
-      .error-close {
-        background: none;
-        border: 1px solid rgba(255, 255, 255, 0.5);
-        color: white;
-        font-size: 1.2em;
-        font-weight: bold;
-        cursor: pointer;
-        padding: 0.2rem 0.5rem;
-        border-radius: 3px;
-        transition: background-color 0.2s ease;
-      }
-      
-      .error-close:hover {
-        background: rgba(255, 255, 255, 0.2);
-      }
-      
-      @keyframes slideIn {
-        from {
-          transform: translateY(-20px);
-          opacity: 0;
-        }
-        to {
-          transform: translateY(0);
-          opacity: 1;
-        }
-      }
-      
-      @media (max-width: 768px) {
-        .signaling-step {
-          width: 95%;
-          padding: 1.5rem;
-          font-size: 1em;
-        }
-        
-        .step-header {
-          flex-direction: column;
-          gap: 0.8rem;
-          text-align: center;
-        }
-        
-        .step-buttons {
-          flex-wrap: wrap;
-          justify-content: center;
-        }
-        
-        .copy-btn, .primary-btn, .success-btn, .cancel-btn {
-          font-size: 0.8em;
-          padding: 0.5rem 1rem;
-        }
+        margin-bottom: 20px;
       }
     `;
     
     document.head.appendChild(styles);
   }
 
-  // Public API
   onComplete(callback: () => void): void {
     this.onCompleteCallback = callback;
   }
 
   onError(callback: (error: string) => void): void {
     this.onErrorCallback = callback;
-  }  close(): void {
+  }
+
+  close(): void {
     this.stopConnectionCheck();
     if (this.container) {
       this.container.remove();
       this.container = null;
     }
-    // Reset connection state for next use
-    this.connectionEstablished = false;
   }
 
   isVisible(): boolean {
     return this.container !== null;
-  }  // Static helper for easy integration
+  }
+
   static show(net: Net, mpManager: MultiplayerManager, isHost: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
       const ui = new ManualSignalingUI(net, mpManager);
       
       ui.onComplete(() => {
-        ui.close();
         resolve();
       });
       
       ui.onError((error) => {
-        ui.close();
         reject(new Error(error));
       });
       

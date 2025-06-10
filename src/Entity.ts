@@ -50,11 +50,9 @@ export class Entity {
   worldPosition: vec3 = vec3.create();
   worldRotation: quat = quat.create();
   worldScale: vec3 = vec3.fromValues(1, 1, 1);
-  worldToLocalTransform: mat4 = mat4.create();
-
-  // Visual properties
-  model: Model | null = null;
+  worldToLocalTransform: mat4 = mat4.create();  // Visual properties
   modelId: number = -1;
+  _pendingModelName: string | null = null; // Temporary storage for model name before models are loaded
   frame: number = 0;
   frameTime: number = 0;
   animationFrame: number = 0;
@@ -332,11 +330,12 @@ export class Entity {
 
     switch (data.type.toUpperCase()) {
       case 'PLAYER':
-        return null;
-      case 'SPAWN':
+        return null;      case 'SPAWN':
         entity = new Entity();
         entity.spawn = true;
-        entity.model = globalThis.models['spawn'];
+        // Use 'portal' model for spawn points since 'spawn' model doesn't exist
+        entity.modelId = globalThis.modelNames?.indexOf('portal') ?? -1;
+        console.log(`DEBUG: Created spawn entity with portal modelId: ${entity.modelId}`);
         break;
       default:
         entity = new Entity();
@@ -353,14 +352,36 @@ export class Entity {
         case 'scale':
           entity.localScale = vec3.fromValues(property.value, property.value, property.value);
           entity.radius = property.value;
-          break;
-        case 'model_id':
-          entity.modelId = property.value;
-          break;
-      }
+          break;        case 'model_id':
+          // Convert model_id to proper array index
+          console.log(`DEBUG: Processing model_id property: ${property.value} (type: ${typeof property.value})`);
+          console.log(`DEBUG: globalThis.modelNames available: ${!!globalThis.modelNames}`);
+          if (typeof property.value === 'string') {
+            // If it's a string model name, try to convert to index
+            if (globalThis.modelNames) {
+              entity.modelId = globalThis.modelNames.indexOf(property.value);
+              console.log(`DEBUG: String model "${property.value}" -> modelId: ${entity.modelId}`);
+            } else {
+              // Models not loaded yet, store the string for later conversion
+              entity._pendingModelName = property.value;
+              entity.modelId = -1; // Temporary placeholder
+              console.log(`DEBUG: Storing pending model name: "${property.value}"`);
+            }
+          } else if (typeof property.value === 'number') {
+            // If it's already a number, use it directly
+            entity.modelId = property.value;
+            console.log(`DEBUG: Number model ${property.value} -> modelId: ${entity.modelId}`);
+          } else {
+            entity.modelId = -1;
+            console.log(`DEBUG: Unknown model type, setting modelId to -1`);
+          }
+          break;}
     }
     
-    entity.model = globalThis.models[entity.modelId];
+    // Set modelId if a model was assigned
+    if (globalThis.modelNames && entity.modelId >= 0) {
+      // modelId is already set above in the model_id property case
+    }
 
     return entity;
   }
@@ -415,14 +436,8 @@ export class Entity {
     entity.physicsLayer = snapshot.physicsLayer || PhysicsLayer.Default;
     entity.gravity = snapshot.gravity || false;
     entity.collision = snapshot.collision || false;
-    entity.spawn = snapshot.spawn || false;
-    entity.height = snapshot.height || 0;
+    entity.spawn = snapshot.spawn || false;    entity.height = snapshot.height || 0;
     entity.radius = snapshot.radius || 0;
-    
-    // Set model if available
-    if (entity.modelId >= 0 && globalThis.models) {
-      entity.model = globalThis.models[entity.modelId];
-    }
     
     entity.dirty = true;
     return entity;

@@ -1,11 +1,7 @@
 import { Volume } from './Volume';
-import { Logger } from './Logger.js';
 import { getConfig } from './Config.js';
 import { errorHandler, ResourceLoadError, ValidationError, Result } from './ErrorHandler.js';
 import { resourceManager, ResourceType } from './ResourceManager.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
 
 export class Model {
   url: string;
@@ -117,15 +113,13 @@ export class Model {
           }
         }
       }
-    }
-
-    // Debug voxel value distribution for fatta model
+    }    // Debug voxel value distribution for fatta model
     if (this.url.includes('fatta')) {
-      logger.debug('MODEL', '🔍 FATTA MODEL VOXEL VALUES:');
-      logger.debug('MODEL', `Empty value set to: ${this.volume.emptyValue}`);
+      console.log('🔍 FATTA MODEL VOXEL VALUES:');
+      console.log(`Empty value set to: ${this.volume.emptyValue}`);
       const sortedValues = Array.from(voxelValueCounts.entries()).sort((a, b) => a[0] - b[0]);
       for (const [value, count] of sortedValues) {
-        logger.debug('MODEL', `  Voxel value ${value}: ${count} voxels ${value === this.volume.emptyValue ? '(EMPTY)' : ''}`);
+        console.log(`  Voxel value ${value}: ${count} voxels ${value === this.volume.emptyValue ? '(EMPTY)' : ''}`);
       }
     }
   }
@@ -141,10 +135,9 @@ export class Model {
         this.palette[i * 4 + 1] = dataView.getUint8(12 + numVoxels + i * 3 + 1) << 2;
         this.palette[i * 4 + 2] = dataView.getUint8(12 + numVoxels + i * 3 + 2) << 2;
         this.palette[i * 4 + 3] = 255;
-      }
-    } catch (error) {
+      }    } catch (error) {
       // Fall back to default palette if extraction fails
-      logger.warn('MODEL', `Failed to extract palette from ${this.url}, using default palette:`, error);
+      console.warn(`Failed to extract palette from ${this.url}, using default palette:`, error);
       this.generateDefaultPalette();
     }
   }
@@ -172,9 +165,7 @@ export class Model {
     if (this.facesBuffer) {
       // Note: facesBuffer disposal is handled by the resource manager
       this.facesBuffer = null;
-    }
-
-    logger.debug('MODEL', `Disposed model: ${this.url}`);
+    }    console.log(`Disposed model: ${this.url}`);
   }
 
   /**

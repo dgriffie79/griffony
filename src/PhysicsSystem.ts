@@ -3,11 +3,7 @@ import { Entity, PhysicsLayer } from './Entity';
 import { Player } from './Player';
 import { Level } from './Level';
 import type { CollisionEvent, CollisionCallback } from './types/index';
-import { Logger } from './Logger.js';
 import { getConfig } from './Config';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
 
 export interface PhysicsConfig {
   gravity: number;       // Gravity force in units per second squared
@@ -33,7 +29,7 @@ export interface PhysicsConfig {
  */
 export class PhysicsSystem {
   private static instance: PhysicsSystem | null = null;
-  private level: Level | null = null;  private frameCount: number = 0;
+  private level: Level | null = null; private frameCount: number = 0;
   private lastReportTime: number = 0;
   private debugEnabled: boolean = false;
   private collisionListeners: Map<Entity, CollisionCallback> = new Map();
@@ -43,7 +39,7 @@ export class PhysicsSystem {
   private gridCellSize: number;
   private useGridOptimization: boolean = true;
   private gridLastUpdate: number = 0;
-  
+
   // Performance tracking
   private performanceMetrics = {
     collisionChecks: 0,
@@ -52,7 +48,7 @@ export class PhysicsSystem {
     gridUpdateTime: 0,
     lastResetTime: Date.now()
   };
-    // Collision pair cache to avoid redundant checks
+  // Collision pair cache to avoid redundant checks
   private collisionPairCache: Map<string, number> = new Map();
   private collisionCacheTimeout: number;
   private gridUpdateInterval: number;
@@ -147,7 +143,7 @@ export class PhysicsSystem {
 
       // Log spatial optimization usage
       if (this.useGridOptimization && this.spatialGrid.size > 0) {
-        Logger.getInstance().physics(`Spatial grid updated: ${this.spatialGrid.size} cells, ` +
+        console.log(`Spatial grid updated: ${this.spatialGrid.size} cells, ` +
           `${this.performanceMetrics.gridUpdateTime.toFixed(2)}ms update time`);
       }
     }
@@ -174,14 +170,14 @@ export class PhysicsSystem {
     // Apply friction and air resistance
     this.applyFriction(entity, dt);    // Apply velocity constraints
     this.constrainVelocity(entity);
-    
+
     // Apply velocity to position
     this.applyVelocity(entity, dt);
-    
+
     // Handle collisions
     if (entity.collision) {
       const physicsConfig = this.config.getPhysicsConfig();
-      
+
       // Entity-entity collisions
       if (physicsConfig.entityCollisionEnabled) {
         this.handleEntityCollisions(entity);
@@ -202,22 +198,21 @@ export class PhysicsSystem {
     // Skip gravity for godMode players - 'head' property identifies a player since we can't use instanceof
     const isPlayer = 'head' in entity;
     if (entity.gravity && !(isPlayer && (globalThis as any).godMode)) {
-      // CRITICAL: Only apply gravity when level is fully loaded to prevent race condition
-      // During level loading, isEntityOnGround returns false, causing entities to accumulate downward velocity
+      // CRITICAL: Only apply gravity when level is fully loaded to prevent race condition      // During level loading, isEntityOnGround returns false, causing entities to accumulate downward velocity
       if (!this.level || !this.level.isFullyLoaded) {
         if (this.debugEnabled && isPlayer) {
-          logger.debug('PHYSICS', '🛡️ Gravity skipped - level not fully loaded (preventing race condition)');
+          console.log('🛡️ Gravity skipped - level not fully loaded (preventing race condition)');
         }
         return; // Skip gravity application until terrain collision data is ready
       }
 
-      const onGround = this.isEntityOnGround(entity);      if (!onGround) {
+      const onGround = this.isEntityOnGround(entity); if (!onGround) {
         const oldVel = entity.vel[2];
         entity.vel[2] -= physicsConfig.gravity * dt;
       } else if (entity.vel[2] < 0) {
         // Stop falling when on ground
         if (this.debugEnabled && isPlayer && entity.vel[2] < -0.1) {
-          logger.debug('PHYSICS', `🛑 Landing - velocity stopped: ${entity.vel[2].toFixed(3)} → 0`);
+          console.log(`🛑 Landing - velocity stopped: ${entity.vel[2].toFixed(3)} → 0`);
         }
         entity.vel[2] = 0;
       }
@@ -316,7 +311,7 @@ export class PhysicsSystem {
       this.performanceMetrics.collisionChecks++;
 
       const displacement = vec3.sub(vec3.create(), otherEntity.localPosition, entity.localPosition);
-      
+
       // Use distance-squared comparison to avoid expensive sqrt operation
       const distanceSquared = vec3.squaredLength(displacement);
       const minDistance = entity.radius + otherEntity.radius;
@@ -552,7 +547,7 @@ export class PhysicsSystem {
 
     if (shouldBounce) {
       entity.vel[axis] = -currentVelocity * physicsConfig.collisionBounce;
-      
+
       // Stop very small bounces (for Z-axis specifically)
       if (axis === 2 && Math.abs(entity.vel[axis]) < 0.1) {
         entity.vel[axis] = 0;
@@ -653,11 +648,9 @@ export class PhysicsSystem {
   private logDebugInfo(): void {
     if (!this.debugEnabled) return;
 
-    this.frameCount++;
-
-    // Report stats every second
+    this.frameCount++;    // Report stats every second
     if (performance.now() - this.lastReportTime > 1000) {
-      logger.debug('PHYSICS', this.getDebugStatus());
+      console.log(this.getDebugStatus());
       this.frameCount = 0;
       this.lastReportTime = performance.now();
     }
@@ -833,12 +826,13 @@ export class PhysicsSystem {
     normal: vec3,
     distance: number,
     entity: Entity | undefined,
-    voxelValue: number | undefined  } {
+    voxelValue: number | undefined
+  } {
     this.performanceMetrics.raycastCount++;
-    
+
     const actualMaxDistance = maxDistance ?? this.config.getPhysicsConfig().defaultRaycastDistance;
-    
-    const normalizedDir = vec3.normalize(vec3.create(), direction);    let closestHit = {
+
+    const normalizedDir = vec3.normalize(vec3.create(), direction); let closestHit = {
       hit: false,
       position: vec3.create(),
       normal: vec3.fromValues(0, 0, 1),
@@ -892,7 +886,7 @@ export class PhysicsSystem {
     if (this.useGridOptimization && this.spatialGrid.size > 0) {
       // Use spatial grid to only check entities along the ray path
       const entitiesAlongRay = this.getEntitiesAlongRay(origin, direction, maxDistance);
-      
+
       for (const entity of entitiesAlongRay) {
         if (!entity.collision || entity.parent || entity === ignoreEntity) continue;
         if ('head' in entity && (globalThis as any).godMode) continue;
@@ -931,14 +925,14 @@ export class PhysicsSystem {
       if (t > maxDistance) break;
 
       const point = vec3.scaleAndAdd(vec3.create(), origin, direction, t);
-      
+
       const cellX = Math.floor(point[0] / this.gridCellSize);
       const cellY = Math.floor(point[1] / this.gridCellSize);
       const cellZ = Math.floor(point[2] / this.gridCellSize);
-      
+
       const cellKey = this.spatialHash(cellX, cellY, cellZ);
       const cellEntities = this.spatialGrid.get(cellKey);
-      
+
       if (cellEntities) {
         for (const entity of cellEntities) {
           entities.add(entity);
@@ -1010,7 +1004,7 @@ export class PhysicsSystem {
         entity,
         voxelValue: undefined
       };
-    }    return {
+    } return {
       hit: false,
       position: vec3.create(),
       normal: vec3.fromValues(0, 0, 1),
@@ -1294,11 +1288,11 @@ export class PhysicsSystem {
   getPerformanceMetrics() {
     const now = Date.now();
     const elapsed = now - this.performanceMetrics.lastResetTime;
-    
+
     return {
       ...this.performanceMetrics,
       collisionChecksPerSecond: elapsed > 0 ? (this.performanceMetrics.collisionChecks * 1000) / elapsed : 0,
-      collisionHitRate: this.performanceMetrics.collisionChecks > 0 ? 
+      collisionHitRate: this.performanceMetrics.collisionChecks > 0 ?
         this.performanceMetrics.collisionHits / this.performanceMetrics.collisionChecks : 0
     };
   }
@@ -1346,10 +1340,9 @@ export class PhysicsSystem {
         this.useGridOptimization = true;
         this.gridUpdateInterval = 16; // ~60fps updates
         this.collisionCacheTimeout = highConfig.collisionCacheTimeout!;
-        this.updateConfig({ qualityLevel: level });
-        break;
+        this.updateConfig({ qualityLevel: level }); break;
     }
-    logger.debug('PHYSICS', `Physics quality set to ${level}, grid update interval: ${this.gridUpdateInterval}ms`);
+    console.log(`Physics quality set to ${level}, grid update interval: ${this.gridUpdateInterval}ms`);
   }
   /**
    * Limit the number of active physics entities when needed
@@ -1377,12 +1370,11 @@ export class PhysicsSystem {
     for (let i = maxEntities; i < physicsEntities.length; i++) {
       const entity = physicsEntities[i];
       entity._tempGravity = entity.gravity;
-      entity._tempCollision = entity.collision;
-      entity.gravity = false;
+      entity._tempCollision = entity.collision; entity.gravity = false;
       entity.collision = false;
     }
     if (this.debugEnabled) {
-      logger.info('PHYSICS', `Limited active physics entities to ${maxEntities}/${physicsEntities.length}`);
+      console.log(`Limited active physics entities to ${maxEntities}/${physicsEntities.length}`);
     }
   }
 

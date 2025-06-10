@@ -20,11 +20,10 @@ export class Weapon extends Entity {
   private restRotation: quat = quat.fromEuler(quat.create(), 0, 45, 0);
   private swingStartRotation: quat = quat.create();
   private swingEndRotation: quat = quat.create();
-
   constructor(weaponData: WeaponData) {
     super();
     this.weaponData = weaponData;
-    this.model = globalThis.models?.[weaponData.modelName] || null;
+    this.modelId = globalThis.modelNames?.indexOf(weaponData.modelName) ?? -1;
     
     // Initialize swing rotations
     quat.fromEuler(this.swingStartRotation, -30, 45, 10);  // Ready position

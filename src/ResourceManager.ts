@@ -3,10 +3,7 @@
  * Provides RAII-style resource management for GPU resources and other cleanup
  */
 
-import { Logger } from './Logger.js';
 import { GPUError, errorHandler } from './ErrorHandler.js';
-
-const logger = Logger.getInstance();
 
 // Interface for resources that need cleanup
 export interface IDisposable {
@@ -86,12 +83,11 @@ export class ManagedResource<T> implements IDisposable {
         const resourceWithDestroy = this.resource as any;
         if (typeof resourceWithDestroy.destroy === 'function') {
           resourceWithDestroy.destroy();
-        }
-      }
+        }      }
       
-      logger.debug('RESOURCE', `Disposed ${this.metadata.type}: ${this.metadata.label || this.metadata.id}`);
+      console.log(`Disposed ${this.metadata.type}: ${this.metadata.label || this.metadata.id}`);
     } catch (error) {
-      logger.error('RESOURCE', `Failed to dispose ${this.metadata.type}: ${this.metadata.label || this.metadata.id}`, error);
+      console.error(`Failed to dispose ${this.metadata.type}: ${this.metadata.label || this.metadata.id}`, error);
     }
   }
 }
@@ -133,10 +129,9 @@ export class ResourceManager {
     
     if (!this.resourcesByType.has(type)) {
       this.resourcesByType.set(type, new Set());
-    }
-    this.resourcesByType.get(type)!.add(id);
+    }    this.resourcesByType.get(type)!.add(id);
 
-    logger.debug('RESOURCE', `Registered ${type}: ${label || id}${size ? ` (${size} bytes)` : ''}`);
+    console.log(`Registered ${type}: ${label || id}${size ? ` (${size} bytes)` : ''}`);
     
     return managedResource;
   }
@@ -223,10 +218,9 @@ export class ResourceManager {
       // Skip permanent resources and recently used resources
       if (!resource.metadata.permanent && now - resource.metadata.lastUsed > maxAgeMs) {
         toDispose.push(id);
-      }
-    }
+      }    }
 
-    logger.debug('RESOURCE', `Cleaning up ${toDispose.length} unused resources`);
+    console.log(`Cleaning up ${toDispose.length} unused resources`);
     
     for (const id of toDispose) {
       this.dispose(id);
@@ -563,10 +557,9 @@ export class AutoCleanup {
    */
   private static cleanup(): void {
     for (const callback of AutoCleanup.cleanupCallbacks) {
-      try {
-        callback();
+      try {      callback();
       } catch (error) {
-        logger.error('CLEANUP', 'Error during cleanup:', error);
+        console.error('Error during cleanup:', error);
       }
     }
   }

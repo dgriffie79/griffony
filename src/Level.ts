@@ -2,12 +2,8 @@ import { vec3 } from 'gl-matrix';
 import type { LevelData } from './types/index.js';
 import { Volume } from './Volume.js';
 import { Entity } from './Entity.js';
-import { Logger } from './Logger.js';
 import { errorHandler, ResourceLoadError, ValidationError, Result } from './ErrorHandler.js';
 import { resourceManager, ResourceType } from './ResourceManager.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
 
 export class Level {
   url: string;
@@ -48,9 +44,23 @@ export class Level {
       if (renderer) {
         renderer.registerLevel(this);
       }
+        this.isFullyLoaded = true;
+        // Debug: Log entity loading and modelId assignment
+      console.log(`🔍 DEBUG: Level fully loaded. Total entities: ${Entity.all.length}`);
+      console.log(`🔍 DEBUG: globalThis.modelNames available: ${!!globalThis.modelNames}`);
+      if (globalThis.modelNames) {
+        console.log(`🔍 DEBUG: modelNames: ${globalThis.modelNames.join(', ')}`);
+      }
       
-      this.isFullyLoaded = true;
-      logger.info('LEVEL', 'Level fully loaded and registered with renderer');
+      for (const e of Entity.all) {
+        console.log(`🔍 DEBUG: Entity ID ${e.id}, modelId: ${e.modelId}, type: ${e.constructor.name}, spawn: ${e.spawn}`);
+        if (e.modelId >= 0 && globalThis.modelNames) {
+          const modelName = globalThis.modelNames[e.modelId];
+          console.log(`🔍 DEBUG: Entity ${e.id} should use model: ${modelName}`);
+        }
+      }
+      
+      console.log('Level fully loaded and registered with renderer');
     }, 'Level.load');
   }
 
@@ -107,20 +117,19 @@ export class Level {
     }
   }
 
-  private processTileLayer(layer: any, sizeX: number, sizeY: number): void {
-    const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
+  private processTileLayer(layer: any, sizeX: number, sizeY: number): void {    const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
     if (layerIndex === -1) {
-      logger.warn('LEVEL', `Unknown tilelayer name: ${layer.name}`);
+      console.warn(`Unknown tilelayer name: ${layer.name}`);
       return;
     }
     
     if (!layer.data) {
-      logger.warn('LEVEL', `Tile layer ${layer.name} has no data`);
+      console.warn(`Tile layer ${layer.name} has no data`);
       return;
     }
 
     if (layer.data.length !== sizeX * sizeY) {
-      logger.warn('LEVEL', `Tile layer ${layer.name} data size mismatch: expected ${sizeX * sizeY}, got ${layer.data.length}`);
+      console.warn(`Tile layer ${layer.name} data size mismatch: expected ${sizeX * sizeY}, got ${layer.data.length}`);
     }
     
     for (let i = 0; i < layer.data.length && i < sizeX * sizeY; i++) {
@@ -130,10 +139,9 @@ export class Level {
       this.volume.setVoxel(x, y, z, layer.data[i]);
     }
   }
-
   private processObjectLayer(layer: any, sizeY: number): void {
     if (!layer.objects) {
-      logger.warn('LEVEL', `Object layer has no objects`);
+      console.warn(`Object layer has no objects`);
       return;
     }
 
@@ -141,7 +149,7 @@ export class Level {
       try {
         this.processLevelObject(object, sizeY);
       } catch (error) {
-        logger.warn('LEVEL', `Failed to process object:`, error);
+        console.warn(`Failed to process object:`, error);
         // Continue processing other objects
       }
     }
@@ -188,11 +196,10 @@ export class Level {
 
     this.disposed = true;
     this.isFullyLoaded = false;
-    
-    // Volume cleanup is handled automatically by garbage collection
+      // Volume cleanup is handled automatically by garbage collection
     // Any additional cleanup can be added here
     
-    logger.debug('LEVEL', `Disposed level: ${this.url}`);
+    console.log(`Disposed level: ${this.url}`);
   }
 
   /**

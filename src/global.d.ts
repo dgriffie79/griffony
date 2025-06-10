@@ -13,8 +13,8 @@ declare global {
   var player: Player;
   var level: Level;
   var tileset: Tileset;
-  var renderer: Renderer;
-  var models: Record<string, Model>;
+  var renderer: Renderer;  var models: Model[];
+  var modelNames: string[];
   var Entity: typeof Entity;
   
   // Game state variables

@@ -3,10 +3,6 @@
  * Provides standardized error types and handling patterns
  */
 
-import { Logger } from './Logger.js';
-
-const logger = Logger.getInstance();
-
 // Base error class for all Griffony errors
 export class GriffonyError extends Error {
   public readonly timestamp: number;
@@ -127,16 +123,15 @@ export class ErrorHandler {
 
   /**
    * Handle and log an error appropriately
-   */
-  public handle(error: Error, context?: string): void {
+   */  public handle(error: Error, context?: string): void {
     if (error instanceof GriffonyError) {
-      logger.error(error.category, `${context ? `[${context}] ` : ''}${error.message}`, {
+      console.error(`${context ? `[${context}] ` : ''}${error.message}`, {
         code: error.code,
         timestamp: error.timestamp,
         stack: error.stack
       });
     } else {
-      logger.error('UNKNOWN', `${context ? `[${context}] ` : ''}${error.message}`, {
+      console.error(`${context ? `[${context}] ` : ''}${error.message}`, {
         stack: error.stack
       });
     }

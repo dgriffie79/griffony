@@ -5,17 +5,12 @@ import {
   type MessageTypeValue,
   type NetworkMessage,
   type EntityUpdateMessage,
-  type PlayerJoinMessage,
-  type PlayerLeaveMessage,
+  type PlayerJoinMessage,  type PlayerLeaveMessage,
   type ChatMessage,
   type EntitySnapshot,
   type TerrainModification,
   type FullGameStateMessage
 } from './types';
-import { Logger } from './Logger.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
 
 interface PeerConnection {
   id: string;
@@ -149,10 +144,9 @@ export class Net {
         candidate: c.candidate,
         sdpMLineIndex: c.sdpMLineIndex,
         sdpMid: c.sdpMid
-      }))
-    };
+      }))    };
 
-    logger.info('NET', `✅ Created offer for host ${this.peerId}`);
+    console.log(`✅ Created offer for host ${this.peerId}`);
     return JSON.stringify(offerData);
   }
 
@@ -235,10 +229,9 @@ export class Net {
         candidate: c.candidate,
         sdpMLineIndex: c.sdpMLineIndex,
         sdpMid: c.sdpMid
-      }))
-    };
+      }))    };
 
-    logger.info('NET', `✅ Created answer for client ${this.peerId}`);
+    console.log(`✅ Created answer for client ${this.peerId}`);
     return JSON.stringify(answerData);
   }
   async completeConnection(answerString: string): Promise<void> {
@@ -269,13 +262,11 @@ export class Net {
     // Now set up the data channel with the correct client ID
     if (this.pendingConnection.dataChannel) {
       this.setupDataChannel(this.pendingConnection.dataChannel, clientId);
-    }
-
-    // Move from pending to active connections
+    }    // Move from pending to active connections
     this.connections.set(clientId, this.pendingConnection);
     this.pendingConnection = undefined;
 
-    logger.info('NET', `✅ Connection completed for client ${clientId}`);
+    console.log(`✅ Connection completed for client ${clientId}`);
   }
 
   // Legacy method names for backward compatibility
@@ -285,52 +276,48 @@ export class Net {
 
   async createAnswer(offerString: string): Promise<string> {
     return this.acceptOffer(offerString);
-  }
-  private setupDataChannel(dataChannel: RTCDataChannel, peerId: string): void {
-    logger.info('NET', `🔧 Setting up data channel for peer ${peerId}`);
+  }  private setupDataChannel(dataChannel: RTCDataChannel, peerId: string): void {
+    console.log(`🔧 Setting up data channel for peer ${peerId}`);
     
     dataChannel.onopen = () => {
-      logger.info('NET', `✅ Data channel opened for peer ${peerId}`);
-      logger.info('NET', `🔍 Current connections: ${Array.from(this.connections.keys()).join(', ')}`);
-      logger.info('NET', `🔍 Is host: ${this.isHost}`);
+      console.log(`✅ Data channel opened for peer ${peerId}`);
+      console.log(`🔍 Current connections: ${Array.from(this.connections.keys()).join(', ')}`);
+      console.log(`🔍 Is host: ${this.isHost}`);
       
       this.isConnected = true;
       this.onConnectionStateChangeCallback?.(true);
       
       // Notify that data channel is ready
-      logger.info('NET', `📢 Triggering onDataChannelReady callback for peer ${peerId}`);
+      console.log(`📢 Triggering onDataChannelReady callback for peer ${peerId}`);
       this.onDataChannelReadyCallback?.(peerId);
     };
 
     dataChannel.onclose = () => {
-      logger.info('NET', `❌ Data channel closed for peer ${peerId}`);
+      console.log(`❌ Data channel closed for peer ${peerId}`);
       this.isConnected = false;
       this.onConnectionStateChangeCallback?.(false);
       this.handlePeerDisconnection(peerId);
-    };
-
-    dataChannel.onerror = (error) => {
-      logger.error('NET', `❌ Data channel error for peer ${peerId}:`, error);
+    };    dataChannel.onerror = (error) => {
+      console.error(`❌ Data channel error for peer ${peerId}:`, error);
     };
 
     dataChannel.onmessage = (event) => {
       try {
         const rawData = event.data;
-        logger.debug('NET', `📨 Raw data received from ${peerId}:`, rawData);
+        console.log(`📨 Raw data received from ${peerId}:`, rawData);
 
         const message: NetworkMessage = JSON.parse(rawData);
-        logger.debug('NET', `📨 Parsed message from ${peerId}:`, message);
+        console.log(`📨 Parsed message from ${peerId}:`, message);
 
         this.messagesReceived++;
         this.handleIncomingMessage(message, peerId);
       } catch (error) {
-        logger.error('NET', `❌ Failed to parse message from ${peerId}:`, error);
+        console.error(`❌ Failed to parse message from ${peerId}:`, error);
       }
     };
   }
-
   private handleIncomingMessage(message: NetworkMessage, senderId: string): void {
-    logger.debug('NET', `🔄 Handling message type ${message.type} from ${senderId}`);
+    console.log(`🔄 Handling message type ${message.type} from ${senderId}`);
 
     // Update last seen time for the sender
     const connection = this.connections.get(senderId);
@@ -341,7 +328,7 @@ export class Net {
     // Handle specific message types
     switch (message.type) {
       case MessageType.FULL_GAME_STATE:
-        logger.info('NET', `📦 Received FULL_GAME_STATE from ${senderId}`);
+        console.log(`📦 Received FULL_GAME_STATE from ${senderId}`);
         this.handleFullGameState(message as FullGameStateMessage);
         break;
 
@@ -379,9 +366,8 @@ export class Net {
         break;
     }
   }
-
   private handleFullGameState(message: FullGameStateMessage): void {
-    logger.info('NET', `🔄 Processing FULL_GAME_STATE with ${message.data.entities.length} entities`);
+    console.log(`🔄 Processing FULL_GAME_STATE with ${message.data.entities.length} entities`);
     
     // Clear all client entities first
     this.clearClientEntities();
@@ -389,62 +375,59 @@ export class Net {
     // Load entities from the message
     this.loadEntitiesFromSnapshots(message.data.entities);
     
-    logger.info('NET', `✅ FULL_GAME_STATE processed successfully`);
-  }
-  private clearClientEntities(): void {
-    logger.info('NET', `🧹 Clearing all client entities (count: ${Entity.all.length})`);
+    console.log(`✅ FULL_GAME_STATE processed successfully`);
+  }  private clearClientEntities(): void {
+    console.log(`🧹 Clearing all client entities (count: ${Entity.all.length})`);
     
     // Clear all entities
     Entity.all.length = 0;
     
-    logger.info('NET', `✅ All entities cleared`);
+    console.log(`✅ All entities cleared`);
   }  private loadEntitiesFromSnapshots(snapshots: EntitySnapshot[]): void {
-    logger.info('NET', `📦 Loading ${snapshots.length} entities from snapshots`);
-    logger.info('NET', `📦 Entity.all before loading: ${Entity.all.length} entities`);
-    
-    for (const snapshot of snapshots) {
+    console.log(`📦 Loading ${snapshots.length} entities from snapshots`);
+    console.log(`📦 Entity.all before loading: ${Entity.all.length} entities`);
+      for (const snapshot of snapshots) {
       try {
         const entity = Entity.fromSnapshot(snapshot);
-        logger.debug('NET', `✅ Loaded entity ${entity.id} of type ${entity.constructor.name}`);
+        console.log(`✅ Loaded entity ${entity.id} of type ${entity.constructor.name}`);
       } catch (error) {
-        logger.error('NET', `❌ Failed to load entity from snapshot:`, error, snapshot);
+        console.error(`❌ Failed to load entity from snapshot:`, error, snapshot);
       }
     }
     
-    logger.info('NET', `✅ Loaded ${Entity.all.length} entities from snapshots`);
-    logger.info('NET', `📦 Entity.all after loading: ${Entity.all.length} entities`);
+    console.log(`✅ Loaded ${Entity.all.length} entities from snapshots`);
+    console.log(`📦 Entity.all after loading: ${Entity.all.length} entities`);
     
     // Log first few entity IDs for verification
     const entityIds = Entity.all.slice(0, 5).map(e => e.id);
-    logger.info('NET', `📦 First few entity IDs: [${entityIds.join(', ')}]`);
-  }
-  // Public method to send full game state to a specific player
+    console.log(`📦 First few entity IDs: [${entityIds.join(', ')}]`);
+  }  // Public method to send full game state to a specific player
   public sendFullGameStateToPlayer(playerId: string): void {
     if (!this.isHost) {
-      logger.warn('NET', `❌ Cannot send full game state - not host`);
+      console.warn(`❌ Cannot send full game state - not host`);
       return;
     }
 
-    logger.info('NET', `📤 Sending FULL_GAME_STATE to player ${playerId}`);
-    logger.info('NET', `🔍 Available connections: ${Array.from(this.connections.keys()).join(', ')}`);
-    
+    console.log(`📤 Sending FULL_GAME_STATE to player ${playerId}`);
+    console.log(`🔍 Available connections: ${Array.from(this.connections.keys()).join(', ')}`);
+
     const connection = this.connections.get(playerId);
     if (!connection) {
-      logger.error('NET', `❌ No connection found for player ${playerId}`);
+      console.error(`❌ No connection found for player ${playerId}`);
       return;
     }
-    
+
     if (!connection.dataChannel || connection.dataChannel.readyState !== 'open') {
-      logger.error('NET', `❌ Data channel not ready for player ${playerId}, state: ${connection.dataChannel?.readyState || 'none'}`);
+      console.error(`❌ Data channel not ready for player ${playerId}, state: ${connection.dataChannel?.readyState || 'none'}`);
       return;
-    }// Collect all entity snapshots
+    }    // Collect all entity snapshots
     const entitySnapshots: EntitySnapshot[] = [];
     for (const entity of Entity.all) {
       try {
         const snapshot = entity.serialize();
         entitySnapshots.push(snapshot);
       } catch (error) {
-        logger.error('NET', `❌ Failed to create snapshot for entity ${entity.id}:`, error);
+        console.error(`❌ Failed to create snapshot for entity ${entity.id}:`, error);
       }
     }
 
@@ -457,15 +440,13 @@ export class Net {
         entities: entitySnapshots,
         gameTime: Date.now(),
         hostId: this.peerId
-      }
-    };
+      }    };
 
-    logger.info('NET', `📤 Sending ${entitySnapshots.length} entities to player ${playerId}`);
+    console.log(`📤 Sending ${entitySnapshots.length} entities to player ${playerId}`);
     this.sendMessageToPlayer(playerId, message);
   }
-
   private handlePeerDisconnection(peerId: string): void {
-    logger.info('NET', `🔌 Handling disconnection for peer ${peerId}`);
+    console.log(`🔌 Handling disconnection for peer ${peerId}`);
     
     const connection = this.connections.get(peerId);
     if (connection) {
@@ -484,21 +465,20 @@ export class Net {
       }
     }
   }
-
   sendMessageToPlayer(playerId: string, message: NetworkMessage): void {
     const connection = this.connections.get(playerId);
     if (!connection || !connection.dataChannel || connection.dataChannel.readyState !== 'open') {
-      logger.warn('NET', `❌ Cannot send message to ${playerId} - no active connection`);
+      console.warn(`❌ Cannot send message to ${playerId} - no active connection`);
       return;
     }
 
     try {
       const messageStr = JSON.stringify(message);
-      logger.debug('NET', `📤 Sending message to ${playerId}:`, message);
+      console.log(`📤 Sending message to ${playerId}:`, message);
       connection.dataChannel.send(messageStr);
       this.messagesSent++;
     } catch (error) {
-      logger.error('NET', `❌ Failed to send message to ${playerId}:`, error);
+      console.error(`❌ Failed to send message to ${playerId}:`, error);
     }
   }
 
@@ -510,9 +490,8 @@ export class Net {
   getConnectedPeerIds(): string[] {
     return Array.from(this.connections.keys());
   }
-
   disconnect(): void {
-    logger.info('NET', `🔌 Disconnecting all peers`);
+    console.log(`🔌 Disconnecting all peers`);
     
     for (const [peerId, connection] of this.connections) {
       connection.connection.close();
@@ -532,11 +511,10 @@ export class Net {
   update(): void {
     // Update connection statistics and handle timeouts
     const now = Date.now();
-    
-    for (const [peerId, connection] of this.connections) {
+      for (const [peerId, connection] of this.connections) {
       // Check for stale connections (no activity for 30 seconds)
       if (now - connection.lastSeen > 30000) {
-        logger.warn('NET', `Connection to ${peerId} is stale, disconnecting`);
+        console.warn(`Connection to ${peerId} is stale, disconnecting`);
         this.handlePeerDisconnection(peerId);
       }
     }

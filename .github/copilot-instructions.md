@@ -1,6 +1,6 @@
-Terminal commands are done in powershell so dont use &&
-The dev server is already running
-Do not open up a browser to test if you needed. Ask me to do it instead
-Compiler errors must be checked with tsc
-Don't add debug methods without asking
-Don't add test
+use powershell terminal commands
+dev server is already running
+do not open browser
+check compile errors with tsc
+don't add debug methods or tests
+prefer simple, direct solutions

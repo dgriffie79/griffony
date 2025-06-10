@@ -1,8 +1,5 @@
 import { vec3, quat } from 'gl-matrix';
 import { Entity } from './Entity';
-import { Logger } from './Logger.js';
-
-const logger = Logger.getInstance();
 
 export class PlayerEntity extends Entity {
   gravity: boolean = true;
@@ -20,17 +17,16 @@ export class PlayerEntity extends Entity {
     super();
     this.id = id;
     this.networkPlayerId = networkId;
-    this.model = globalThis.models?.['player'] || null;
+    this.modelId = globalThis.modelNames?.indexOf('player') ?? -1;
       // Set up head entity
     this.head.id = Entity.nextId++;
     this.head.parent = this;
     this.head.localPosition = vec3.fromValues(0, 0, 0.8 * this.height);
     this.children.push(this.head);
-    
-    // Default properties
+      // Default properties
     this.playerName = networkId ? `Player_${networkId}` : 'Player';
     
-    logger.info('PLAYER_ENTITY', `Created player entity: ${this.playerName} (ID: ${this.id})`);
+    console.log(`Created player entity: ${this.playerName} (ID: ${this.id})`);
   }
   
   setController(controller: any): void {
@@ -118,11 +114,10 @@ export class PlayerEntity extends Entity {
     
     // Position at spawn point
     entity.respawn();
-    
-    // Add to entity list
+      // Add to entity list
     Entity.all.push(entity);
     
-    logger.info('PLAYER_ENTITY', `Created ${isLocal ? 'local' : 'remote'} player entity: ${entity.playerName} (ID: ${entityId})`);
+    console.log(`Created ${isLocal ? 'local' : 'remote'} player entity: ${entity.playerName} (ID: ${entityId})`);
     return entity;
   }
   

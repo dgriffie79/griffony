@@ -5,10 +5,6 @@ import {
   type PlayerInputMessage, 
   type PlayerActionMessage 
 } from './types';
-import { Logger } from './Logger.js';
-
-// Create logger instance for this module
-const logger = Logger.getInstance();
 
 export interface InputState {
   // Movement keys
@@ -268,13 +264,13 @@ export class InputManager {
   }
 
   private triggerAction(action: string): void {
-    logger.debug('INPUT', `Action triggered: ${action}`);
+    console.log(`Action triggered: ${action}`);
     
     if (action === 'chat') {
       // Don't open chat if signaling UI is active
       const signalingUI = document.getElementById('manualSignalingUI');
       if (signalingUI) {
-        logger.debug('INPUT', 'Cannot open chat while signaling UI is active');
+        console.log('Cannot open chat while signaling UI is active');
         return;
       }
       this.onChatOpenCallback?.();
