@@ -14,5 +14,5 @@
 	"javascript.format.placeOpenBraceOnNewLineForControlBlocks": false,
 	"javascript.format.placeOpenBraceOnNewLineForFunctions": false,
 	"javascript.format.semicolons": "remove",
-	"json.schemaDownload.enable": false,
+	"json.schemaDownload.enable": true,
 }

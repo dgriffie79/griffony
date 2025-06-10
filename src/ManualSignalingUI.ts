@@ -26,33 +26,25 @@ export class ManualSignalingUI {
     this.mpManager = mpManager;
     this.setupConnectionStateListener();
   }
-
   private setupConnectionStateListener(): void {
     this.net.onConnectionStateChange((isConnected) => {
-      console.log(`🔗 Connection state changed: ${isConnected}, connectionEstablished: ${this.connectionEstablished}`);
       if (isConnected && !this.connectionEstablished) {
         this.connectionEstablished = true;
         this.updateConnectionStatus();
         this.stopConnectionCheck();
         
         // Automatically close signaling UI and start the game immediately
-        console.log('Connection established via callback, automatically starting game');
         this.finishSignaling();
       }
     });
   }
-
   private startConnectionCheck(): void {
     // Stop any existing check
     this.stopConnectionCheck();
     
-    console.log('🔍 Starting connection check...');
-    console.log(`🔍 Initial connection state: isConnectionActive=${this.net.isConnectionActive()}, connectionEstablished=${this.connectionEstablished}`);
-    
     // Check connection status every 500ms
     this.connectionCheckInterval = window.setInterval(() => {
       const isActive = this.net.isConnectionActive();
-      console.log(`🔍 Connection check: isConnectionActive=${isActive}, connectionEstablished=${this.connectionEstablished}`);
       
       if (isActive && !this.connectionEstablished) {
         this.connectionEstablished = true;
@@ -60,7 +52,6 @@ export class ManualSignalingUI {
         this.stopConnectionCheck();
         
         // Automatically close signaling UI and start the game immediately
-        console.log('Connection detected via polling, automatically starting game');
         this.finishSignaling();
       }
     }, 500);
@@ -86,21 +77,14 @@ export class ManualSignalingUI {
   // Start the host signaling flow
   public async showHostFlow(): Promise<void> {
     this.isHost = true;
-    this.connectionEstablished = false;
-    this.createContainer();
+    this.connectionEstablished = false;    this.createContainer();
     
     try {
-      console.log('Starting host signaling flow');
-      
       // Create the game (this sets up multiplayer manager as host)
-      console.log('Calling mpManager.createGame()...');
       const gameId = await this.mpManager.createGame();
-      console.log(`Game created with ID: ${gameId}`);
-      console.log(`MultiplayerManager isHost: ${this.mpManager.isHost}`);
       
       // Generate offer through Net
       const offer = await this.net.createOffer();
-      console.log(`Net isHost: ${(this.net as any).isHost}`);
       
       this.steps = [
         {
@@ -119,13 +103,10 @@ export class ManualSignalingUI {
       
       this.currentStep = 0;
       this.showCurrentStep();
-      
-    } catch (error) {
-      console.error('Host flow error:', error);
+        } catch (error) {
       this.showError('Failed to create offer: ' + error);
     }
   }
-
   // Start the client signaling flow
   public async showJoinFlow(): Promise<void> {
     this.isHost = false;
@@ -133,11 +114,8 @@ export class ManualSignalingUI {
     this.createContainer();
     
     try {
-      console.log('Starting client signaling flow');
-      
       // Initialize as client (this sets isHost to false)
       await this.mpManager.joinGame('manual_join');
-      console.log(`MultiplayerManager isHost: ${this.mpManager.isHost}`);
       
       this.steps = [
         {
@@ -154,11 +132,9 @@ export class ManualSignalingUI {
         }
       ];
       
-      this.currentStep = 0;
-      this.showCurrentStep();
+      this.currentStep = 0;      this.showCurrentStep();
       
     } catch (error) {
-      console.error('Client flow error:', error);
       this.showError('Failed to initialize client: ' + error);
     }
   }
@@ -220,12 +196,10 @@ export class ManualSignalingUI {
     if (!input?.value.trim()) return;
     
     const data = input.value.trim();
-    
-    try {
+      try {
       if (this.isHost) {
         // Host processing client answer
         await this.net.processAnswer(data);
-        console.log('Host processed client answer');
         
         // Start connection checking for host after processing answer
         this.startConnectionCheck();
@@ -237,7 +211,6 @@ export class ManualSignalingUI {
           this.stopConnectionCheck();
           
           // Automatically close signaling UI and start the game immediately
-          console.log('Host connection detected immediately after processing answer');
           this.finishSignaling();
           return; // Don't continue to nextStep
         }
@@ -245,7 +218,6 @@ export class ManualSignalingUI {
         // Client processing host offer
         const answer = await this.net.createAnswer(data);
         this.steps[1].data = answer; // Update answer step with generated answer
-        console.log('Client processed host offer and generated answer');
       }
       
       this.nextStep();
@@ -259,15 +231,11 @@ export class ManualSignalingUI {
           this.connectionEstablished = true;
           this.updateConnectionStatus();
           this.stopConnectionCheck();
-          
-          // Automatically close signaling UI and start the game immediately
-          console.log('Connection detected immediately, automatically starting game');
+            // Automatically close signaling UI and start the game immediately
           this.finishSignaling();
         }
       }
-      
-    } catch (error) {
-      console.error('Process input error:', error);
+        } catch (error) {
       this.showError('Invalid signaling data: ' + error);
     }
   }
@@ -299,17 +267,13 @@ export class ManualSignalingUI {
           copyBtn.textContent = originalText;
           copyBtn.style.backgroundColor = '';
         }, 2000);
-      }
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
+      }    } catch (error) {
       // Fallback: select the text
       output.select();
       output.setSelectionRange(0, 99999);
     }
   }
-
   private finishSignaling(): void {
-    console.log('Signaling process completed');
     this.close();
     this.onCompleteCallback?.();
   }

@@ -35,17 +35,15 @@ export class MultiplayerManager {
     };
     return typeNames[type] || 'UNKNOWN';
   }
-
-  private setupNetworkHandlers(): void {    this.net.onMessage((message: NetworkMessage) => {
-      console.log(`Received message type: ${message.type} (${this.getMessageTypeName(message.type)})`);
-        switch (message.type) {
+  private setupNetworkHandlers(): void {
+    this.net.onMessage((message: NetworkMessage) => {
+      switch (message.type) {
         case MessageType.PLAYER_LEAVE:
           this.handlePlayerLeave(message);
           break;
         case MessageType.ENTITY_UPDATE:
           this.handleEntityUpdate(message);
           break;        case MessageType.FULL_GAME_STATE:
-          console.log(`📨 RECEIVED FULL_GAME_STATE message - calling handleGameState`);
           this.handleGameState(message);
           break;
         case MessageType.PLAYER_INPUT:
@@ -53,11 +51,9 @@ export class MultiplayerManager {
           break;
         case MessageType.PLAYER_INPUT:
           this.handlePlayerInput(message);
-          break;
-        case MessageType.CHAT:
+          break;        case MessageType.CHAT:
           // Chat messages are handled by Net.handleIncomingMessage -> onChatMessageCallback
           // We just log that we saw it but don't consume it
-          console.log(`💬 MultiplayerManager: Saw chat message, letting Net handle it`);
           break;
         default:
           console.warn('Unknown message type:', message.type.toString());

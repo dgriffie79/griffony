@@ -139,23 +139,10 @@ function setupChatSystem(): void {
 			chatUI.open();
 		}
 	});
-	
-	// Debug connection state (press Backquote/~ key)
-	document.addEventListener('keydown', (event) => {
-		if (event.code === 'Backquote' && !chatUI.isOpenForInput()) {
-			console.log('🔍 Debug: Connection state requested');
-			net.debugConnectionState();
-		}
-	});
-
-	// Connect network to chat UI
+		// Connect network to chat UI
 	net.onChatMessage((playerName: string, message: string, timestamp: number) => {
-		console.log(`🎯 main.ts: Received chat message from network - playerName: ${playerName}, message: ${message}`);
 		chatUI.addMessage(playerName, message, timestamp);
-		console.log(`✅ main.ts: Added chat message to UI`);
 	});
-
-	console.log('Chat system initialized');
 }
 
 // Initialize the chat system
@@ -192,7 +179,6 @@ function playAttackSound(): void {
 		oscillator.stop(audioContext.currentTime + audioConfig.attackSoundFrequency.duration);
 	} catch (e) {
 		// Fallback if Web Audio API fails
-		console.log('⚔️ ATTACK!');
 	}
 }
 
@@ -213,10 +199,8 @@ function playHitSound(): void {
 		gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
 		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
 		oscillator.start(audioContext.currentTime);
-		oscillator.stop(audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
-	} catch (e) {
+		oscillator.stop(audioContext.currentTime + audioConfig.hitSoundFrequency.duration);	} catch (e) {
 		// Fallback if Web Audio API fails
-		console.log('💥 HIT!');
 	}
 }
 
@@ -257,33 +241,18 @@ function loadGameSettings(): GameSettings {
 	const loadResult = safeLoadFromStorage<GameSettings | null>('gameSettings', null);
 
 	if (!loadResult.success) {
-		console.warn(`Failed to load settings: ${loadResult.error.message}, using defaults`);
 		return settings;
 	}
-
 	const savedSettings = loadResult.data;
 	if (!savedSettings) {
-		console.log('No saved settings found, using defaults');
 		return settings;
 	}
 
-	// Validate settings structure and version
-	if (typeof savedSettings !== 'object' || savedSettings.version !== settings.version) {
-		console.warn('Invalid or outdated settings format, using defaults');
-		// Save current defaults to replace invalid settings
-		const saveResult = safeSaveToStorage('gameSettings', settings);
-		if (!saveResult.success) {
-			console.error(`Failed to save default settings: ${saveResult.error.message}`);
-		}
-		return settings;
-	}
 	// Validate required fields
 	if (!savedSettings.keybinds || typeof savedSettings.keybinds !== 'object') {
-		console.warn('Settings missing keybinds, using defaults');
 		return settings;
 	}
 
-	console.log('Successfully loaded settings from storage');
 	return savedSettings as GameSettings;
 }
 
@@ -294,13 +263,11 @@ function loadGameState(): GameState | null {
 	const loadResult = safeLoadFromStorage<GameState | null>('gameState', null);
 
 	if (!loadResult.success) {
-		console.warn(`Failed to load game state: ${loadResult.error.message}`);
 		return null;
 	}
 
 	const savedState = loadResult.data;
 	if (!savedState) {
-		console.log('No saved game state found');
 		return null;
 	}
 
@@ -309,11 +276,9 @@ function loadGameState(): GameState | null {
 		!Array.isArray(savedState.playerPos) ||
 		!Array.isArray(savedState.playerOrientation) ||
 		!Array.isArray(savedState.playerHeadRotation)) {
-		console.warn('Invalid game state format, ignoring saved state');
 		return null;
 	}
 
-	console.log('Successfully loaded game state from storage');
 	return savedState as GameState;
 }
 
@@ -372,13 +337,9 @@ function updateKeybinding(bindingId: string, newValue: string): void {
 			oldButton.textContent = '';
 		}
 	}
-
 	// Update the new binding
 	settings.keybinds[bindingId as keyof typeof settings.keybinds] = newValue;
-	const saveResult = safeSaveToStorage('gameSettings', settings);
-	if (!saveResult.success) {
-		console.error(`Failed to save settings after keybind update: ${saveResult.error.message}`);
-	}
+	safeSaveToStorage('gameSettings', settings);
 
 	// Update weapon position adjuster if this is the adjustWeapon keybinding
 	if (bindingId === 'adjustWeapon') {
@@ -512,14 +473,12 @@ function showManualSignalingUI(isHost: boolean): void {
 	}	// Create and show the manual signaling UI
 	const signalingUI = new ManualSignalingUI(net, multiplayerManager);
 	signalingUI.onComplete(() => {
-		console.log('Connection established successfully');
 		showingMenu = false;
 		// Request pointer lock to resume game
 		setTimeout(() => document.body.requestPointerLock(), getConfig().getUIConfig().pointerLockDelay);
 	});
 
 	signalingUI.onError((error) => {
-		console.error('Connection failed:', error);
 		// Show the main menu again
 		if (menu) {
 			menu.hidden = false;
@@ -552,8 +511,6 @@ function setupGlobalEventListeners(): void {
 	});	// Menu toggle and pointer lock management
 	document.addEventListener('click', (event) => {
 		const target = event.target as HTMLElement;
-		// Debug logging
-		console.log(`Click detected on element: ${target.tagName}, id: ${target.id}, class: ${target.className}`);
 
 		if (target instanceof HTMLButtonElement && target.id === 'toggle-menu') {
 			showingMenu = !showingMenu;
@@ -571,18 +528,15 @@ function setupGlobalEventListeners(): void {
 		// Don't request pointer lock if clicking within the signaling UI
 		const signalingUI = document.getElementById('manualSignalingUI');
 		if (signalingUI && signalingUI.contains(target)) {
-			console.log('Click within signaling UI, not requesting pointer lock');
 			return;
 		}
 
 		// Don't request pointer lock if clicking within the chat UI
 		const chatUI = document.getElementById('chat-ui');
 		if (chatUI && chatUI.contains(target)) {
-			console.log('Click within chat UI, not requesting pointer lock');
 			return;
 		}		// Don't request pointer lock if showing menu
 		if (showingMenu) {
-			console.log('Menu is showing, not requesting pointer lock');
 			showingMenu = false;
 			const mainMenu = document.getElementById('main-menu');
 			if (mainMenu) {
@@ -597,12 +551,10 @@ function setupGlobalEventListeners(): void {
 			target.tagName === 'INPUT' ||
 			target.tagName === 'TEXTAREA' ||
 			target.tagName === 'SELECT') {
-			console.log('Click on UI element, not requesting pointer lock');
 			return;
 		}
 
 		// Request pointer lock for valid game area clicks
-		console.log('Requesting pointer lock for game area click');
 		document.body.requestPointerLock();
 	});
 
@@ -755,11 +707,10 @@ function onKeydown(event: KeyboardEvent): void {
 				setTimeout(() => document.body.requestPointerLock(), getConfig().getUIConfig().pointerLockDelay);
 			}
 			break;
-		} case settings.keybinds.godMode: {
+		}		case settings.keybinds.godMode: {
 			godMode = !godMode;
 			// Synchronize with global scope for physics system
 			(globalThis as any).godMode = godMode;
-			console.log(`God Mode ${godMode ? 'enabled' : 'disabled'}`);
 			break;
 		} case settings.keybinds.respawn: {
 			player.respawn();
@@ -768,11 +719,9 @@ function onKeydown(event: KeyboardEvent): void {
 			useGreedyMesh = !useGreedyMesh; settings.useGreedyMesh = useGreedyMesh;
 			(globalThis as any).useGreedyMesh = useGreedyMesh;
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
-			console.log(`Mesh algorithm switched to: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
 
 			// Update renderer to use new mesh type immediately
 			renderer.updateMeshRenderingMode();
-			console.log('Mesh rendering updated - no reload needed!');
 
 			// Reset mesh stats when switching algorithms
 			MeshStats.getInstance().reset();
@@ -787,12 +736,9 @@ function onKeydown(event: KeyboardEvent): void {
 					WeaponConfigs[type].id === currentWeapon.weaponData.id
 				); const nextIndex = (currentIndex + 1) % weaponTypes.length;
 				combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
-				console.log(`Switched to ${WeaponConfigs[weaponTypes[nextIndex]].name}`);
 			}
-			break;
-		} case settings.keybinds.adjustWeapon: {
+			break;		} case settings.keybinds.adjustWeapon: {
 			// Toggle the weapon position adjuster with the current weapon model
-			console.log('Activating weapon position adjuster');
 			const currentWeapon = combatSystem.getWeapon(player);
 			if (currentWeapon) {
 				toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
@@ -905,7 +851,6 @@ function performRaycast(): void {
 	// Get forward vector from camera
 	const forward = vec3.fromValues(0, 1, 0);
 	vec3.transformQuat(forward, forward, camera.entity.worldRotation);
-
 	// Perform raycast
 	const origin = vec3.clone(camera.entity.worldPosition);
 	const result = physicsSystem.raycast(origin, forward, 20, {
@@ -913,16 +858,6 @@ function performRaycast(): void {
 	});
 	// Show result
 	if (result.hit) {
-		console.log('Raycast hit:', {
-			position: [
-				result.position[0].toFixed(2),
-				result.position[1].toFixed(2),
-				result.position[2].toFixed(2)
-			],
-			distance: result.distance.toFixed(2),
-			entity: result.entity ? `Entity #${result.entity.id}` : 'terrain'
-		});
-
 		// Flash the crosshair red
 		const crosshair = document.getElementById('crosshair');
 		if (crosshair) {
@@ -944,7 +879,6 @@ function saveGameState(): void {
 	if (!player) {
 		return;
 	}
-
 	const gameState: GameState = {
 		playerPos: Array.from(player.localPosition) as [number, number, number],
 		playerOrientation: Array.from(player.localRotation) as [number, number, number, number],
@@ -952,10 +886,7 @@ function saveGameState(): void {
 		showingMenu,
 		godMode
 	};
-	const saveResult = safeSaveToStorage('gameState', gameState);
-	if (!saveResult.success) {
-		console.error(`Failed to save game state: ${saveResult.error.message}`);
-	}
+	safeSaveToStorage('gameState', gameState);
 
 	// Ensure globalThis.godMode is always in sync
 	if ((globalThis as any).godMode !== godMode) {
@@ -1044,9 +975,7 @@ function updateCombatSystem(elapsed: number): number {
  */
 function updatePhysicsSystem(elapsed: number): number {
 	if (!level.isFullyLoaded) return 0;
-
 	if (!physicsStarted) {
-		console.log('🎮 Physics system started - level fully loaded and terrain collision data ready');
 		physicsStarted = true;
 	}
 
@@ -1168,9 +1097,7 @@ async function main(): Promise<void> {
 			godMode = state.godMode;
 			// Make sure godMode is synchronized with global scope
 			(globalThis as any).godMode = godMode;
-			showingMenu = state.showingMenu;
-		} catch (error) {
-			console.warn('Failed to load saved game state:', error);
+			showingMenu = state.showingMenu;		} catch (error) {
 		}
 	}
 
@@ -1186,9 +1113,7 @@ async function main(): Promise<void> {
 				(globalThis as any).useGreedyMesh = useGreedyMesh;
 			} else {
 				localStorage.setItem('gameSettings', JSON.stringify(settings));
-			}
-		} catch (error) {
-			console.warn('Failed to load saved settings:', error);
+			}		} catch (error) {
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
 		}
 	} else {
@@ -1216,12 +1141,10 @@ async function main(): Promise<void> {
 	// Wait for GPU operations to complete before starting physics
 	// The greedy mesh algorithm takes longer, so we need to ensure all resources are uploaded
 	await new Promise(resolve => requestAnimationFrame(resolve));
-	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh
-	// Wait for level to be fully loaded and registered
+	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh	// Wait for level to be fully loaded and registered
 	while (!level.isFullyLoaded) {
 		await new Promise(resolve => setTimeout(resolve, 10));
 	}
-	console.log('Level fully loaded, starting physics...');
 	// Initialize physics system with configuration
 	physicsSystem.setLevel(level);
 	physicsSystem.updateConfig({
@@ -1257,14 +1180,12 @@ async function main(): Promise<void> {
 
 	// Initialize mesh statistics tracking
 	MeshStats.getInstance();
-
 	// Create a demo trigger volume
 	const demoTrigger = new TriggerVolume(TriggerShape.Box, vec3.fromValues(2, 2, 2));
 	demoTrigger.localPosition = vec3.fromValues(5, 5, 1);
 	demoTrigger.setCallback({
 		onEnter: (entity) => {
 			if (entity === player) {
-				console.log('Player entered trigger zone!');
 				// Example: Boost player speed temporarily
 				physicsSystem.updateConfig({
 					maxVelocity: 20
@@ -1273,7 +1194,6 @@ async function main(): Promise<void> {
 		},
 		onExit: (entity) => {
 			if (entity === player) {
-				console.log('Player exited trigger zone!');
 				// Reset player speed
 				physicsSystem.updateConfig({
 					maxVelocity: 10
@@ -1287,224 +1207,6 @@ async function main(): Promise<void> {
 	// Start the game loop only after all initialization is complete
 	requestAnimationFrame(loop);
 }
-
-// Start the game loop
-requestAnimationFrame(loop);
-
-// Add debug functions for testing
-(globalThis as any).testMultiplayer = () => {
-	console.log('🔄 Multiplayer Test');
-	console.log(`📊 Total entities: ${Entity.all.length}`);
-
-	const networkEntities = Entity.all.filter(e => e.isNetworkEntity);
-	console.log(`🌐 Network entities: ${networkEntities.length}`);
-
-	const remotePlayers = Entity.all.filter(e => e instanceof PlayerEntity && e.isNetworkEntity);
-	console.log(`👥 Remote players: ${remotePlayers.length}`);
-
-	// Log entity details
-	Entity.all.forEach((entity, index) => {
-		if (entity instanceof PlayerEntity) {
-			console.log(`Player ${index}: ID=${entity.id}, Local=${entity.isLocalPlayer}, Network=${entity.isNetworkEntity}, NetworkID=${entity.networkPlayerId}, Name=${entity.playerName}`);
-		} else {
-			console.log(`Entity ${index}: ID=${entity.id}, Network=${entity.isNetworkEntity}, Type=${entity.constructor.name}`);
-		}
-	});
-};
-
-// Debug function to manually create a test remote player
-(globalThis as any).createTestRemotePlayer = () => {
-	console.log('🧪 Creating test remote player...');
-	const testPlayer = PlayerEntity.createRemotePlayer('test_player_123');
-	testPlayer.localPosition = vec3.fromValues(2, 2, 1); // Position nearby	
-	console.log(`✅ Created test remote player at position [${testPlayer.localPosition[0]}, ${testPlayer.localPosition[1]}, ${testPlayer.localPosition[2]}]`);
-	console.log(`🎨 ModelId assigned: ${testPlayer.modelId >= 0 ? 'Yes' : 'No'} (${testPlayer.modelId})`);
-	return testPlayer;
-};
-// Debug function to check multiplayer player state
-(globalThis as any).checkMultiplayerState = () => {
-	const localPlayer = PlayerEntity.getLocalPlayer();
-	const globalPlayer = (globalThis as any).player;
-	console.log('🔍 Multiplayer State Check');
-	console.log('========================');
-
-	console.log(`🔍 Player Reference Check:`);
-	console.log(`   Global player === Local player: ${globalPlayer === localPlayer}`);
-	console.log(`   Global player ID: ${globalPlayer?.id}`);
-	console.log(`   Local player ID: ${localPlayer?.id}`);
-	console.log(`   Camera following entity: ${(globalThis as any).camera?.entity?.parent?.id || 'none'}`);
-
-	if (localPlayer) {
-		console.log(`🏠 Local Player:`);
-		console.log(`   ID: ${localPlayer.id}`);
-		console.log(`   Network ID: ${localPlayer.networkPlayerId}`);
-		console.log(`   Name: ${localPlayer.playerName}`);
-		console.log(`   Is Local: ${localPlayer.isLocalPlayer}`);
-		console.log(`   Is Network Entity: ${localPlayer.isNetworkEntity}`);
-		console.log(`   Position: [${localPlayer.localPosition[0].toFixed(2)}, ${localPlayer.localPosition[1].toFixed(2)}, ${localPlayer.localPosition[2].toFixed(2)}]`);
-	} else {
-		console.log('❌ No local player found!');
-	}
-
-	const remotePlayers = Entity.all.filter(e => e instanceof PlayerEntity && !e.isLocalPlayer) as PlayerEntity[];
-	console.log(`\n👥 Remote Players (${remotePlayers.length}):`);
-	remotePlayers.forEach((player, index) => {
-		console.log(`   Player ${index + 1}:`);
-		console.log(`     ID: ${player.id}`);
-		console.log(`     Network ID: ${player.networkPlayerId}`);
-		console.log(`     Name: ${player.playerName}`);
-		console.log(`     Is Network Entity: ${player.isNetworkEntity}`);
-		console.log(`     Position: [${player.localPosition[0].toFixed(2)}, ${player.localPosition[1].toFixed(2)}, ${player.localPosition[2].toFixed(2)}]`);
-	});
-
-	const mpManager = (globalThis as any).multiplayerManager;
-	if (mpManager) {
-		const stats = mpManager.getNetworkStats();
-		console.log(`\n📊 Network Status:`);
-		console.log(`   Player ID: ${stats.playerId}`);
-		console.log(`   Is Host: ${stats.isHost}`);
-		console.log(`   Connection Active: ${stats.connectionActive}`);
-	}
-
-	console.log(`\n📦 Total Entities: ${Entity.all.length}`);
-	console.log('========================');
-};
-
-// Debug function to test multiplayer host/join flow
-(globalThis as any).testHostGame = async () => {
-	console.log('🎮 Testing host game...');
-	const mpManager = (globalThis as any).multiplayerManager;
-	if (mpManager) {
-		await mpManager.createGame('test_host_123');
-		console.log('✅ Host game created');
-		(globalThis as any).checkMultiplayerState();
-	}
-};
-
-(globalThis as any).testJoinGame = async () => {
-	console.log('🔗 Testing join game...');
-	const mpManager = (globalThis as any).multiplayerManager;
-	if (mpManager) {
-		await mpManager.joinGame('test_client_456', 'test_host_123');
-		console.log('✅ Attempted to join game');
-		(globalThis as any).checkMultiplayerState();
-	}
-};
-
-// Test function for the unified multiplayer architecture
-(globalThis as any).testUnifiedMultiplayer = function () {
-	console.log('=== Testing Unified Multiplayer Architecture ===');
-
-	const mpManager = (globalThis as any).multiplayerManager;
-	if (!mpManager) {
-		console.error('MultiplayerManager not found');
-		return;
-	}
-
-	console.log('MultiplayerManager debug state:', mpManager.getDebugState());
-	console.log('Connection info:', mpManager.getConnectionInfo());
-
-	// Test local player initialization
-	if (!mpManager.getLocalPlayer()) {
-		console.log('Initializing local player...');
-		mpManager.initializeLocalPlayer();
-	}
-
-	const localPlayer = mpManager.getLocalPlayer();
-	const localEntity = mpManager.getLocalPlayerEntity();
-
-	console.log('Local player controller:', localPlayer ? localPlayer.getPlayerId() : 'None');
-	console.log('Local player entity:', localEntity ? localEntity.id : 'None');
-
-	// Test player management
-	console.log('All players:', mpManager.getAllPlayers().map((p: any) => ({
-		id: p.getPlayerId(),
-		isLocal: p instanceof LocalPlayerController,
-		hasEntity: !!p.getPlayerEntity()
-	})));
-
-	console.log('=== Architecture Test Complete ===');
-	return {
-		status: 'success',
-		localPlayerId: localPlayer?.getPlayerId(),
-		totalPlayers: mpManager.getAllPlayers().length,
-		hasLocalEntity: !!localEntity
-	};
-};
-
-// Test function for entity synchronization
-(globalThis as any).testEntitySync = function () {
-	console.log('=== Testing Entity Synchronization ===');
-
-	const mpManager = (globalThis as any).multiplayerManager;
-	if (!mpManager) {
-		console.error('MultiplayerManager not found');
-		return;
-	}
-
-	const syncStatus = mpManager.debugEntitySync();
-	console.log('Entity Sync Status:', syncStatus);
-
-	// Check if local player exists and is properly set up
-	if (!syncStatus.localPlayer) {
-		console.warn('No local player found - initializing...');
-		mpManager.initializeLocalPlayer();
-		const newStatus = mpManager.debugEntitySync();
-		console.log('After initialization:', newStatus);
-	}
-
-	// Show entity count vs player count
-	console.log(`Total player entities: ${syncStatus.allPlayerEntities.length}`);
-	console.log(`Total controllers: ${syncStatus.controllers.length}`);
-	console.log(`Connection active: ${syncStatus.isConnected}`);
-	console.log(`Is host: ${syncStatus.isHost}`);
-
-	if (syncStatus.allPlayerEntities.length === 0) {
-		console.warn('⚠️  No player entities found - this could be why sync isn\'t working');
-	}
-
-	if (!syncStatus.isConnected) {
-		console.warn('⚠️  Not connected to network - entities won\'t sync without connection');
-	}
-
-	return syncStatus;
-};
-// Force entity sync test
-(globalThis as any).forceEntitySync = function () {
-	console.log('=== Forcing Entity Sync Test ===');
-
-	const mpManager = (globalThis as any).multiplayerManager;
-	if (!mpManager) {
-		console.error('MultiplayerManager not found');
-		return;
-	}
-
-	// Ensure local player exists
-	if (!mpManager.getLocalPlayer()) {
-		console.log('Creating local player...');
-		mpManager.initializeLocalPlayer();
-	}
-
-	// Get current state before
-	const beforeState = mpManager.debugEntitySync();
-	console.log('Before sync:', beforeState);
-
-	// Manually trigger entity update
-	if (mpManager.isConnected()) {
-		console.log('Manually triggering entity sync...');
-		mpManager.forceEntitySync();
-		console.log('Entity sync triggered! Check other client for updates.');
-	} else {
-		console.warn('⚠️  Not connected - cannot sync entities');
-		console.log('Available methods:');
-		console.log('- createGame() to host');
-		console.log('- joinGame(gameId) to join');
-	}
-	// Show final state
-	const afterState = mpManager.debugEntitySync();
-	console.log('After sync:', afterState);
-	return { before: beforeState, after: afterState };
-};
 
 // Start the application
 main().catch(console.error);

@@ -37,23 +37,18 @@ export class WeaponPositionAdjuster {
     if (adjustWeaponKey) {
       this.updateKeyBindString(adjustWeaponKey);
     }
-    
-    // Add keyboard event listeners - use capture phase to get key events before the game
+      // Add keyboard event listeners - use capture phase to get key events before the game
     document.addEventListener('keydown', this.handleKeyDown.bind(this), true);
-    
-    console.log(`Weapon position adjuster initialized - press ${this.keyBindString} to activate, then use ALT+keys to adjust`);
   }
   /**
    * Toggle the weapon position adjuster mode
-   */
-  public toggle(weaponType?: string): void {
+   */  public toggle(weaponType?: string): void {
     this.isActive = !this.isActive;
     
     if (this.isActive) {
       if (weaponType) {
         this.currentWeaponType = weaponType;
       }
-      console.log(`Weapon position adjuster activated for: ${this.currentWeaponType}`);
       this.showHelp();
       
       // Flash the help text to make it more noticeable
@@ -67,48 +62,29 @@ export class WeaponPositionAdjuster {
           }
         }, uiConfig.weaponAdjusterFlashDuration);
       }
-      
-      // Debug log to confirm the weapon type
-      const currentConfig = WeaponPositionConfigs[this.currentWeaponType];
-      if (currentConfig) {
-        console.log('Current weapon config:', JSON.stringify({
-          position: currentConfig.position,
-          restRotation: currentConfig.restRotation
-        }));
-      }
     } else {
-      console.log('Weapon position adjuster deactivated');
       this.hideHelp();
     }
   }
   
   /**
    * Set the current weapon type to adjust
-   */
-  public setWeaponType(weaponType: string): void {
+   */  public setWeaponType(weaponType: string): void {
     if (WeaponPositionConfigs[weaponType]) {
       this.currentWeaponType = weaponType;
-      console.log(`Now adjusting: ${weaponType}`);
-    } else {
-      console.warn(`Weapon type "${weaponType}" not found in configurations`);
     }
   }
   /**
    * Handle keyboard input for adjustments
-   */
-  private handleKeyDown(event: KeyboardEvent): void {
+   */  private handleKeyDown(event: KeyboardEvent): void {
     // Always log the key when Alt is pressed for debugging
     if (event.altKey) {
-      console.log(`Alt+Key detected in adjuster: ${event.code} (active: ${this.isActive})`);
     }
     
     if (!this.isActive) return;
     
     // Only process when holding Alt key to avoid conflicts with game controls
     if (!event.altKey) return;
-    
-    // When active and alt is pressed, log to verify the handler is working
-    console.log(`Weapon adjuster processing key: ${event.code}`);
     
     const config = WeaponPositionConfigs[this.currentWeaponType];
     if (!config) return;
@@ -117,23 +93,18 @@ export class WeaponPositionAdjuster {
     switch (event.code) {
       case 'Digit1':
         this.adjustmentMode = 'position';
-        console.log('Now adjusting: Position');
         break;
       case 'Digit2':
         this.adjustmentMode = 'restRotation';
-        console.log('Now adjusting: Rest Rotation');
         break;
       case 'Digit3':
         this.adjustmentMode = 'attackStartRotation';
-        console.log('Now adjusting: Attack Start Rotation');
         break;
       case 'Digit4':
         this.adjustmentMode = 'attackEndRotation';
-        console.log('Now adjusting: Attack End Rotation');
         break;
       case 'Digit5':
         this.adjustmentMode = 'scale';
-        console.log('Now adjusting: Scale');
         break;
     }
     
@@ -168,18 +139,15 @@ export class WeaponPositionAdjuster {
         break;
       case 'PageDown':
         this.adjustValue(2, -amount);
-        break;
-      case 'Equal': // +
+        break;      case 'Equal': // +
         if (this.adjustmentMode === 'scale') {
           config.scale = (config.scale || 1.0) + smallAmount;
-          console.log(`Scale: ${config.scale.toFixed(2)}`);
           this.updatePlayer();
         }
         break;
       case 'Minus': // -
         if (this.adjustmentMode === 'scale') {
           config.scale = Math.max(0.1, (config.scale || 1.0) - smallAmount);
-          console.log(`Scale: ${config.scale.toFixed(2)}`);
           this.updatePlayer();
         }
         break;
@@ -211,23 +179,18 @@ export class WeaponPositionAdjuster {
   private adjustValue(index: number, amount: number): void {
     const config = WeaponPositionConfigs[this.currentWeaponType];
     if (!config) return;
-    
-    switch (this.adjustmentMode) {
+      switch (this.adjustmentMode) {
       case 'position':
         config.position[index] += amount * 0.01;
-        console.log(`Position: [${config.position[0].toFixed(2)}, ${config.position[1].toFixed(2)}, ${config.position[2].toFixed(2)}]`);
         break;
       case 'restRotation':
         config.restRotation[index] += amount;
-        console.log(`Rest Rotation: [${config.restRotation[0].toFixed(0)}, ${config.restRotation[1].toFixed(0)}, ${config.restRotation[2].toFixed(0)}]`);
         break;
       case 'attackStartRotation':
         config.attackStartRotation[index] += amount;
-        console.log(`Attack Start: [${config.attackStartRotation[0].toFixed(0)}, ${config.attackStartRotation[1].toFixed(0)}, ${config.attackStartRotation[2].toFixed(0)}]`);
         break;
       case 'attackEndRotation':
         config.attackEndRotation[index] += amount;
-        console.log(`Attack End: [${config.attackEndRotation[0].toFixed(0)}, ${config.attackEndRotation[1].toFixed(0)}, ${config.attackEndRotation[2].toFixed(0)}]`);
         break;
     }
     
@@ -256,13 +219,11 @@ export class WeaponPositionAdjuster {
         break;
       case 'attackEndRotation':
         config.attackEndRotation = [...defaultConfig.attackEndRotation];
-        break;
-      case 'scale':
+        break;      case 'scale':
         config.scale = defaultConfig.scale || 1.0;
         break;
     }
     
-    console.log(`Reset ${this.adjustmentMode} to default`);
     this.updatePlayer();
   }
   
@@ -429,7 +390,6 @@ export class WeaponPositionAdjuster {
 
 // Export a global function to toggle the adjuster
 export function toggleWeaponAdjuster(weaponType?: string): void {
-  console.log(`Toggling weapon adjuster with weapon type: ${weaponType || 'none'}`);
   const adjuster = WeaponPositionAdjuster.getInstance();
   adjuster.toggle(weaponType);
   

@@ -264,7 +264,6 @@ export class InputManager {
   }
 
   private triggerAction(action: string): void {
-    console.log(`Action triggered: ${action}`);
     
     if (action === 'chat') {
       // Don't open chat if signaling UI is active

@@ -38,13 +38,10 @@ export class Renderer {
   nextPaletteIndex: number = 0; tileSampler!: ManagedResource<GPUSampler>;
   resourceMap = new Map<Model | Level | Tileset, any>();
   async init(): Promise<Result<void>> {
-    return errorHandler.safeAsync(async () => {
-      await this.initializeWebGPU();
+    return errorHandler.safeAsync(async () => {      await this.initializeWebGPU();
       await this.initializeResources();
       // Register cleanup handlers
       AutoCleanup.register(() => this.cleanup());
-
-      console.log('Renderer initialized successfully');
     }, 'Renderer.init');
   }
 
@@ -162,10 +159,7 @@ export class Renderer {
 
     // Create query resources for performance monitoring
     this.createQueryResources();
-  }
-  private cleanup(): void {
-    console.log('Cleaning up renderer resources');
-
+  }  private cleanup(): void {
     // Clear resource map
     this.resourceMap.clear();
 
@@ -175,10 +169,7 @@ export class Renderer {
     this.renderedGreedyFacesCount = 0;
 
     // Clear frame timing data
-    this.frameTimes = [];
-
-    // GPU resources will be cleaned up by gpuResourceManager
-    console.log('Renderer cleanup completed');
+    this.frameTimes = [];    // GPU resources will be cleaned up by gpuResourceManager
   }
   /**
    * Comprehensive device loss recovery - recreates ALL GPU resources
@@ -1263,15 +1254,6 @@ export class Renderer {
       }
     }
   }
-
-  /**
-   * Public method to manually trigger device loss recovery
-   * Useful for testing or when device loss is detected outside the renderer
-   */  public async triggerDeviceRecovery(): Promise<void> {
-    console.log('Manual device recovery triggered');
-    await this.recoverFromDeviceLoss();
-  }
-
   /**
    * Check if the renderer is ready for rendering
    */

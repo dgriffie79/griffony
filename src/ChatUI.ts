@@ -197,14 +197,10 @@ export class ChatUI {
       }
     };
 
-    // Add to local chat immediately
-    this.addMessage(chatMessage.data.playerName, message, Date.now());
+    // Add to local chat immediately    this.addMessage(chatMessage.data.playerName, message, Date.now());
     
     // Send to network
-    console.log(`🚀 ChatUI: About to send chat message to network:`, chatMessage);
     this.net.sendMessage(chatMessage);
-    
-    console.log(`✅ ChatUI: Sent chat message through network: ${message}`);
     
     // Close chat after sending
     this.close();
@@ -247,7 +243,7 @@ export class ChatUI {
     }
 
     // Show chat temporarily
-    this.showTemporary();    console.log(`Added message from ${sender}: ${message}`);
+    this.showTemporary();
   }
 
   private escapeHtml(text: string): string {
@@ -256,12 +252,9 @@ export class ChatUI {
     return div.innerHTML;
   }
   public open(): void {
-    if (!this.container || !this.chatInput) return;
-
-    // Don't open chat if signaling UI is active
+    if (!this.container || !this.chatInput) return;    // Don't open chat if signaling UI is active
     const signalingUI = document.getElementById('manualSignalingUI');
     if (signalingUI) {
-      console.log('Cannot open chat while signaling UI is active');
       return;
     }
 
@@ -273,14 +266,10 @@ export class ChatUI {
     if (this.hideTimeout) {
       clearTimeout(this.hideTimeout);
       this.hideTimeout = null;
-    }
-
-    // Focus input
+    }    // Focus input
     setTimeout(() => {
       this.chatInput!.focus();
     }, 50);
-
-    console.log('Chat opened');
   }
 
   public close(): void {
@@ -291,11 +280,8 @@ export class ChatUI {
     
     // Blur input
     this.chatInput.blur();
-    
-    // Hide after delay if no messages
+      // Hide after delay if no messages
     this.scheduleHide();
-
-    console.log('Chat closed');
   }
 
   public toggle(): void {
@@ -339,12 +325,9 @@ export class ChatUI {
     if (this.hideTimeout) {
       clearTimeout(this.hideTimeout);
     }
-    
-    if (this.container) {
+      if (this.container) {
       document.body.removeChild(this.container);
       this.container = null;
     }
-
-    console.log('Chat UI destroyed');
   }
 }

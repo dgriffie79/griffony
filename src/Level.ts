@@ -101,21 +101,18 @@ export class Level {
       }
     }
   }
-
   private processTileLayer(layer: any, sizeX: number, sizeY: number): void {
     const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
     if (layerIndex === -1) {
-      console.warn(`Unknown tilelayer name: ${layer.name}`);
       return;
     }
 
     if (!layer.data) {
-      console.warn(`Tile layer ${layer.name} has no data`);
       return;
     }
 
     if (layer.data.length !== sizeX * sizeY) {
-      console.warn(`Tile layer ${layer.name} data size mismatch: expected ${sizeX * sizeY}, got ${layer.data.length}`);
+      // Data size mismatch - handle gracefully
     }
 
     for (let i = 0; i < layer.data.length && i < sizeX * sizeY; i++) {
@@ -124,18 +121,13 @@ export class Level {
       const z = layerIndex;
       this.volume.setVoxel(x, y, z, layer.data[i]);
     }
-  }
-  private processObjectLayer(layer: any, sizeY: number): void {
+  }  private processObjectLayer(layer: any, sizeY: number): void {
     if (!layer.objects) {
-      console.warn(`Object layer has no objects`);
       return;
-    }
-
-    for (const object of layer.objects) {
+    }    for (const object of layer.objects) {
       try {
         this.processLevelObject(object, sizeY);
       } catch (error) {
-        console.warn(`Failed to process object:`, error);
         // Continue processing other objects
       }
     }
@@ -179,14 +171,10 @@ export class Level {
   public dispose(): void {
     if (this.disposed) {
       return;
-    }
-
-    this.disposed = true;
+    }    this.disposed = true;
     this.isFullyLoaded = false;
     // Volume cleanup is handled automatically by garbage collection
     // Any additional cleanup can be added here
-
-    console.log(`Disposed level: ${this.url}`);
   }
 
   /**

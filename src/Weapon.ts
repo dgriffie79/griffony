@@ -24,7 +24,7 @@ export class Weapon extends Entity {
     super();
     this.weaponData = weaponData;
     this.modelId = globalThis.modelNames?.indexOf(weaponData.modelName) ?? -1;
-    
+
     // Initialize swing rotations
     quat.fromEuler(this.swingStartRotation, -30, 45, 10);  // Ready position
     quat.fromEuler(this.swingEndRotation, 60, -15, -30);   // End swing position
@@ -34,7 +34,7 @@ export class Weapon extends Entity {
     this.wielder = entity;
     this.parent = entity;
     entity.children.push(this);
-    
+
     // Set initial position and rotation
     vec3.copy(this.localPosition, this.restPosition);
     quat.copy(this.localRotation, this.restRotation);
@@ -72,9 +72,6 @@ export class Weapon extends Entity {
       }
     }
 
-    // Enhanced feedback
-    console.log(`⚔️ Starting ${this.weaponData.name} swing! Duration: ${this.weaponData.swingDuration}ms`);
-
     return true;
   }
 
@@ -105,10 +102,10 @@ export class Weapon extends Entity {
 
     // Use easing function for more natural swing motion
     const easedProgress = this.easeInOutQuad(this.swing.progress);
-    
+
     // Interpolate between rest, swing start, swing end, and back to rest
     let targetRotation = quat.create();
-    
+
     if (easedProgress < 0.3) {
       // Move to swing start position
       const t = easedProgress / 0.3;
@@ -195,22 +192,19 @@ export class Weapon extends Entity {
     // Dispatch combat event for UI/effects
     this.dispatchCombatEvent(combatEvent);
   }
-
   private onEntityDeath(entity: Entity): void {
     // Override in subclasses or add to combat system
-    console.log(`Entity ${entity.id} was defeated!`);
   }
 
   private dispatchCombatEvent(event: any): void {
     // For now, just log. Later can be extended for UI feedback, sound effects, etc.
-    console.log('Combat Event:', event);
   }
 
   private endSwing(): void {
     this.swing.isSwinging = false;
     this.swing.progress = 0;
     this.swing.hasHit = false;
-    
+
     // Return to rest position
     quat.copy(this.localRotation, this.restRotation);
     this.dirty = true;
@@ -248,7 +242,7 @@ export const WeaponConfigs = {
     attackSpeed: 1.0,
     swingDuration: 600,
     modelName: 'axe'
-  },  WAR_HAMMER: {
+  }, WAR_HAMMER: {
     id: 'war_hammer',
     name: 'War Hammer',
     damage: getConfig().getCombatConfig().defaultWeaponDamage,

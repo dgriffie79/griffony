@@ -133,29 +133,13 @@ export class GameResources {
 
   areModelsReady(): boolean {
     return this._modelsLoaded && this._models.length > 0;
-  }
-  // Ready state
+  }  // Ready state
   markReady(): void {
     this._ready = true;
-    console.log('🎉 All game resources are ready!');
   }
 
   get isReady(): boolean {
     return this._ready;
-  }
-
-  // Debug information
-  getStatus(): any {
-    return {
-      modelNames: this._modelNames.length,
-      modelsLoaded: this._modelsLoaded,
-      hasPlayer: !!this._player,
-      hasCamera: !!this._camera,
-      hasRenderer: !!this._renderer,
-      hasLevel: !!this._level,
-      hasTileset: !!this._tileset,
-      ready: this._ready
-    };
   }
 }
 

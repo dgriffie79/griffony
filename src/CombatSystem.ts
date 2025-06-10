@@ -182,16 +182,12 @@ export class CombatSystem {
     // Future: Update cooldowns, damage over time effects, etc.
     // Currently no frame-by-frame updates needed
   }
-
   // Dispatch combat events for logging/UI updates
   private dispatchCombatEvent(event: CombatEvent): void {
-    console.log(`Event: ${event.type}`, event);
     // Future: Could dispatch to event system for UI updates
   }
-
   // Handle entity death
   private onEntityDeath(entity: Entity, killer?: Entity): void {
-    console.log(`Entity ${entity.id} died`, { killer: killer?.id });
     // Future: Handle loot drops, experience, etc.
   }
 }
