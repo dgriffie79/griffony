@@ -24,7 +24,7 @@ export class Level {
       }
 
       const response = fetchResult.data;
-      
+
       // Parse JSON data
       const parseResult = await errorHandler.parseJSON<LevelData>(response, 'level', this.url);
       if (!parseResult.success) {
@@ -32,21 +32,20 @@ export class Level {
       }
 
       const data = parseResult.data;
-      
+
       // Validate level data
       this.validateLevelData(data);
-      
+
       // Process level data
       await this.processLevelData(data);
-      
+
       // Register with renderer if available
       const renderer = (globalThis as any).renderer;
       if (renderer) {
         renderer.registerLevel(this);
       }
-        this.isFullyLoaded = true;
-      
-      console.log('Level fully loaded and registered with renderer');
+      this.isFullyLoaded = true;
+
     }, 'Level.load');
   }
 
@@ -103,12 +102,13 @@ export class Level {
     }
   }
 
-  private processTileLayer(layer: any, sizeX: number, sizeY: number): void {    const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
+  private processTileLayer(layer: any, sizeX: number, sizeY: number): void {
+    const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
     if (layerIndex === -1) {
       console.warn(`Unknown tilelayer name: ${layer.name}`);
       return;
     }
-    
+
     if (!layer.data) {
       console.warn(`Tile layer ${layer.name} has no data`);
       return;
@@ -117,7 +117,7 @@ export class Level {
     if (layer.data.length !== sizeX * sizeY) {
       console.warn(`Tile layer ${layer.name} data size mismatch: expected ${sizeX * sizeY}, got ${layer.data.length}`);
     }
-    
+
     for (let i = 0; i < layer.data.length && i < sizeX * sizeY; i++) {
       const x = i % sizeX;
       const y = sizeY - Math.floor(i / sizeX) - 1;
@@ -146,26 +146,27 @@ export class Level {
       if (entity) {
         entity.localPosition[1] = sizeY - entity.localPosition[1];
         entity.localPosition[0] += 0.5 + 2 * i;
-        
+
         // Enable basic physics for non-spawn entities
         if (!entity.spawn) {
           // Enable collision for all entities except specific types
           entity.collision = true;
-          
+
           // Enable gravity for movable entities
           if (object.type?.toLowerCase() !== 'static') {
             entity.gravity = true;
           }
-          
+
           // Initialize combat stats for entities
           if ((globalThis as any).combatSystem) {
             (globalThis as any).combatSystem.initializeCombatStats(entity);
           }
-            // Mark as network entity if multiplayer is active
+          // Mark as network entity if multiplayer is active
           if ((globalThis as any).net && (globalThis as any).net.isConnectionActive()) {
             entity.isNetworkEntity = true;
             if ((globalThis as any).net.isHost()) {
-              entity.ownerId = (globalThis as any).net.getPeerId();            }
+              entity.ownerId = (globalThis as any).net.getPeerId();
+            }
           }
         }
       }
@@ -182,9 +183,9 @@ export class Level {
 
     this.disposed = true;
     this.isFullyLoaded = false;
-      // Volume cleanup is handled automatically by garbage collection
+    // Volume cleanup is handled automatically by garbage collection
     // Any additional cleanup can be added here
-    
+
     console.log(`Disposed level: ${this.url}`);
   }
 

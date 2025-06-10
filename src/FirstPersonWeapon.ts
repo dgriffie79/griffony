@@ -92,15 +92,6 @@ export class FirstPersonWeapon extends Entity {
     // Get the configuration for this weapon, fall back to DEFAULT if not found
     const config = WeaponPositionConfigs[weaponType] || WeaponPositionConfigs.DEFAULT;
     
-    // Debug logging to see what's happening
-    console.log(`🔧 applyWeaponPositionConfig: weaponType="${weaponType}"`);
-    console.log(`🔧 Using config:`, config === WeaponPositionConfigs.DEFAULT ? 'DEFAULT (fallback)' : `${weaponType} (specific)`);
-    console.log(`🔧 Config values:`, {
-      position: config.position,
-      scale: config.scale,
-      restRotation: config.restRotation
-    });
-    
     // Apply position
     vec3.set(this.fpRightHandPosition, ...config.position);
     vec3.copy(this.localPosition, this.fpRightHandPosition);
@@ -119,8 +110,6 @@ export class FirstPersonWeapon extends Entity {
     
     // Store current weapon type
     this.currentWeaponType = weaponType;
-    
-    console.log(`🔧 Applied config - scale: ${this.weaponScale}, position: [${this.localPosition[0].toFixed(2)}, ${this.localPosition[1].toFixed(2)}, ${this.localPosition[2].toFixed(2)}]`);
   }
   
   /**
@@ -136,11 +125,6 @@ export class FirstPersonWeapon extends Entity {
     // Set the modelId based on weapon type
     const modelName = weapon.weaponData.modelName;
     
-    // Debug logging to see what's happening
-    console.log(`🔧 FirstPersonWeapon.updateWeaponModel: modelName="${modelName}"`);
-    console.log(`🔧 Available WeaponPositionConfigs keys:`, Object.keys(WeaponPositionConfigs));
-    console.log(`🔧 Config found for "${modelName}":`, WeaponPositionConfigs[modelName] ? 'YES' : 'NO');
-    
     this.modelId = gameResources.getModelId(modelName);
     
     // Get the actual model for local reference (but don't store it)
@@ -151,9 +135,7 @@ export class FirstPersonWeapon extends Entity {
       console.warn(`First-person weapon: Model "${modelName}" not found for ${weapon.weaponData.name}`);
     } else {
       // Apply weapon-specific position configuration
-      console.log(`🔧 Applying weapon position config for: "${modelName}"`);
       this.applyWeaponPositionConfig(modelName);
-      console.log(`Applied ${modelName} first-person positioning configuration`);
     }
     
     // Update attack animation duration from weapon config

@@ -1,5 +1,5 @@
 import type { Model } from './Model.js';
-import type { PlayerEntity } from './PlayerEntity.js';
+import type { Player } from './Player.js';
 import type { Camera } from './Camera.js';
 import type { Renderer } from './Renderer.js';
 import type { Level } from './Level.js';
@@ -15,7 +15,7 @@ export class GameResources {
   // Core game objects
   private _models: Model[] = [];
   private _modelNames: string[] = [];
-  private _player: PlayerEntity | null = null;
+  private _player: Player | null = null;
   private _camera: Camera | null = null;
   private _renderer: Renderer | null = null;
   private _level: Level | null = null;
@@ -36,13 +36,11 @@ export class GameResources {
   // Model management
   initializeModelNames(modelNames: string[]): void {
     this._modelNames = [...modelNames];
-    console.log(`✅ Model names initialized: ${modelNames.length} models`);
   }
 
   setModels(models: Model[]): void {
     this._models = models;
     this._modelsLoaded = true;
-    console.log(`✅ Models loaded: ${models.length} models`);
   }
 
   getModel(modelId: number): Model | null {
@@ -75,12 +73,11 @@ export class GameResources {
     return this._modelsLoaded;
   }
   // Core game objects
-  setPlayer(player: PlayerEntity): void {
+  setPlayer(player: Player): void {
     this._player = player;
-    console.log('✅ Player registered');
   }
 
-  get player(): PlayerEntity {
+  get player(): Player {
     if (!this._player) {
       throw new Error('Player not initialized - call setPlayer() first');
     }
@@ -89,7 +86,6 @@ export class GameResources {
 
   setCamera(camera: Camera): void {
     this._camera = camera;
-    console.log('✅ Camera registered');
   }
 
   get camera(): Camera {
@@ -101,7 +97,6 @@ export class GameResources {
 
   setRenderer(renderer: Renderer): void {
     this._renderer = renderer;
-    console.log('✅ Renderer registered');
   }
 
   get renderer(): Renderer {
@@ -113,7 +108,6 @@ export class GameResources {
 
   setLevel(level: Level): void {
     this._level = level;
-    console.log('✅ Level registered');
   }
 
   get level(): Level {
@@ -125,7 +119,6 @@ export class GameResources {
 
   setTileset(tileset: Tileset): void {
     this._tileset = tileset;
-    console.log('✅ Tileset registered');
   }
 
   get tileset(): Tileset {

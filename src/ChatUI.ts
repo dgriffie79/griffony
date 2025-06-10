@@ -107,7 +107,7 @@ export class ChatUI {
     this.inputContainer.appendChild(this.sendButton);
     this.container.appendChild(this.messagesContainer);
     this.container.appendChild(this.inputContainer);
-    document.body.appendChild(this.container);    console.log('Chat UI created');
+    document.body.appendChild(this.container);
   }
 
   private getPositionStyles(): string {

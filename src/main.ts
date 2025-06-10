@@ -1137,7 +1137,6 @@ async function main(): Promise<void> {
 	await renderer.init();
 	// Set globalThis.modelNames BEFORE loading level (entities need this for model lookup)
 	globalThis.modelNames = modelNames;
-	console.log('✅ globalThis.modelNames assigned for entity creation');
 
 	// Initialize resource manager (optional - can be removed if not used elsewhere)
 	gameResources.initializeModelNames(modelNames);
@@ -1145,7 +1144,6 @@ async function main(): Promise<void> {
 	gameResources.setCamera(camera);
 	gameResources.setTileset(tileset);
 	gameResources.setLevel(level);
-	console.log('✅ Resource manager initialized with model names');
 	
 	// Create player after model names are available
 	// Get the proper player ID from MultiplayerManager if it exists
@@ -1155,7 +1153,6 @@ async function main(): Promise<void> {
 	player = new PlayerEntity(1, playerId, true);
 	globalThis.player = player; // Make player available globally
 	gameResources.setPlayer(player);
-	console.log(`✅ Player created and registered with ID: ${playerId}`);
 
 	// Set camera to follow the local player's head now that player exists
 	camera.entity = player.head;
@@ -1213,16 +1210,11 @@ async function main(): Promise<void> {
 	globalThis.models = models;
 	gameResources.setModels(models); // Also set in GameResources for proper lookup
 
-	console.log('✅ Models array assigned to globalThis after loading');
-	console.log(`📦 Loaded ${models.length} models successfully`);
-	
 	// NOW that globalThis.models is available, we can equip weapons
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
-	console.log('✅ Weapon equipped after models are fully loaded');
 
 	// Wait for GPU operations to complete before starting physics
 	// The greedy mesh algorithm takes longer, so we need to ensure all resources are uploaded
-	console.log('Waiting for GPU resource upload to complete...');
 	await new Promise(resolve => requestAnimationFrame(resolve));
 	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh
 	// Wait for level to be fully loaded and registered

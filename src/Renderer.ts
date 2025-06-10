@@ -914,7 +914,6 @@ export class Renderer {
     const bufferEndTime = performance.now();
 
     this.resourceMap.set(level, resources);
-    console.log('Level terrain mesh registered with renderer');
   } createDepthTexture(): void {
     // Dispose of existing depth texture if it exists
     if (this.depthTexture) {
