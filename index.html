@@ -199,34 +199,12 @@
                 /* Show on mobile */
             }
         }
-
-        #debug {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            font-family: monospace;
-            max-height: 30%;
-            overflow-y: auto;
-            width: 100%;
-            z-index: 1000;
-            opacity: 1;
-            transition: opacity 0.3s;
-        }
-
-        #debug:empty {
-            opacity: 0;
-            pointer-events: none;
-        }
     </style>
 </head>
 <html>
 
 <body>
     <button id="toggle-menu" class="menu-button">☰</button>
-    <div id="debug"></div>
     <div id="main-menu" hidden>
         <form>            <fieldset>
                 <legend>Server</legend>

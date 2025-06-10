@@ -121,12 +121,8 @@ export class FirstPersonWeapon extends Entity {
       return;
     }    // Set the modelId based on weapon type
     const modelName = weapon.weaponData.modelName;
-    console.log(`🔍 DEBUG: Looking for weapon model "${modelName}"`);
-    console.log(`🔍 DEBUG: Resource manager models ready: ${gameResources.areModelsReady()}`);
-    console.log(`🔍 DEBUG: Available models: ${gameResources.modelNames.join(', ')}`);
     
     this.modelId = gameResources.getModelId(modelName);
-    console.log(`🔍 DEBUG: Model "${modelName}" -> modelId: ${this.modelId}`);
     
     // Get the actual model for local reference (but don't store it)
     const model = gameResources.getModel(this.modelId);

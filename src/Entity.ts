@@ -335,7 +335,6 @@ export class Entity {
         entity.spawn = true;
         // Use 'portal' model for spawn points since 'spawn' model doesn't exist
         entity.modelId = globalThis.modelNames?.indexOf('portal') ?? -1;
-        console.log(`DEBUG: Created spawn entity with portal modelId: ${entity.modelId}`);
         break;
       default:
         entity = new Entity();
@@ -354,26 +353,20 @@ export class Entity {
           entity.radius = property.value;
           break;        case 'model_id':
           // Convert model_id to proper array index
-          console.log(`DEBUG: Processing model_id property: ${property.value} (type: ${typeof property.value})`);
-          console.log(`DEBUG: globalThis.modelNames available: ${!!globalThis.modelNames}`);
           if (typeof property.value === 'string') {
             // If it's a string model name, try to convert to index
             if (globalThis.modelNames) {
               entity.modelId = globalThis.modelNames.indexOf(property.value);
-              console.log(`DEBUG: String model "${property.value}" -> modelId: ${entity.modelId}`);
             } else {
               // Models not loaded yet, store the string for later conversion
               entity._pendingModelName = property.value;
               entity.modelId = -1; // Temporary placeholder
-              console.log(`DEBUG: Storing pending model name: "${property.value}"`);
             }
           } else if (typeof property.value === 'number') {
             // If it's already a number, use it directly
             entity.modelId = property.value;
-            console.log(`DEBUG: Number model ${property.value} -> modelId: ${entity.modelId}`);
           } else {
             entity.modelId = -1;
-            console.log(`DEBUG: Unknown model type, setting modelId to -1`);
           }
           break;}
     }

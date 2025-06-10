@@ -140,12 +140,6 @@ export class PhysicsSystem {
       this.updateSpatialGrid();
       this.performanceMetrics.gridUpdateTime = performance.now() - gridStartTime;
       this.gridLastUpdate = now;
-
-      // Log spatial optimization usage
-      if (this.useGridOptimization && this.spatialGrid.size > 0) {
-        console.log(`Spatial grid updated: ${this.spatialGrid.size} cells, ` +
-          `${this.performanceMetrics.gridUpdateTime.toFixed(2)}ms update time`);
-      }
     }
 
     // Clean old collision cache entries
@@ -648,9 +642,9 @@ export class PhysicsSystem {
   private logDebugInfo(): void {
     if (!this.debugEnabled) return;
 
-    this.frameCount++;    // Report stats every second
+    this.frameCount++;
+    // Report stats every second
     if (performance.now() - this.lastReportTime > 1000) {
-      console.log(this.getDebugStatus());
       this.frameCount = 0;
       this.lastReportTime = performance.now();
     }

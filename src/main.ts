@@ -629,25 +629,6 @@ function setupMouseInputHandlers(): void {
 }
 
 /**
- * Setup error handling listeners
- */
-function setupErrorHandlers(): void {
-	window.addEventListener('error', (event) => {
-		const debug = document.getElementById('debug');
-		if (debug) {
-			debug.innerHTML = `${event.error} at ${event.filename}:${event.lineno}<br>${debug.innerHTML}`;
-		}
-	});
-
-	window.addEventListener('unhandledrejection', (event) => {
-		const debug = document.getElementById('debug');
-		if (debug) {
-			debug.innerHTML = `${event.reason}<br>${debug.innerHTML}`;
-		}
-	});
-}
-
-/**
  * Create and append the time display label
  */
 function createTimeLabel(): void {
@@ -719,7 +700,6 @@ function setupUI(): void {
 	setupKeybindingListeners();
 	setupGlobalEventListeners();
 	setupMouseInputHandlers();
-	setupErrorHandlers();
 
 	// Create UI elements
 	createTimeLabel();
@@ -990,7 +970,6 @@ function updateGameUI(): void {
 		`<span style="color: #888888;">Ready to attack</span>`;
 
 	// Get physics and movement info
-	const physicsInfo = physicsSystem.getDebugStatus();
 	const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
 	const groundedInfo = physicsSystem.isEntityOnGround(player) ?
 		'<span style="color: #4ECDC4;">On Ground</span>' :
@@ -1009,8 +988,7 @@ function updateGameUI(): void {
 		<span style="color: #4ECDC4;">${weaponInfo}</span><br>
 		${attackInfo}</span><br>
 		<span style="color: #AAFFAA;">${velocityInfo} | ${groundedInfo}</span><br>
-		<span style="color: #FFB74D; font-size: 0.9em;">${simpleMeshInfo}</span><br>
-		<span style="color: #AAAAFF; font-size: 0.9em;">${physicsInfo}</span>`;
+		<span style="color: #FFB74D; font-size: 0.9em;">${simpleMeshInfo}</span>`;
 
 	// Update crosshair color based on attack state
 	updateCrosshairDisplay(currentWeapon);
@@ -1039,10 +1017,6 @@ function processGameInput(elapsed: number): number {
 	const inputStartTime = performance.now();
 	processInput(elapsed);
 	const inputTime = performance.now() - inputStartTime;
-	// Log input performance if it takes too long
-	if (inputTime > 5) {
-		console.log(`Input processing took ${inputTime}ms - Input processing took longer than expected`);
-	}
 
 	return inputTime;
 }
@@ -1070,18 +1044,6 @@ function updatePhysicsSystem(elapsed: number): number {
 	const physicsStartTime = performance.now();
 	physicsSystem.update(elapsed);
 	const physicsTime = performance.now() - physicsStartTime;
-	// Log physics performance if it takes too long (>5ms indicates potential optimization needed)
-	if (physicsTime > 5) {
-		console.log(`Physics update took ${physicsTime}ms - Physics processing took longer than expected`);
-	}
-
-	// Log physics performance metrics every 5 seconds for debugging
-	if (performance.now() % 5000 < 16.67) { // Log approximately every 5 seconds
-		const metrics = physicsSystem.getPerformanceMetrics();
-		if (metrics.collisionChecks > 0) {
-			console.log(`Physics metrics ${physicsTime}ms - Collision checks: ${metrics.collisionChecks}, Hits: ${metrics.collisionHits}, Hit rate: ${(metrics.collisionHitRate * 100).toFixed(1)}%, Grid update: ${metrics.gridUpdateTime.toFixed(2)}ms`);
-		}
-	}
 
 	return physicsTime;
 }
@@ -1130,16 +1092,6 @@ function updateNetworking(): number {
 }
 
 /**
- * Log performance statistics periodically
- */
-function logPerformanceStats(totalFrameTime: number, transformTime: number, renderTime: number, netTime: number): void {
-	// Log performance breakdown every 60 frames (~1 second at 60fps)
-	if (performance.now() % 1000 < 16.67) { // Log approximately once per second
-		console.log(`Frame breakdown ${totalFrameTime.toFixed(2)}ms - Transform: ${transformTime.toFixed(2)}ms, Render: ${renderTime.toFixed(2)}ms, Network: ${netTime.toFixed(2)}ms`);
-	}
-}
-
-/**
  * Main game loop - coordinates all game systems and updates
  */
 function loop(): void {
@@ -1167,7 +1119,6 @@ function loop(): void {
 	// Performance monitoring
 	const frameEndTime = performance.now();
 	const totalFrameTime = frameEndTime - frameStartTime;
-	logPerformanceStats(totalFrameTime, transformTime, renderTime, netTime);
 
 	requestAnimationFrame(loop);
 }
@@ -1246,27 +1197,11 @@ async function main(): Promise<void> {
 
 	console.log('✅ Models array assigned to globalThis after loading');
 	console.log(`📦 Loaded ${models.length} models successfully`);
+	
 	// NOW that globalThis.models is available, we can equip weapons
-	// DEBUG: Check model availability before equipping weapon
-	console.log(`🔍 DEBUG: About to equip weapon. globalThis.modelNames available: ${!!globalThis.modelNames}`);
-	if (globalThis.modelNames) {
-		console.log(`🔍 DEBUG: Available models: ${globalThis.modelNames.join(', ')}`);
-		const swordIndex = globalThis.modelNames.indexOf('sword');
-		console.log(`🔍 DEBUG: 'sword' model index: ${swordIndex}`);
-	}
-	console.log(`🔍 DEBUG: globalThis.models available: ${!!globalThis.models}`);
-
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
 	console.log('✅ Weapon equipped after models are fully loaded');
-	// DEBUG: Check entities and their modelIds after models are loaded
-	console.log(`🔍 DEBUG: Total entities after model loading: ${Entity.all.length}`);
-	for (const entity of Entity.all) {
-		console.log(`🔍 DEBUG: Entity ${entity.id}, modelId: ${entity.modelId}, type: ${entity.constructor.name}`);
-		if (entity.modelId >= 0 && entity.modelId < modelNames.length) {
-			console.log(`🔍 DEBUG: Entity ${entity.id} should render model: ${modelNames[entity.modelId]}`);
-		}
-	}
-
+	
 	// FIX: Update entity modelIds that were set to -1 during level loading
 	// This happens because globalThis.modelNames wasn't available when entities were created
 	let updatedEntities = 0;

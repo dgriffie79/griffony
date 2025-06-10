@@ -814,15 +814,7 @@ export class Renderer {
    * @param meshData Object containing mesh data for statistics
    */
   private logModelStatistics(model: Model, meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }): void {
-    const volume = model.volume;
-    // Log mesh statistics
-    console.log(`Mesh stats for ${model.url}: Original faces: ${meshData.originalFaces.length / 4}, Greedy faces: ${meshData.greedyFaces.length / 8}, Dimensions: ${volume.sizeX}x${volume.sizeY}x${volume.sizeZ}`);
-
-    // Count faces by direction for debugging
-    console.log('Face distribution analysis:', {
-      originalFaces: this.getFaceCountsByDirection(meshData.originalFaces, 4),
-      greedyFaces: this.getFaceCountsByDirection(meshData.greedyFaces, 8)
-    });
+    // Model statistics logging removed for performance
   }
 
   /**
@@ -898,9 +890,10 @@ export class Renderer {
     // Generate both original and greedy mesh data
     const meshStartTime = performance.now();
     const originalFaces = volume.generateFaces();
-    const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue); const meshEndTime = performance.now();
+    const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue); 
+    const meshEndTime = performance.now();
 
-    console.log(`Level mesh generation took ${meshEndTime - meshStartTime}ms - Generated ${originalFaces.length / 4} original faces, ${greedyFaces.length / 4} greedy faces`);// Store both mesh types in resources using GPU resource manager
+    // Store both mesh types in resources using GPU resource manager
     const bufferStartTime = performance.now();
     resources.originalBuffer = gpuResourceManager.createBuffer({
       size: originalFaces.byteLength,
@@ -922,7 +915,6 @@ export class Renderer {
     const useGreedy = (globalThis as any).useGreedyMesh || false;
     resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
     const bufferEndTime = performance.now();
-    console.log(`Buffer creation and upload took ${bufferEndTime - bufferStartTime}ms`);
 
     this.resourceMap.set(level, resources);
     console.log('Level terrain mesh registered with renderer');
@@ -1077,8 +1069,6 @@ export class Renderer {
           this.frameTimes.push(frameTimeMs);
           const now = performance.now();
           if (now - this.lastTimePrint >= 1000) {
-            const sum = this.frameTimes.reduce((a, b) => a + b, 0); const avgFrameTime = sum / this.frameTimes.length;
-            console.log(`Average frame time: ${avgFrameTime}ms over last ${this.frameTimes.length} frames`);
             this.frameTimes.length = 0;
             this.lastTimePrint = now;
           }

@@ -131,8 +131,6 @@ export class ResourceManager {
       this.resourcesByType.set(type, new Set());
     }    this.resourcesByType.get(type)!.add(id);
 
-    console.log(`Registered ${type}: ${label || id}${size ? ` (${size} bytes)` : ''}`);
-    
     return managedResource;
   }
 

@@ -113,14 +113,6 @@ export class Model {
           }
         }
       }
-    }    // Debug voxel value distribution for fatta model
-    if (this.url.includes('fatta')) {
-      console.log('🔍 FATTA MODEL VOXEL VALUES:');
-      console.log(`Empty value set to: ${this.volume.emptyValue}`);
-      const sortedValues = Array.from(voxelValueCounts.entries()).sort((a, b) => a[0] - b[0]);
-      for (const [value, count] of sortedValues) {
-        console.log(`  Voxel value ${value}: ${count} voxels ${value === this.volume.emptyValue ? '(EMPTY)' : ''}`);
-      }
     }
   }
 

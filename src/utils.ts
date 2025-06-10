@@ -334,16 +334,6 @@ export function optimizedGreedyMesh(
     }
   }
   
-  // Report statistics if requested
-  if (collectStats && typeof globalThis !== 'undefined') {
-    console.log(`Optimized Greedy Mesh Stats:
-      Original faces: ${originalFaceCount}
-      Optimized faces: ${optimizedFaceCount}
-      Faces saved: ${totalSavedFaces} (${((totalSavedFaces/originalFaceCount)*100).toFixed(2)}%)
-      Max dimensions: ${maxWidth}x${maxHeight}
-      Largest merge: ${largestMerge} faces
-      Compression ratio: ${(optimizedFaceCount/originalFaceCount*100).toFixed(2)}%`);
-  }
   // Convert to Uint32Array - each face has 8 uint32 values
   return new Uint32Array(faces);
 }

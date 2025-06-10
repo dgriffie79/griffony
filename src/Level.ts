@@ -45,20 +45,6 @@ export class Level {
         renderer.registerLevel(this);
       }
         this.isFullyLoaded = true;
-        // Debug: Log entity loading and modelId assignment
-      console.log(`🔍 DEBUG: Level fully loaded. Total entities: ${Entity.all.length}`);
-      console.log(`🔍 DEBUG: globalThis.modelNames available: ${!!globalThis.modelNames}`);
-      if (globalThis.modelNames) {
-        console.log(`🔍 DEBUG: modelNames: ${globalThis.modelNames.join(', ')}`);
-      }
-      
-      for (const e of Entity.all) {
-        console.log(`🔍 DEBUG: Entity ID ${e.id}, modelId: ${e.modelId}, type: ${e.constructor.name}, spawn: ${e.spawn}`);
-        if (e.modelId >= 0 && globalThis.modelNames) {
-          const modelName = globalThis.modelNames[e.modelId];
-          console.log(`🔍 DEBUG: Entity ${e.id} should use model: ${modelName}`);
-        }
-      }
       
       console.log('Level fully loaded and registered with renderer');
     }, 'Level.load');
