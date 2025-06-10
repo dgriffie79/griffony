@@ -52,6 +52,14 @@ export class MultiplayerManager {
         case MessageType.PLAYER_INPUT:
           this.handlePlayerInput(message);
           break;
+        case MessageType.PLAYER_INPUT:
+          this.handlePlayerInput(message);
+          break;
+        case MessageType.CHAT:
+          // Chat messages are handled by Net.handleIncomingMessage -> onChatMessageCallback
+          // We just log that we saw it but don't consume it
+          console.log(`💬 MultiplayerManager: Saw chat message, letting Net handle it`);
+          break;
         default:
           console.warn('Unknown message type:', message.type.toString());
       }

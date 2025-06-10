@@ -29,14 +29,14 @@ export class ManualSignalingUI {
 
   private setupConnectionStateListener(): void {
     this.net.onConnectionStateChange((isConnected) => {
-      console.log(`Connection state changed: ${isConnected}`);
+      console.log(`🔗 Connection state changed: ${isConnected}, connectionEstablished: ${this.connectionEstablished}`);
       if (isConnected && !this.connectionEstablished) {
         this.connectionEstablished = true;
         this.updateConnectionStatus();
         this.stopConnectionCheck();
         
         // Automatically close signaling UI and start the game immediately
-        console.log('Connection established, automatically starting game');
+        console.log('Connection established via callback, automatically starting game');
         this.finishSignaling();
       }
     });
@@ -46,9 +46,15 @@ export class ManualSignalingUI {
     // Stop any existing check
     this.stopConnectionCheck();
     
+    console.log('🔍 Starting connection check...');
+    console.log(`🔍 Initial connection state: isConnectionActive=${this.net.isConnectionActive()}, connectionEstablished=${this.connectionEstablished}`);
+    
     // Check connection status every 500ms
     this.connectionCheckInterval = window.setInterval(() => {
-      if (this.net.isConnectionActive() && !this.connectionEstablished) {
+      const isActive = this.net.isConnectionActive();
+      console.log(`🔍 Connection check: isConnectionActive=${isActive}, connectionEstablished=${this.connectionEstablished}`);
+      
+      if (isActive && !this.connectionEstablished) {
         this.connectionEstablished = true;
         this.updateConnectionStatus();
         this.stopConnectionCheck();
@@ -108,11 +114,6 @@ export class ManualSignalingUI {
           title: 'Step 2: Enter Their Answer',
           instruction: 'Paste the answer you received from the other player:',
           isInput: true
-        },
-        {
-          type: 'complete',
-          title: 'Step 3: Connection Complete',
-          instruction: 'Connection established! The game will start automatically.'
         }
       ];
       
@@ -150,11 +151,6 @@ export class ManualSignalingUI {
           title: 'Step 2: Share Your Answer',
           instruction: 'Copy this answer and send it back to the host:',
           data: ''
-        },
-        {
-          type: 'complete',
-          title: 'Step 3: Connection Complete',
-          instruction: 'Connection established! The game will start automatically.'
         }
       ];
       
@@ -323,11 +319,7 @@ export class ManualSignalingUI {
     
     const errorDiv = document.createElement('div');
     errorDiv.className = 'signaling-error';
-    errorDiv.innerHTML = `
-      <div style="color: #ff4444; background: rgba(255, 68, 68, 0.1); padding: 10px; border-radius: 5px; margin: 10px 0;">
-        <strong>Error:</strong> ${message}
-      </div>
-    `;
+    errorDiv.innerHTML = `<strong>Error:</strong> ${message}`;
     
     this.container.prepend(errorDiv);
     
@@ -372,56 +364,60 @@ export class ManualSignalingUI {
         justify-content: center;
         align-items: center;
         z-index: 10000;
-        font-family: 'Courier New', monospace;
+        font-family: var(--theme-font-family);
       }
       
       .signaling-step {
-        background: #1a1a1a;
-        border: 2px solid #333;
-        border-radius: 10px;
-        padding: 30px;
+        background: var(--theme-bg-primary);
+        border: var(--theme-border-width) solid var(--theme-border-primary);
+        border-radius: var(--theme-border-radius);
+        padding: var(--theme-padding-large);
         max-width: 600px;
         width: 90%;
-        color: #fff;
+        color: var(--theme-text-primary);
         text-align: center;
+        font-size: 2em;
       }
       
       .signaling-step h2 {
-        color: #4CAF50;
+        color: var(--theme-text-primary);
         margin-bottom: 20px;
-        font-size: 24px;
+        font-size: 1em;
+        font-weight: normal;
       }
       
       .signaling-step p {
         margin-bottom: 20px;
-        font-size: 16px;
+        font-size: 0.75em;
         line-height: 1.5;
+        color: var(--theme-text-primary);
       }
       
       .connection-status {
         margin: 15px 0;
         padding: 10px;
-        border-radius: 5px;
+        border-radius: var(--theme-border-radius);
         font-weight: bold;
+        font-size: 0.5em;
         background: rgba(255, 165, 0, 0.2);
         color: #FFA500;
       }
       
       .connection-status.connected {
-        background: rgba(76, 175, 80, 0.2);
+        background: var(--theme-success-bg);
         color: #4CAF50;
       }
       
       #signalingInput, #signalingOutput {
         width: 100%;
         min-height: 150px;
-        background: #2a2a2a;
-        border: 1px solid #555;
-        border-radius: 5px;
-        color: #fff;
+        background: var(--theme-bg-primary);
+        border: var(--theme-border-width) solid var(--theme-border-primary);
+        border-radius: var(--theme-border-radius);
+        color: var(--theme-text-primary);
         padding: 15px;
-        font-family: 'Courier New', monospace;
-        font-size: 12px;
+        font-family: var(--theme-font-family-mono);
+        font-size: 0.4em;
         resize: vertical;
         margin-bottom: 15px;
         box-sizing: border-box;
@@ -429,24 +425,34 @@ export class ManualSignalingUI {
       
       #signalingInput:focus, #signalingOutput:focus {
         outline: none;
-        border-color: #4CAF50;
+        border-color: var(--theme-border-primary);
       }
       
       .signaling-step button {
-        background: #4CAF50;
-        color: white;
-        border: none;
-        padding: 12px 24px;
+        position: relative;
+        padding: 0.5rem 0.8rem;
         margin: 5px;
-        border-radius: 5px;
+        border: var(--theme-border-width) solid var(--theme-border-primary);
+        border-radius: var(--theme-border-radius);
+        background-color: var(--theme-bg-primary);
+        color: var(--theme-text-primary);
+        font-family: var(--theme-font-family);
+        font-size: 0.75em;
         cursor: pointer;
-        font-size: 14px;
-        font-weight: bold;
-        transition: background-color 0.2s;
+        transition: var(--theme-transition-normal);
       }
       
-      .signaling-step button:hover {
-        background: #45a049;
+      .signaling-step button::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-color: transparent;
+        border-radius: var(--theme-border-radius);
+        transition: background-color var(--theme-transition-normal);
+      }
+      
+      .signaling-step button:hover::after {
+        background-color: var(--theme-hover-overlay);
       }
       
       .signaling-step button:active {
@@ -454,15 +460,21 @@ export class ManualSignalingUI {
       }
       
       #closeSignaling {
-        background: #f44336;
+        background: var(--theme-error-bg);
+        border-color: var(--theme-error-border);
       }
       
-      #closeSignaling:hover {
-        background: #d32f2f;
+      #closeSignaling:hover::after {
+        background-color: rgba(255, 100, 100, 0.3);
       }
       
       .signaling-error {
         margin-bottom: 20px;
+        color: var(--theme-error-border);
+        background: var(--theme-error-bg);
+        padding: 10px;
+        border-radius: var(--theme-border-radius);
+        font-size: 0.6em;
       }
     `;
     

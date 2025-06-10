@@ -333,12 +333,18 @@ export class Net {
         break;
 
       case MessageType.CHAT:
+        console.log(`💬 Net.handleIncomingMessage: Received CHAT message from ${senderId}`);
         const chatMsg = message as ChatMessage;
+        console.log(`💬 Net.handleIncomingMessage: Chat data:`, chatMsg.data);
+        console.log(`💬 Net.handleIncomingMessage: Calling onChatMessageCallback`);
         this.onChatMessageCallback?.(
           chatMsg.data.playerName,
           chatMsg.data.message,
           chatMsg.data.timestamp
         );
+        console.log(`✅ Net.handleIncomingMessage: CHAT message processed`);
+        // Also pass to general message callback so MultiplayerManager can see it
+        this.onMessageCallback?.(message, senderId);
         break;
 
       case MessageType.PING:
@@ -458,25 +464,33 @@ export class Net {
 
   // Message sending methods
   sendMessage(message: NetworkMessage): void {
+    console.log(`📡 Net.sendMessage: Broadcasting message type ${message.type} to ${this.connections.size} connections`);
+    
     // Broadcast to all connected peers
     for (const [peerId, connection] of this.connections) {
       if (connection.dataChannel && connection.dataChannel.readyState === 'open') {
+        console.log(`📤 Net.sendMessage: Sending to peer ${peerId}`);
         this.sendMessageToPlayer(peerId, message);
+      } else {
+        console.warn(`⚠️ Net.sendMessage: Skipping peer ${peerId} - dataChannel not ready (state: ${connection.dataChannel?.readyState || 'missing'})`);
       }
     }
+    
+    console.log(`✅ Net.sendMessage: Finished broadcasting message type ${message.type}`);
   }
   sendMessageToPlayer(playerId: string, message: NetworkMessage): void {
     const connection = this.connections.get(playerId);
     if (!connection || !connection.dataChannel || connection.dataChannel.readyState !== 'open') {
-      console.warn(`❌ Cannot send message to ${playerId} - no active connection`);
+      console.warn(`❌ Cannot send message to ${playerId} - no active connection (connection exists: ${!!connection}, dataChannel exists: ${!!connection?.dataChannel}, state: ${connection?.dataChannel?.readyState})`);
       return;
     }
 
     try {
       const messageStr = JSON.stringify(message);
-      console.log(`📤 Sending message to ${playerId}:`, message);
+      console.log(`📤 Net.sendMessageToPlayer: Sending to ${playerId}:`, message);
       connection.dataChannel.send(messageStr);
       this.messagesSent++;
+      console.log(`✅ Net.sendMessageToPlayer: Successfully sent to ${playerId}`);
     } catch (error) {
       console.error(`❌ Failed to send message to ${playerId}:`, error);
     }
@@ -489,6 +503,23 @@ export class Net {
 
   getConnectedPeerIds(): string[] {
     return Array.from(this.connections.keys());
+  }
+  
+  // Debug method to inspect connection state
+  debugConnectionState(): void {
+    console.log(`🔍 Net Debug State:`);
+    console.log(`  - peerId: ${this.peerId}`);
+    console.log(`  - isHost: ${this.isHost}`);
+    console.log(`  - isConnected: ${this.isConnected}`);
+    console.log(`  - connections.size: ${this.connections.size}`);
+    
+    for (const [peerId, connection] of this.connections) {
+      console.log(`  - Connection ${peerId}:`);
+      console.log(`    - isHost: ${connection.isHost}`);
+      console.log(`    - dataChannel exists: ${!!connection.dataChannel}`);
+      console.log(`    - dataChannel state: ${connection.dataChannel?.readyState || 'N/A'}`);
+      console.log(`    - lastSeen: ${connection.lastSeen}`);
+    }
   }
   disconnect(): void {
     console.log(`🔌 Disconnecting all peers`);

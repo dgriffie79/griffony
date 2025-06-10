@@ -140,10 +140,20 @@ function setupChatSystem(): void {
 			chatUI.open();
 		}
 	});
+	
+	// Debug connection state (press Backquote/~ key)
+	document.addEventListener('keydown', (event) => {
+		if (event.code === 'Backquote' && !chatUI.isOpenForInput()) {
+			console.log('🔍 Debug: Connection state requested');
+			net.debugConnectionState();
+		}
+	});
 
 	// Connect network to chat UI
 	net.onChatMessage((playerName: string, message: string, timestamp: number) => {
+		console.log(`🎯 main.ts: Received chat message from network - playerName: ${playerName}, message: ${message}`);
 		chatUI.addMessage(playerName, message, timestamp);
+		console.log(`✅ main.ts: Added chat message to UI`);
 	});
 
 	console.log('Chat system initialized');
@@ -1139,10 +1149,14 @@ async function main(): Promise<void> {
 	console.log('✅ Resource manager initialized with model names');
 	
 	// Create player after model names are available
-	player = new Player(1, true, 'local_player');
+	// Get the proper player ID from MultiplayerManager if it exists
+	const mpManager = (globalThis as any).multiplayerManager;
+	const playerId = mpManager?.playerId || 'local_player';
+	
+	player = new Player(1, true, playerId);
 	globalThis.player = player; // Make player available globally
 	gameResources.setPlayer(player);
-	console.log('✅ Player created and registered');
+	console.log(`✅ Player created and registered with ID: ${playerId}`);
 
 	// Set camera to follow the local player's head now that player exists
 	camera.entity = player.head;

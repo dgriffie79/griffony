@@ -58,5 +58,5 @@ The basic chat functionality has been implemented as part of the multiplayer sys
 
 - Uses native WebRTC DataChannels for low-latency messaging
 - Chat messages have LOW priority in the message batching system
-- Player names are currently auto-generated as `Player_[peerId]`
+- Player names are now human-readable: "Host" for the game host, "Player" for clients
 - Chat input is HTML-escaped to prevent XSS attacks

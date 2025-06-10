@@ -165,6 +165,24 @@ export class ChatUI {
     const message = this.chatInput.value.trim();
     this.chatInput.value = '';
 
+    // Get the proper player ID and generate a human-readable display name
+    const mpManager = (globalThis as any).multiplayerManager;
+    let playerId = this.net.getPeerId(); // fallback
+    let playerName = 'Player';
+
+    if (mpManager) {
+      // Use the consistent player ID from MultiplayerManager
+      playerId = mpManager.playerId || playerId;
+      
+      // Generate human-readable display name for chat
+      if (mpManager.isHost) {
+        playerName = 'Host';
+      } else {
+        // For clients, just use "Player" (could be enhanced to "Player 1", "Player 2", etc.)
+        playerName = 'Player';
+      }
+    }
+
     // Send chat message through network
     const chatMessage: ChatMessage = {
       type: MessageType.CHAT,
@@ -172,8 +190,8 @@ export class ChatUI {
       timestamp: Date.now(),
       sequenceNumber: Date.now(), // Simple sequence for now
       data: {
-        playerId: this.net.getPeerId(),
-        playerName: `Player_${this.net.getPeerId()}`,
+        playerId: playerId,
+        playerName: playerName,
         message: message,
         timestamp: Date.now()
       }
@@ -182,9 +200,11 @@ export class ChatUI {
     // Add to local chat immediately
     this.addMessage(chatMessage.data.playerName, message, Date.now());
     
-    // Send to network    this.net.sendMessage(chatMessage);
+    // Send to network
+    console.log(`🚀 ChatUI: About to send chat message to network:`, chatMessage);
+    this.net.sendMessage(chatMessage);
     
-    console.log(`Sent message: ${message}`);
+    console.log(`✅ ChatUI: Sent chat message through network: ${message}`);
     
     // Close chat after sending
     this.close();
