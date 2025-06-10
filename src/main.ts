@@ -975,18 +975,6 @@ function saveGameState(): void {
 }
 
 /**
- * Monitor for physics anomalies like fall-through
- */
-function monitorPhysicsAnomalies(): void {
-	if (player.localPosition[2] < -2 && !godMode) {
-		console.warn(`⚠️ Potential fall-through detected! Player Z position: ${player.localPosition[2].toFixed(2)}`);
-		console.warn(`Current mesh algorithm: ${useGreedyMesh ? 'Greedy Mesh' : 'Original'}`);
-		console.warn(`Player velocity: [${player.vel[0].toFixed(2)}, ${player.vel[1].toFixed(2)}, ${player.vel[2].toFixed(2)}]`);
-		console.warn(`On ground: ${physicsSystem.isEntityOnGround(player)}`);
-	}
-}
-
-/**
  * Update the UI display with game information
  */
 function updateGameUI(): void {
@@ -1158,10 +1146,8 @@ function loop(): void {
 	const frameStartTime = performance.now();
 	const elapsed = frameStartTime - lastTime;
 	lastTime = frameStartTime;
-
 	// Game state management
 	saveGameState();
-	monitorPhysicsAnomalies();
 	updateGameUI();
 	// System updates
 	const inputTime = processGameInput(elapsed);
@@ -1382,18 +1368,6 @@ async function main(): Promise<void> {
 	// Start the game loop only after all initialization is complete
 	requestAnimationFrame(loop);
 }
-
-// Debug functions available
-console.log('✅ Multiplayer manager initialized');
-console.log('🔧 Debug functions available:');
-console.log('   - testUnifiedMultiplayer() - Test the unified architecture');
-console.log('   - testEntitySync() - Check entity synchronization status');
-console.log('   - forceEntitySync() - Force entity sync for testing');
-console.log('   - createGame() - Create/host a new game');
-console.log('   - joinGame(gameId) - Join an existing game');
-console.log('   - checkMultiplayerState() - Check overall multiplayer state');
-console.log('   - monitorEntitySync() - Monitor entity sync state');
-console.log('   - testEntityMovement() - Test entity movement and sync');
 
 // Start the game loop
 requestAnimationFrame(loop);
