@@ -432,8 +432,6 @@ export class Renderer {
 
             if (hasErrors) {
               console.error(`Shader compilation failed for ${name}:`, Array.from(info.messages));
-            } else {
-              console.log(`Shader compilation successful for ${name}`);
             }
           })
         );
@@ -446,7 +444,6 @@ export class Renderer {
         );
       }
     } await Promise.all(compilationResults);
-    console.log('All shader modules compiled successfully');
     this.shaders = modules;
   }
 
@@ -890,7 +887,7 @@ export class Renderer {
     // Generate both original and greedy mesh data
     const meshStartTime = performance.now();
     const originalFaces = volume.generateFaces();
-    const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue); 
+    const greedyFaces = optimizedGreedyMesh(volume.voxels, volume.sizeX, volume.sizeY, volume.sizeZ, volume.emptyValue);
     const meshEndTime = performance.now();
 
     // Store both mesh types in resources using GPU resource manager

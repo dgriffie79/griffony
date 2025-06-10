@@ -1137,6 +1137,7 @@ async function main(): Promise<void> {
 	gameResources.setTileset(tileset);
 	gameResources.setLevel(level);
 	console.log('✅ Resource manager initialized with model names');
+	
 	// Create player after model names are available
 	player = new Player(1, true, 'local_player');
 	globalThis.player = player; // Make player available globally
@@ -1152,7 +1153,8 @@ async function main(): Promise<void> {
 		try {
 			const state: GameState = JSON.parse(savedState);
 			player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2]);
-			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]); player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
+			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);
+			player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
 			godMode = state.godMode;
 			// Make sure godMode is synchronized with global scope
 			(globalThis as any).godMode = godMode;
@@ -1187,13 +1189,16 @@ async function main(): Promise<void> {
 	useGreedyMesh = settings.useGreedyMesh;
 	(globalThis as any).useGreedyMesh = useGreedyMesh;
 
-	// Load all game assets
+	// Load all game assets (level loading now has access to modelNames)
 	await Promise.all([
 		tileset.load(),
-		level.load(),
-		...models.map((model) => model.load())]
-	);	// NOW assign models array to globalThis after they're fully loaded
-	// modelNames was already assigned above for entity creation	globalThis.models = models;
+		level.load(), // Now level loading can properly resolve model names to IDs
+		...models.map((model) => model.load())
+	]);
+
+	// NOW assign models array to globalThis after they're fully loaded
+	globalThis.models = models;
+	gameResources.setModels(models); // Also set in GameResources for proper lookup
 
 	console.log('✅ Models array assigned to globalThis after loading');
 	console.log(`📦 Loaded ${models.length} models successfully`);
@@ -1201,32 +1206,6 @@ async function main(): Promise<void> {
 	// NOW that globalThis.models is available, we can equip weapons
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
 	console.log('✅ Weapon equipped after models are fully loaded');
-	
-	// FIX: Update entity modelIds that were set to -1 during level loading
-	// This happens because globalThis.modelNames wasn't available when entities were created
-	let updatedEntities = 0;
-	for (const entity of Entity.all) {
-		if (entity.modelId === -1) {
-			// Try to find the correct modelId based on entity type or properties
-			if (entity instanceof Player) {
-				entity.modelId = modelNames.indexOf('player'); if (entity.modelId >= 0) {
-					updatedEntities++;
-					console.log(`🔧 Fixed Player entity ${entity.id} modelId: ${entity.modelId} (${modelNames[entity.modelId]})`);
-				}
-			} else if ((entity as any).spawn) {
-				// This is a spawn point entity - use 'portal' model since 'spawn' doesn't exist
-				const spawnModelId = modelNames.indexOf('portal'); if (spawnModelId >= 0) {
-					entity.modelId = spawnModelId;
-					updatedEntities++;
-					console.log(`🔧 Fixed spawn entity ${entity.id} modelId: ${entity.modelId} (${modelNames[entity.modelId]})`);
-				}
-			}
-			// Note: FirstPersonWeapon entities should get their modelId set when a weapon is equipped
-		}
-	}
-	if (updatedEntities > 0) {
-		console.log(`🔧 Fixed modelIds for ${updatedEntities} entities after model loading`);
-	}
 
 	// Wait for GPU operations to complete before starting physics
 	// The greedy mesh algorithm takes longer, so we need to ensure all resources are uploaded

@@ -52,7 +52,6 @@ export class Entity {
   worldScale: vec3 = vec3.fromValues(1, 1, 1);
   worldToLocalTransform: mat4 = mat4.create();  // Visual properties
   modelId: number = -1;
-  _pendingModelName: string | null = null; // Temporary storage for model name before models are loaded
   frame: number = 0;
   frameTime: number = 0;
   animationFrame: number = 0;
@@ -354,13 +353,13 @@ export class Entity {
           break;        case 'model_id':
           // Convert model_id to proper array index
           if (typeof property.value === 'string') {
-            // If it's a string model name, try to convert to index
-            if (globalThis.modelNames) {
-              entity.modelId = globalThis.modelNames.indexOf(property.value);
-            } else {
-              // Models not loaded yet, store the string for later conversion
-              entity._pendingModelName = property.value;
-              entity.modelId = -1; // Temporary placeholder
+            // If it's a string model name, convert to index
+            if (!globalThis.modelNames) {
+              throw new Error('modelNames not available during entity deserialization. This should not happen.');
+            }
+            entity.modelId = globalThis.modelNames.indexOf(property.value);
+            if (entity.modelId === -1) {
+              console.warn(`Model "${property.value}" not found in modelNames. Available: ${globalThis.modelNames.join(', ')}`);
             }
           } else if (typeof property.value === 'number') {
             // If it's already a number, use it directly
