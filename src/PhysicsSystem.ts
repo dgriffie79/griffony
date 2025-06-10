@@ -1,6 +1,6 @@
 import { vec3 } from 'gl-matrix';
 import { Entity, PhysicsLayer } from './Entity';
-import { Player } from './Player';
+import { PlayerEntity } from './PlayerEntity';
 import { Level } from './Level';
 import type { CollisionEvent, CollisionCallback } from './types/index';
 import { getConfig } from './Config';

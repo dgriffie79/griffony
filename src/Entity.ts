@@ -1,7 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import type { Model } from './Model';
 import type { Level } from './Level';
-import type { Player } from './Player';
+import type { PlayerEntity } from './PlayerEntity';
 
 export enum PhysicsLayer {
   Default = 0b00000001,

@@ -3,7 +3,6 @@ import { NetworkMessage, MessageType, FullGameStateMessage } from './types/index
 import { Entity } from './Entity.js';
 import { PlayerController, LocalPlayerController, RemotePlayerController } from './PlayerController.js';
 import { PlayerEntity } from './PlayerEntity.js';
-import { Player } from './Player.js';
 
 export class MultiplayerManager {
   public isHost: boolean = false;

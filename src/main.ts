@@ -1,7 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import { Entity, PhysicsLayer } from './Entity.js';
 import { Camera } from './Camera.js';
-import { Player } from './Player.js';
+import { PlayerEntity } from './PlayerEntity.js';
 import { Model } from './Model.js';
 import { Tileset } from './Tileset.js';
 import { Level } from './Level.js';
@@ -24,7 +24,6 @@ import { ChatUI } from './ChatUI.js';
 import { InputManager } from './InputManager.js';
 import { MultiplayerManager } from './MultiplayerManager.js';
 import { LocalPlayerController } from './PlayerController.js';
-import { PlayerEntity } from './PlayerEntity.js';
 import { gameResources } from './GameResources.js';
 
 // Global game state
@@ -86,7 +85,7 @@ const models: Model[] = modelNames.map((model) => new Model(`/models/${model}.vo
 const tileset = new Tileset('/tilesets/dcss_tiles.tsj');
 const level = new Level('/maps/test.tmj');
 // Player will be created in main() after modelNames is initialized
-let player: Player; // Declare but don't initialize yet
+let player: PlayerEntity; // Declare but don't initialize yet
 const renderer = new Renderer();
 const net = new Net();
 const camera = new Camera();
@@ -100,7 +99,7 @@ declare global {
 	var modelNames: string[];
 	var tileset: Tileset;
 	var level: Level;
-	var player: Player;
+	var player: PlayerEntity;
 	var renderer: Renderer;
 	var net: Net;
 	var camera: Camera;
@@ -1153,7 +1152,7 @@ async function main(): Promise<void> {
 	const mpManager = (globalThis as any).multiplayerManager;
 	const playerId = mpManager?.playerId || 'local_player';
 	
-	player = new Player(1, true, playerId);
+	player = new PlayerEntity(1, playerId, true);
 	globalThis.player = player; // Make player available globally
 	gameResources.setPlayer(player);
 	console.log(`✅ Player created and registered with ID: ${playerId}`);
@@ -1308,12 +1307,12 @@ requestAnimationFrame(loop);
 	const networkEntities = Entity.all.filter(e => e.isNetworkEntity);
 	console.log(`🌐 Network entities: ${networkEntities.length}`);
 
-	const remotePlayers = Entity.all.filter(e => e instanceof Player && !e.isLocalPlayer);
+	const remotePlayers = Entity.all.filter(e => e instanceof PlayerEntity && e.isNetworkEntity);
 	console.log(`👥 Remote players: ${remotePlayers.length}`);
 
 	// Log entity details
 	Entity.all.forEach((entity, index) => {
-		if (entity instanceof Player) {
+		if (entity instanceof PlayerEntity) {
 			console.log(`Player ${index}: ID=${entity.id}, Local=${entity.isLocalPlayer}, Network=${entity.isNetworkEntity}, NetworkID=${entity.networkPlayerId}, Name=${entity.playerName}`);
 		} else {
 			console.log(`Entity ${index}: ID=${entity.id}, Network=${entity.isNetworkEntity}, Type=${entity.constructor.name}`);
@@ -1324,14 +1323,15 @@ requestAnimationFrame(loop);
 // Debug function to manually create a test remote player
 (globalThis as any).createTestRemotePlayer = () => {
 	console.log('🧪 Creating test remote player...');
-	const testPlayer = Player.createRemotePlayer('test_player_123');
-	testPlayer.localPosition = vec3.fromValues(2, 2, 1); // Position nearby		console.log(`✅ Created test remote player at position [${testPlayer.localPosition[0]}, ${testPlayer.localPosition[1]}, ${testPlayer.localPosition[2]}]`);
+	const testPlayer = PlayerEntity.createRemotePlayer('test_player_123');
+	testPlayer.localPosition = vec3.fromValues(2, 2, 1); // Position nearby	
+	console.log(`✅ Created test remote player at position [${testPlayer.localPosition[0]}, ${testPlayer.localPosition[1]}, ${testPlayer.localPosition[2]}]`);
 	console.log(`🎨 ModelId assigned: ${testPlayer.modelId >= 0 ? 'Yes' : 'No'} (${testPlayer.modelId})`);
 	return testPlayer;
 };
 // Debug function to check multiplayer player state
 (globalThis as any).checkMultiplayerState = () => {
-	const localPlayer = Player.getLocalPlayer();
+	const localPlayer = PlayerEntity.getLocalPlayer();
 	const globalPlayer = (globalThis as any).player;
 	console.log('🔍 Multiplayer State Check');
 	console.log('========================');
@@ -1354,7 +1354,7 @@ requestAnimationFrame(loop);
 		console.log('❌ No local player found!');
 	}
 
-	const remotePlayers = Entity.all.filter(e => e instanceof Player && !e.isLocalPlayer) as Player[];
+	const remotePlayers = Entity.all.filter(e => e instanceof PlayerEntity && !e.isLocalPlayer) as PlayerEntity[];
 	console.log(`\n👥 Remote Players (${remotePlayers.length}):`);
 	remotePlayers.forEach((player, index) => {
 		console.log(`   Player ${index + 1}:`);

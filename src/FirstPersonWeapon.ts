@@ -1,6 +1,6 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import { Entity } from './Entity';
-import type { Player } from './Player';
+import type { PlayerEntity } from './PlayerEntity';
 import type { Weapon } from './Weapon';
 import type { Model } from './Model';
 import type { WeaponType } from './types/index';
@@ -57,7 +57,7 @@ export const WeaponPositionConfigs: Record<string, {
  * This is separate from the actual Weapon entity used for combat mechanics
  */
 export class FirstPersonWeapon extends Entity {
-  player: Player;
+  player: PlayerEntity;
   weaponModel: Model | null = null;
   isAttacking: boolean = false;
   attackStartTime: number = 0;
@@ -70,7 +70,7 @@ export class FirstPersonWeapon extends Entity {
   private fpRestRotation = quat.create();
   private fpAttackStartRotation = quat.create();
   private fpAttackEndRotation = quat.create();
-  constructor(player: Player) {
+  constructor(player: PlayerEntity) {
     super();
     this.player = player;
     this.parent = player.head; // Attach to player's head for first person view

@@ -1,7 +1,7 @@
 // Global type declarations for griffony game
 
 import type { Camera } from './Camera';
-import type { Player } from './Player';
+import type { PlayerEntity } from './PlayerEntity';
 import type { Level } from './Level';
 import type { Tileset } from './Tileset';
 import type { Renderer } from './Renderer';
@@ -10,7 +10,7 @@ import type { Entity } from './Entity';
 
 declare global {
   var camera: Camera;
-  var player: Player;
+  var player: PlayerEntity;
   var level: Level;
   var tileset: Tileset;
   var renderer: Renderer;  var models: Model[];
