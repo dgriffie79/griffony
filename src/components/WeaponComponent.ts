@@ -103,6 +103,13 @@ export class WeaponComponent extends Component {
     
     // Add as child to player's head
     playerHead.children.push(this.fpWeaponEntity);
+    
+    // Remove from Entity.all since this is managed by the WeaponComponent
+    // and shouldn't be cleaned up by the global entity cleanup
+    const entityIndex = EntityClass.all.indexOf(this.fpWeaponEntity);
+    if (entityIndex !== -1) {
+      EntityClass.all.splice(entityIndex, 1);
+    }
   }
 
   update(deltaTime: number): void {
@@ -275,20 +282,19 @@ export class WeaponComponent extends Component {
    */
   destroy(): void {
     if (this.fpWeaponEntity) {
+      // Clean up the fpWeaponEntity's components
+      try {
+        this.fpWeaponEntity.render?.destroy();
+        this.fpWeaponEntity.render = null;
+      } catch (error) {
+        console.warn('Error destroying fpWeapon render component:', error);
+      }
+      
       // Remove from parent's children
       if (this.fpWeaponEntity.parent) {
         const index = this.fpWeaponEntity.parent.children.indexOf(this.fpWeaponEntity);
         if (index !== -1) {
           this.fpWeaponEntity.parent.children.splice(index, 1);
-        }
-      }
-      
-      // Remove from Entity.all
-      const EntityClass = (globalThis as any).Entity;
-      if (EntityClass && EntityClass.all) {
-        const entityIndex = EntityClass.all.indexOf(this.fpWeaponEntity);
-        if (entityIndex !== -1) {
-          EntityClass.all.splice(entityIndex, 1);
         }
       }
       

@@ -440,13 +440,44 @@ export class Entity {
    * Clear all entities from the global list
    */
   static clearAllEntities(): void {
-    // Destroy all components before clearing
+    // Destroy all components before clearing, with error handling
     for (const entity of Entity.all) {
-      entity.render?.destroy();
-      entity.physics?.destroy();
-      entity.network?.destroy();
-      entity.health?.destroy();
-      entity.weapon?.destroy();
+      try {
+        entity.render?.destroy();
+      } catch (error) {
+        console.warn('Error destroying render component:', error);
+      }
+      
+      try {
+        entity.physics?.destroy();
+      } catch (error) {
+        console.warn('Error destroying physics component:', error);
+      }
+      
+      try {
+        entity.network?.destroy();
+      } catch (error) {
+        console.warn('Error destroying network component:', error);
+      }
+      
+      try {
+        entity.health?.destroy();
+      } catch (error) {
+        console.warn('Error destroying health component:', error);
+      }
+      
+      try {
+        entity.weapon?.destroy();
+      } catch (error) {
+        console.warn('Error destroying weapon component:', error);
+      }
+      
+      // Clear component references
+      entity.render = null;
+      entity.physics = null;
+      entity.network = null;
+      entity.health = null;
+      entity.weapon = null;
     }
     
     Entity.all.length = 0;

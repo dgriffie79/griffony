@@ -31,6 +31,7 @@ import { gameResources } from './GameResources.js';
 
 // Global game state
 let lastTime = 0;
+let gameRunning = true;
 let timeLabel: HTMLDivElement;
 let useGreedyMesh = false; // Toggle for testing greedy mesh vs original algorithm
 let physicsStarted = false; // Track when physics starts for the first time
@@ -1032,8 +1033,20 @@ function updateEntityTransforms(): number {
  */
 function renderFrame(): number {
 	const renderStartTime = performance.now();
-	camera.update();
-	renderer.draw();
+	
+	// Skip rendering if game is shutting down or resources might be disposed
+	if (!gameRunning) {
+		return 0;
+	}
+	
+	try {
+		camera.update();
+		renderer.draw();
+	} catch (error) {
+		console.warn('Render error (likely during shutdown):', error);
+		return 0;
+	}
+	
 	return performance.now() - renderStartTime;
 }
 
@@ -1050,6 +1063,11 @@ function updateNetworking(): number {
  * Main game loop - coordinates all game systems and updates
  */
 function loop(): void {
+	// Check if game should continue running
+	if (!gameRunning) {
+		return;
+	}
+	
 	const frameStartTime = performance.now();
 	const elapsed = frameStartTime - lastTime;
 	lastTime = frameStartTime;
@@ -1228,6 +1246,12 @@ async function main(): Promise<void> {
 	});
 	// Initialize multiplayer manager
 	(globalThis as any).multiplayerManager = multiplayerManager;
+	
+	// Add shutdown handler to stop game loop during page unload
+	window.addEventListener('beforeunload', () => {
+		gameRunning = false;
+		console.log('Game loop stopped for page unload');
+	});
 	
 	// Start the game loop only after all initialization is complete
 	requestAnimationFrame(loop);
