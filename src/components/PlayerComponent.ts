@@ -9,7 +9,6 @@ import type { Weapon } from '../Weapon';
 export class PlayerComponent extends Component {
   // Player identity
   playerName: string = '';
-  networkPlayerId: string = '';
   isLocalPlayer: boolean = false;
   
   // Player-specific entities
@@ -18,11 +17,10 @@ export class PlayerComponent extends Component {
   // Controller reference
   private controller: any = null;
 
-  constructor(entity: any, networkId: string = '', isLocal: boolean = false) {
+  constructor(entity: any, isLocal: boolean = false) {
     super(entity);
-    this.networkPlayerId = networkId;
     this.isLocalPlayer = isLocal;
-    this.playerName = isLocal ? `Local_${networkId}` : `Player_${networkId}`;
+    this.playerName = isLocal ? 'Local Player' : 'Remote Player';
     
     this.setupHead();
   }
@@ -196,7 +194,6 @@ export class PlayerComponent extends Component {
   serialize(): any {
     return {
       playerName: this.playerName,
-      networkPlayerId: this.networkPlayerId,
       isLocalPlayer: this.isLocalPlayer
     };
   }
@@ -212,6 +209,6 @@ export class PlayerComponent extends Component {
    * Check if this is a remote/network player
    */
   isRemote(): boolean {
-    return !this.isLocalPlayer && this.networkPlayerId !== '';
+    return !this.isLocalPlayer;
   }
 }

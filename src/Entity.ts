@@ -147,7 +147,7 @@ export class Entity {
    * Add a player component to this entity
    */
   addPlayer(networkId: string = '', isLocal: boolean = false): PlayerComponent {
-    this.player = new PlayerComponent(this, networkId, isLocal);
+    this.player = new PlayerComponent(this, isLocal);
     return this.player;
   }
 
@@ -323,6 +323,10 @@ export class Entity {
         maxHealth: this.health.maxHealth,
         isDead: this.health.isDead
       } : null,
+      player: this.player ? {
+        playerName: this.player.playerName,
+        isLocalPlayer: this.player.isLocalPlayer
+      } : null,
       // Legacy properties
       spawn: this.spawn
     };
@@ -379,6 +383,12 @@ export class Entity {
       const healthComp = entity.addHealth(snapshot.health.maxHealth);
       healthComp.currentHealth = snapshot.health.currentHealth;
       healthComp.isDead = snapshot.health.isDead || false;
+    }
+    
+    if (snapshot.player) {
+      const playerComp = entity.addPlayer('', snapshot.player.isLocalPlayer);
+      playerComp.playerName = snapshot.player.playerName;
+      console.log(`🎮 ENTITY DESERIALIZE: Created player component - Name: ${snapshot.player.playerName}, Local: ${snapshot.player.isLocalPlayer}`);
     }
     
     // Legacy properties
@@ -581,10 +591,9 @@ export class Entity {
    * Find a player entity by network ID
    */
   static findPlayerByNetworkId(networkId: string): Entity | undefined {
-    return Entity.all.find(entity => 
-      entity.player !== null && 
-      entity.player.networkPlayerId === networkId
-    );
+    // For now, return undefined since we're removing the networkPlayerId field
+    // The MultiplayerManager should handle entity lookup using its controller mapping
+    return undefined;
   }
 
   /**

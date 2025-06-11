@@ -15,6 +15,9 @@ export class MultiplayerManager {
   // Mapping between peer IDs and network IDs of their player entities
   private peerToNetworkIdMap: Map<PeerId, NetworkId> = new Map();
   
+  // Network ID generation - only used by host
+  private nextNetworkId: number = 1;
+  
   // Network management
   private net: Net;
   
@@ -70,19 +73,21 @@ export class MultiplayerManager {
       // Check if this looks like a peer ID (starts with 'client_')
       if (unknownId.startsWith('client_')) {
         const peerId = createPeerId(unknownId);
-        const networkId = createNetworkId(Entity.nextId++);
-        this.peerToNetworkIdMap.set(peerId, networkId);
-        console.log(`🆔 Mapped peer ${peerId} to network ID ${networkId}`);
-        this.createRemotePlayer(networkId.toString());
+        if (this.isHost && !this.peerToNetworkIdMap.has(peerId)) {
+          const networkId = createNetworkId(this.nextNetworkId++);
+          this.peerToNetworkIdMap.set(peerId, networkId);
+          console.log(`🆔 HOST: Mapped peer ${peerId} to network ID ${networkId}`);
+          this.createRemotePlayer(networkId.toString());
+        }
       } else {
         // This is probably a network ID, try to find corresponding peer
         const connectedPeers = this.net.getConnectedPeerIds();
         const unmappedPeer = connectedPeers.find(p => !this.peerToNetworkIdMap.has(createPeerId(p)));
-        if (unmappedPeer) {
+        if (unmappedPeer && this.isHost) {
           const peerId = createPeerId(unmappedPeer);
           const networkId = createNetworkId(parseInt(unknownId));
           this.peerToNetworkIdMap.set(peerId, networkId);
-          console.log(`🆔 Mapped peer ${peerId} to network ID ${networkId}`);
+          console.log(`🆔 HOST: Mapped peer ${peerId} to network ID ${networkId}`);
         }
         this.createRemotePlayer(unknownId);
       }
@@ -100,24 +105,27 @@ export class MultiplayerManager {
       
       const peerId = createPeerId(peerIdString);
       
-      // This is definitely a peer ID, so if we don't have a mapping yet, create one
-      if (!this.peerToNetworkIdMap.has(peerId)) {
-        const networkId = createNetworkId(Entity.nextId++);
-        this.peerToNetworkIdMap.set(peerId, networkId);
-        console.log(`🆔 Created mapping: peer ${peerId} → network ID ${networkId}`);
-        
-        // Create remote player for this peer
-        this.createRemotePlayer(networkId.toString());
-      }
-      
       if (this.isHost) {
+        // HOST: Create network ID mapping and remote player for the connecting client
+        if (!this.peerToNetworkIdMap.has(peerId)) {
+          const networkId = createNetworkId(this.nextNetworkId++);
+          this.peerToNetworkIdMap.set(peerId, networkId);
+          console.log(`🆔 HOST: Created mapping: peer ${peerId} → network ID ${networkId}`);
+          
+          // Create remote player for this peer
+          this.createRemotePlayer(networkId.toString());
+        }
+        
         console.log(`📤 DATA CHANNEL READY: Sending full game state to ${peerId}`);
         try {
-          this.net.sendFullGameStateToPlayer(peerId);
+          this.sendFullGameStateToPlayer(peerId);
           console.log(`✅ DATA CHANNEL READY: Successfully called sendFullGameStateToPlayer`);
         } catch (error) {
           console.error(`❌ DATA CHANNEL READY: Error calling sendFullGameStateToPlayer:`, error);
         }
+      } else {
+        // CLIENT: Do not create mappings - wait for host to assign network IDs
+        console.log(`📥 CLIENT: Data channel ready with host, waiting for game state`);
       }
     });    this.net.onPlayerLeave((playerId: string) => {
       console.log('Player disconnected:', playerId);
@@ -129,6 +137,39 @@ export class MultiplayerManager {
     this.isHost = true;
     this.gameId = this.generateGameId();
     this.playerId = this.generatePlayerId();
+    
+    // Clear any existing local player from single-player mode
+    if (this.localController) {
+      console.log(`🗑️ Clearing existing single-player local player`);
+      const existingEntity = this.localController.getPlayerEntity();
+      if (existingEntity) {
+        const index = Entity.all.indexOf(existingEntity);
+        if (index !== -1) {
+          Entity.all.splice(index, 1);
+        }
+      }
+      this.controllers.delete(this.playerId);
+      this.localController = null;
+    }
+    
+    // Host gets the first network ID
+    console.log(`🆔 HOST: Creating local player with next available network ID`);
+    const hostNetworkId = this.nextNetworkId++;
+    console.log(`🆔 HOST: Assigned network ID ${hostNetworkId} to host`);
+    
+    this.localController = new LocalPlayerController(this.playerId);    
+    this.controllers.set(this.playerId, this.localController);    
+
+    console.log(`🆔 Creating local player: isHost=${this.isHost}, playerId=${this.playerId}, networkId=${hostNetworkId}`);
+    
+    // Create local player entity using factory with assigned network ID
+    const entity = createPlayer(true, hostNetworkId.toString());
+    
+    // Connect controller to entity
+    this.localController.setPlayerEntity(entity);
+    
+    console.log(`Created local player: ${this.playerId} (Entity ID: ${entity.id}, Network ID: ${hostNetworkId})`);
+    console.log(`🆔 HOST: Verified local player created`);
     
     console.log(`📋 Game created - ID: ${this.gameId}, playerId: ${this.playerId}, isHost: ${this.isHost}`);
     
@@ -147,19 +188,45 @@ export class MultiplayerManager {
     
     console.log('Joining game with ID:', gameId);
     
+    // DO NOT clear existing local player here!
+    // Keep the existing player entity active until we receive the full game state from the server
+    // This prevents the client from falling through the ground during connection
+    
+    console.log(`🎮 CLIENT: Keeping existing local player active during connection process`);
+    
+    if (this.localController) {
+      console.log(`🔄 CLIENT: Existing local player will be replaced when game state is received from host`);
+    } else {
+      // Only create a new player if none exists (shouldn't happen in normal flow)
+      console.log(`🎮 CLIENT: No existing player, creating temporary local player`);
+      const { controller, entity } = this.createLocalPlayer(this.playerId);
+      console.log(`🆔 CLIENT: Temporary local player created`);
+    }
+    
     // This would be used with the manual signaling UI
     // The actual connection is established through createAnswer/processAnswer
   }
   /**
-   * Initialize the local player
+   * Initialize the local player (only if not already created)
+   * Note: This is for single-player mode. Multiplayer mode handles player creation separately.
    */
   initializeLocalPlayer(): void {
+    // Don't create a duplicate if local player already exists
+    if (this.localController) {
+      console.log(`Local player already exists, skipping initialization`);
+      return;
+    }
+    
     if (!this.playerId) {
       this.playerId = this.generatePlayerId();
     }
-      const { controller, entity } = this.createLocalPlayer(this.playerId);
     
-    console.log(`Initialized local player: ${this.playerId}`);
+    // Only create local player in single-player mode
+    // Multiplayer hosts/clients will create players when joining/creating games
+    console.log(`🎮 SINGLE-PLAYER: Initializing local player for single-player mode`);
+    const { controller, entity } = this.createLocalPlayer(this.playerId);
+    
+    console.log(`Initialized single-player local player: ${this.playerId}`);
   }
 
   private generateGameId(): string {
@@ -200,9 +267,21 @@ export class MultiplayerManager {
     try {
       // Cast to FullGameStateMessage to get proper typing
       const fullStateMessage = message as FullGameStateMessage;
-      const { entities, playerPosition, playerRotation, hostId } = fullStateMessage.data;
+      const { entities, playerPosition, playerRotation, hostId, peerMappings } = fullStateMessage.data;
       
       console.log(`🔄 HANDLING FULL GAME STATE with ${entities.length} entities from host ${hostId}`);
+      
+      // Process peer mappings if provided
+      if (peerMappings && peerMappings.length > 0) {
+        console.log(`📋 Processing ${peerMappings.length} peer mappings`);
+        this.peerToNetworkIdMap.clear();
+        for (const mapping of peerMappings) {
+          const peerId = createPeerId(mapping.peerId);
+          const networkId = createNetworkId(parseInt(mapping.networkId));
+          this.peerToNetworkIdMap.set(peerId, networkId);
+          console.log(`🆔 CLIENT: Received mapping: peer ${peerId} → network ID ${networkId}`);
+        }
+      }
       
       // Clear all current entities
       console.log(`🗑️ Clearing all client entities (currently have ${Entity.all.length})`);
@@ -213,10 +292,34 @@ export class MultiplayerManager {
       const loadedEntities = Entity.loadEntitiesFromSnapshots(entities);
       console.log(`📦 Loaded ${loadedEntities.length} entities from snapshots`);
       
-      // Mark all loaded entities as network entities
+      // Debug: Check which entities have player components
+      const playerEntities = loadedEntities.filter(e => e.player !== null);
+      console.log(`👥 Found ${playerEntities.length} player entities in loaded snapshots:`);
+      for (const playerEntity of playerEntities) {
+        console.log(`  - Entity ID: ${playerEntity.id}, Name: ${playerEntity.player?.playerName}`);
+      }
+      
+      // Mark all loaded entities as network entities and create controllers for player entities
       for (const entity of loadedEntities) {
         entity.isNetworkEntity = true;
         entity.ownerId = hostId;
+      }
+      
+      // Now associate player entities with network IDs using the peer mappings
+      const networkIds = Array.from(this.peerToNetworkIdMap.values()).map(id => id.toString());
+      
+      // Create controllers for each network ID and associate with player entities
+      // We'll assign them in order - this assumes the host sends them in the right order
+      for (let i = 0; i < Math.min(playerEntities.length, networkIds.length); i++) {
+        const entity = playerEntities[i];
+        const networkId = networkIds[i];
+        
+        if (!this.controllers.has(networkId)) {
+          const controller = new RemotePlayerController(networkId);
+          controller.setPlayerEntity(entity);
+          this.controllers.set(networkId, controller);
+          console.log(`🎮 CLIENT: Created remote controller for network ID ${networkId} (entity ID: ${entity.id})`);
+        }
       }
       
       console.log(`✅ Final entity count: ${Entity.all.length}`);
@@ -257,15 +360,25 @@ export class MultiplayerManager {
     }
     
     // Create local controller
-    this.localController = new LocalPlayerController(playerId);    this.controllers.set(playerId, this.localController);    // Create local player entity using factory
-    const entity = createPlayer(true, playerId);
+    this.localController = new LocalPlayerController(playerId);    
+    this.controllers.set(playerId, this.localController);    
+
+    // Determine network ID for local player
+    // Host gets next available network ID, clients get temporary ID (will be updated by host)
+    const networkId = this.isHost ? (this.nextNetworkId++).toString() : playerId;
+    
+    console.log(`🆔 Creating local player: isHost=${this.isHost}, playerId=${playerId}, networkId=${networkId}`);
+    
+    // Create local player entity using factory
+    const entity = createPlayer(true, networkId);
     
     // Entity is automatically added to Entity.all by createPlayerEntity
     
     // Connect controller to entity
     this.localController.setPlayerEntity(entity);
     
-    console.log(`Created local player: ${playerId} (Entity ID: ${entity.id})`);
+    console.log(`Created local player: ${playerId} (Entity ID: ${entity.id}, Network ID: ${networkId})`);
+    console.log(`🆔 Verified entity created successfully`);
     
     return { controller: this.localController, entity };
   }
@@ -335,6 +448,18 @@ export class MultiplayerManager {
    */
   getLocalPlayerEntity(): Entity | null {
     return this.localController?.getPlayerEntity() || null;
+  }
+  
+  /**
+   * Find a player entity by network ID using our controller mapping
+   */
+  private findPlayerEntityByNetworkId(networkId: string): Entity | null {
+    // Check if we have a controller for this network ID
+    const controller = this.controllers.get(networkId);
+    if (controller) {
+      return controller.getPlayerEntity();
+    }
+    return null;
   }
   
   /**
@@ -431,8 +556,8 @@ export class MultiplayerManager {
       position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]],
       rotation: [entity.localRotation[0], entity.localRotation[1], entity.localRotation[2], entity.localRotation[3]],
       velocity: entity.velocity,
-      entityType: entity.player ? 'player' : 'entity',
-      networkPlayerId: entity.player?.networkPlayerId
+      entityType: entity.player ? 'player' : 'entity'
+      // Network ID will be determined by the host using sender information
     }));
 
     // Get all player controllers (for additional player data if needed)
@@ -490,12 +615,21 @@ export class MultiplayerManager {
     const updates = Entity.all
       .filter(entity => {
         if (entity.player) {
-          const shouldInclude = entity.player.networkPlayerId !== clientNetworkId?.toString();
-          // Only log exclusions (when we filter out the client's own player)
-          if (!shouldInclude) {
-            console.log(`[${this.isHost ? 'HOST' : 'CLIENT'}] EXCLUDING player entity ${entity.player.networkPlayerId} for peer ${peerId}`);
+          // Don't send a player entity to itself
+          // Find which network ID this entity belongs to by checking our controllers
+          const entityController = Array.from(this.controllers.entries()).find(([_, controller]) => 
+            controller.getPlayerEntity() === entity
+          );
+          
+          if (entityController) {
+            const entityNetworkId = entityController[0]; // The key is the network ID
+            const shouldInclude = entityNetworkId !== clientNetworkId?.toString();
+            // Only log exclusions (when we filter out the client's own player)
+            if (!shouldInclude) {
+              console.log(`[${this.isHost ? 'HOST' : 'CLIENT'}] EXCLUDING player entity for peer ${peerId} (network ID ${entityNetworkId})`);
+            }
+            return shouldInclude;
           }
-          return shouldInclude;
         }
         return true;
       })
@@ -511,8 +645,15 @@ export class MultiplayerManager {
         
         if (entity.player) {
           update.entityType = 'player';
-          update.networkPlayerId = entity.player.networkPlayerId;
+          // Find the network ID for this player entity
+          const entityController = Array.from(this.controllers.entries()).find(([_, controller]) => 
+            controller.getPlayerEntity() === entity
+          );
+          if (entityController) {
+            update.networkPlayerId = entityController[0]; // The key is the network ID
+          }
           update.playerName = entity.player.playerName;
+          console.log(`📤 HOST: Sending player entity update - networkId: ${update.networkPlayerId}, entityId: ${entity.id}`);
         } else {
           update.entityType = 'entity';
         }
@@ -621,8 +762,8 @@ export class MultiplayerManager {
         return;
       }
       
-      // Find entity by network ID
-      const entity = Entity.findPlayerByNetworkId(networkId.toString());
+      // Find entity by network ID using our controller mapping
+      const entity = this.findPlayerEntityByNetworkId(networkId.toString());
       
       if (!entity) {
         console.warn(`Host: No entity found for network ID ${networkId} - ignoring update`);
@@ -640,11 +781,16 @@ export class MultiplayerManager {
         return;
       }
       
-      // Find entity by network ID
-      const entity = Entity.findPlayerByNetworkId(networkId);
+      // Find entity by network ID using our controller mapping
+      const entity = this.findPlayerEntityByNetworkId(networkId);
       
       if (!entity) {
         console.warn(`Client: No entity found for network ID ${networkId} - ignoring update`);
+        console.log(`Client: Current player entities:`, Entity.findAllPlayerEntities().map(e => ({
+          id: e.id,
+          hasPlayer: e.player !== null,
+          name: e.player?.playerName
+        })));
         return;
       }
       
@@ -695,7 +841,6 @@ export class MultiplayerManager {
       rotation: [localEntity.localRotation[0], localEntity.localRotation[1], localEntity.localRotation[2], localEntity.localRotation[3]],
       velocity: localEntity.velocity,
       entityType: 'player'
-      // No networkPlayerId - host will determine this from sender
     };
 
     this.net.sendMessage({
@@ -720,14 +865,12 @@ export class MultiplayerManager {
       isConnected: this.net.isConnectionActive(),
       localPlayer: localEntity ? {
         id: localEntity.id,
-        networkId: localEntity.player?.networkPlayerId,
         position: [...localEntity.localPosition],
         rotation: [...localEntity.localRotation]
       } : null,
       allPlayerEntities: allEntities.map(e => {
         return {
           id: e.id,
-          networkId: e.player?.networkPlayerId,
           name: e.player?.playerName,
           position: [...e.localPosition],
           rotation: [...e.localRotation],
@@ -744,7 +887,6 @@ export class MultiplayerManager {
           id: entity.id.toString(),
           index,
           type: entity.constructor.name,
-          networkId: entity.player?.networkPlayerId || 'n/a',
           position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]]
         }))
       }
@@ -765,5 +907,54 @@ export class MultiplayerManager {
     }
     
     console.log('Forced entity sync triggered');
+  }
+
+  /**
+   * Send full game state to a specific player (includes peer mappings)
+   */
+  private sendFullGameStateToPlayer(peerId: PeerId): void {
+    if (!this.isHost) {
+      console.warn('Only host can send full game state');
+      return;
+    }
+
+    // Collect all entity snapshots
+    const entitySnapshots: any[] = [];
+    for (const entity of Entity.all) {
+      try {
+        const snapshot = entity.serialize();
+        entitySnapshots.push(snapshot);
+        
+        // Debug: Log player entities being serialized
+        if (entity.player) {
+          console.log(`📦 HOST SERIALIZE: Player entity - ID: ${entity.id}, Local: ${entity.player.isLocalPlayer}`);
+          console.log(`📦 HOST SERIALIZE: Snapshot player data:`, snapshot.player);
+        }
+      } catch (error) {
+        console.warn('Failed to serialize entity:', error);
+      }
+    }
+
+    // Create peer mappings array
+    const peerMappings = Array.from(this.peerToNetworkIdMap.entries()).map(([pId, nId]) => ({
+      peerId: pId.toString(),
+      networkId: nId.toString()
+    }));
+
+    const message: FullGameStateMessage = {
+      type: MessageType.FULL_GAME_STATE,
+      priority: 1,
+      timestamp: Date.now(),
+      sequenceNumber: 0,
+      data: {
+        entities: entitySnapshots,
+        gameTime: Date.now(),
+        hostId: this.playerId,
+        peerMappings: peerMappings
+      }
+    };
+
+    console.log(`📤 Sending full game state with ${entitySnapshots.length} entities and ${peerMappings.length} peer mappings to ${peerId}`);
+    this.net.sendMessageToPlayer(peerId, message);
   }
 }

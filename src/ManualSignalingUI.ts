@@ -1,5 +1,5 @@
 import { Net } from './Net';
-import { MultiplayerManager } from './MultiplayerManager';
+import { GameManager } from './GameManager';
 
 export interface SignalingStep {
   type: 'offer' | 'answer' | 'complete';
@@ -12,7 +12,7 @@ export interface SignalingStep {
 export class ManualSignalingUI {
   private container: HTMLElement | null = null;
   private net: Net;
-  private mpManager: MultiplayerManager;
+  private gameManager: GameManager;
   private currentStep: number = 0;
   private steps: SignalingStep[] = [];
   private isHost: boolean = false;
@@ -21,9 +21,9 @@ export class ManualSignalingUI {
   private connectionEstablished: boolean = false;
   private connectionCheckInterval?: number;
 
-  constructor(net: Net, mpManager: MultiplayerManager) {
+  constructor(net: Net, gameManager: GameManager) {
     this.net = net;
-    this.mpManager = mpManager;
+    this.gameManager = gameManager;
     this.setupConnectionStateListener();
   }
   private setupConnectionStateListener(): void {
@@ -100,11 +100,11 @@ export class ManualSignalingUI {
     this.showCurrentStepWithSpinner();
     
     try {
-      // Create the game (this sets up multiplayer manager as host)
-      const gameId = await this.mpManager.createGame();
-      console.log('Game created, generating offer...');
+      // Note: We DON'T call createMultiplayerGame here anymore!
+      // We'll create the multiplayer game when the connection is established
+      console.log('HOST: Preparing to create WebRTC offer...');
       
-      // Generate offer through Net with timeout
+      // Generate offer through Net with timeout (this just creates the WebRTC offer, not the game)
       const offerPromise = this.net.createOffer();
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Offer generation timed out after 10 seconds')), 10000)
@@ -131,8 +131,9 @@ export class ManualSignalingUI {
     this.createContainer();
     
     try {
-      // Initialize as client (this sets isHost to false)
-      await this.mpManager.joinGame('manual_join');
+      // Note: We don't call joinMultiplayerGame here anymore!
+      // The GameManager will handle the transition when the connection is established
+      // and the full game state is received from the host
       
       this.steps = [
         {
@@ -328,6 +329,29 @@ export class ManualSignalingUI {
     }
   }
   private finishSignaling(): void {
+    // Handle the transition to multiplayer for both host and client
+    if (this.isHost) {
+      console.log('🏗️ ManualSignalingUI: Host connection established, creating multiplayer game');
+      // Host creates the multiplayer game now that connection is established
+      this.gameManager.createMultiplayerGame()
+        .then((gameId) => {
+          console.log(`✅ Host created multiplayer game: ${gameId}`);
+        })
+        .catch((error) => {
+          console.error('❌ Failed to create host multiplayer game:', error);
+        });
+    } else {
+      console.log('🔗 ManualSignalingUI: Client connection established, joining multiplayer game');
+      // Client sets up multiplayer state and waits for the full game state from host
+      this.gameManager.joinMultiplayerGame('connected_game')
+        .then(() => {
+          console.log('✅ Client prepared for multiplayer game');
+        })
+        .catch((error) => {
+          console.error('❌ Failed to prepare client for multiplayer:', error);
+        });
+    }
+    
     this.close();
     this.onCompleteCallback?.();
   }
@@ -524,9 +548,9 @@ export class ManualSignalingUI {
     return this.container !== null;
   }
 
-  static show(net: Net, mpManager: MultiplayerManager, isHost: boolean): Promise<void> {
+  static show(net: Net, gameManager: GameManager, isHost: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
-      const ui = new ManualSignalingUI(net, mpManager);
+      const ui = new ManualSignalingUI(net, gameManager);
       
       ui.onComplete(() => {
         resolve();

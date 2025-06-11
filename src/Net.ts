@@ -253,12 +253,21 @@ export class Net {
     // Generate a unique ID for the client
     const clientId = 'client_' + Math.random().toString(36).substr(2, 9);
     
+    console.log(`🔗 HOST: Generated client ID: ${clientId}`);
+    
     // Update the pending connection with the correct client ID
     this.pendingConnection.id = clientId;
     
     // Now set up the data channel with the correct client ID
     if (this.pendingConnection.dataChannel) {
+      console.log(`📡 HOST: Setting up data channel for client ${clientId}, readyState: ${this.pendingConnection.dataChannel.readyState}`);
       this.setupDataChannel(this.pendingConnection.dataChannel, clientId);
+      
+      // If the data channel is already open, trigger the callback manually
+      if (this.pendingConnection.dataChannel.readyState === 'open') {
+        console.log(`📡 HOST: Data channel already open, triggering callback manually`);
+        this.onDataChannelReadyCallback?.(clientId);
+      }
     }    // Move from pending to active connections
     this.connections.set(clientId, this.pendingConnection);
     this.pendingConnection = undefined;

@@ -168,7 +168,7 @@ export class PlayerManager {
       remoteControllers: this.getRemoteControllers().map(c => c.getPlayerId()),
       playerEntities: this.getAllPlayerEntities().map(e => ({
         id: e.id,
-        networkId: e.player?.networkPlayerId,
+        networkId: e.network?.ownerId || 'none',
         name: e.player?.playerName,
         isNetwork: e.network !== null      }))
     };

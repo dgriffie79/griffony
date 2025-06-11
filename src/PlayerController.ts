@@ -35,11 +35,10 @@ export abstract class PlayerController {
  */
 export class LocalPlayerController extends PlayerController {
   private inputManager: InputManager;
-  private camera: Camera;
-    constructor(playerId: string) {
+  
+  constructor(playerId: string) {
     super(playerId);
     this.inputManager = InputManager.getInstance();
-    this.camera = new Camera();
     
     console.log(`Created local player controller: ${playerId}`);
   }
@@ -58,14 +57,31 @@ export class LocalPlayerController extends PlayerController {
   }
   
   private updateCamera(): void {
-    if (!this.playerEntity) return;
+    if (!this.playerEntity) {
+      console.warn('LocalPlayerController: No player entity for camera update');
+      return;
+    }
     
-    // Set camera to follow this player's head
-    this.camera.entity = this.playerEntity.player?.getHead();
+    // Use global camera directly
+    const globalCamera = (globalThis as any).camera;
+    if (!globalCamera) {
+      console.warn('Global camera not available yet - skipping camera update');
+      return;
+    }
+    
+    // Set global camera to follow this player's head
+    const playerHead = this.playerEntity.player?.getHead();
+    if (!playerHead) {
+      console.warn('LocalPlayerController: Player has no head entity for camera');
+      return;
+    }
+    
+    globalCamera.entity = playerHead;
+    console.log(`LocalPlayerController: Updated camera to follow player head (Entity ID: ${this.playerEntity.id})`);
   }
   
-  getCamera(): Camera {
-    return this.camera;
+  getCamera(): Camera | null {
+    return (globalThis as any).camera || null;
   }
 }
 

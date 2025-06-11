@@ -228,6 +228,7 @@ export interface FullGameStateMessage extends NetworkMessage {
     playerRotation?: quat;
     gameTime: number;
     hostId: string;
+    peerMappings?: Array<{ peerId: string; networkId: string }>; // Peer to network ID mappings
   };
 }
 

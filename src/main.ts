@@ -22,7 +22,7 @@ import { AutoCleanup } from './ResourceManager.js';
 import { ManualSignalingUI } from './ManualSignalingUI.js';
 import { ChatUI } from './ChatUI.js';
 import { InputManager } from './InputManager.js';
-import { MultiplayerManager } from './MultiplayerManager.js';
+import { GameManager } from './GameManager.js';
 import { LocalPlayerController } from './PlayerController.js';
 import { gameResources } from './GameResources.js';
 
@@ -95,7 +95,7 @@ const net = new Net();
 const camera = new Camera();
 const inputManager = InputManager.getInstance();
 const chatUI = new ChatUI(net);
-const multiplayerManager = new MultiplayerManager(net);
+const gameManager = new GameManager(net);
 
 // Make global references available for legacy compatibility
 declare global {
@@ -109,6 +109,7 @@ declare global {
 	var camera: Camera;
 	var inputManager: InputManager;
 	var chatUI: ChatUI;
+	var gameManager: GameManager;
 	var Entity: typeof Entity;
 	var greedyMesh: any; // Will be defined later in the file
 	var physicsSystem: any; // Use 'any' to avoid circular reference
@@ -484,7 +485,7 @@ function showManualSignalingUI(isHost: boolean): void {
 	if (menu) {
 		menu.hidden = true;
 	}	// Create and show the manual signaling UI
-	const signalingUI = new ManualSignalingUI(net, multiplayerManager);
+	const signalingUI = new ManualSignalingUI(net, gameManager);
 	signalingUI.onComplete(() => {
 		showingMenu = false;
 		// Request pointer lock to resume game
@@ -1087,7 +1088,7 @@ function loop(): void {
 	const physicsTime = updatePhysicsSystem(elapsed);
 
 	// Update multiplayer system
-	multiplayerManager.update(elapsed);
+	gameManager.update(elapsed);
 	updateGameEntities(elapsed);
 
 	// Entity synchronization for multiplayer (handled by MultiplayerManager)
@@ -1117,17 +1118,17 @@ async function main(): Promise<void> {
 	gameResources.setLevel(level);
 	
 	// Create player after model names are available
-	// Use the MultiplayerManager to create the local player properly
-	multiplayerManager.initializeLocalPlayer();
-	const localPlayerEntity = multiplayerManager.getLocalPlayerEntity();
+	// Use the GameManager to create the local player properly
+	gameManager.initializeLocalPlayer();
+	const localPlayerEntity = gameManager.getLocalPlayerEntity();
 	
 	if (localPlayerEntity) {
 		player = localPlayerEntity;
 		globalThis.player = player; // Make player available globally
 		gameResources.setPlayer(player);
 	} else {
-		// Fallback: create player directly if MultiplayerManager fails
-		const playerId = multiplayerManager.playerId || 'local_player';
+		// Fallback: create player directly if GameManager fails
+		const playerId = gameManager.getPlayerId() || 'local_player';
 		player = createPlayer(true, playerId);
 		globalThis.player = player;
 		gameResources.setPlayer(player);
@@ -1255,7 +1256,7 @@ async function main(): Promise<void> {
 		}
 	});
 	// Initialize multiplayer manager
-	(globalThis as any).multiplayerManager = multiplayerManager;
+	(globalThis as any).gameManager = gameManager;
 	
 	// Add shutdown handler to stop game loop during page unload
 	window.addEventListener('beforeunload', () => {
