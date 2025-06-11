@@ -466,6 +466,15 @@ function handleMenuButtonClick(buttonId: string): void {
  * Show the manual signaling UI for multiplayer connection
  */
 function showManualSignalingUI(isHost: boolean): void {
+	console.log('showManualSignalingUI called, isHost:', isHost);
+	
+	// Check for existing signaling UI
+	const existing = document.getElementById('manualSignalingUI');
+	if (existing) {
+		console.log('Removing existing signaling UI');
+		existing.remove();
+	}
+	
 	// Hide the main menu temporarily
 	const menu = document.getElementById('main-menu');
 	if (menu) {

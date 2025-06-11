@@ -205,9 +205,6 @@ export class PhysicsSystem {
         entity.vel[2] -= physicsConfig.gravity * dt;
       } else if (entity.vel[2] < 0) {
         // Stop falling when on ground
-        if (this.debugEnabled && isPlayer && entity.vel[2] < -0.1) {
-          console.log(`🛑 Landing - velocity stopped: ${entity.vel[2].toFixed(3)} → 0`);
-        }
         entity.vel[2] = 0;
       }
     }

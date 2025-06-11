@@ -9,7 +9,8 @@ import {
   type ChatMessage,
   type EntitySnapshot,
   type TerrainModification,
-  type FullGameStateMessage
+  type FullGameStateMessage,
+  type PeerId
 } from './types';
 
 interface PeerConnection {
@@ -323,7 +324,7 @@ export class Net {
 
       case MessageType.PING:
         // Respond with pong
-        this.sendMessageToPlayer(senderId, {
+        this.sendMessageToPlayer(senderId as PeerId, {
           type: MessageType.PONG,
           priority: MessagePriority.LOW,
           timestamp: Date.now(),
@@ -367,12 +368,12 @@ export class Net {
     }  }
 
   // Public method to send full game state to a specific player
-  public sendFullGameStateToPlayer(playerId: string): void {
+  public sendFullGameStateToPlayer(peerId: PeerId): void {
     if (!this.isHost) {
       return;
     }
 
-    const connection = this.connections.get(playerId);
+    const connection = this.connections.get(peerId);
     if (!connection) {
       return;
     }
@@ -401,7 +402,7 @@ export class Net {
         hostId: this.peerId
       }    };
 
-    this.sendMessageToPlayer(playerId, message);
+    this.sendMessageToPlayer(peerId, message);
   }
 
   private handlePeerDisconnection(peerId: string): void {
@@ -421,14 +422,14 @@ export class Net {
     
     // Broadcast to all ready peers (if any)
     for (const [peerId, connection] of readyConnections) {
-      this.sendMessageToPlayer(peerId, message);
+      this.sendMessageToPlayer(peerId as PeerId, message);
     }
     
     // Note: Local display of chat messages is handled in ChatUI before calling this method
   }
 
-  sendMessageToPlayer(playerId: string, message: NetworkMessage): void {
-    const connection = this.connections.get(playerId);
+  sendMessageToPlayer(peerId: PeerId, message: NetworkMessage): void {
+    const connection = this.connections.get(peerId);
     if (!connection || !connection.dataChannel || connection.dataChannel.readyState !== 'open') {
       return;
     }
@@ -438,7 +439,7 @@ export class Net {
       connection.dataChannel.send(messageStr);
       this.messagesSent++;
     } catch (error) {
-      console.warn(`Failed to send message to ${playerId}:`, error);
+      console.warn(`Failed to send message to ${peerId}:`, error);
       // Mark connection as problematic if send fails
       connection.dataChannel = undefined;
     }

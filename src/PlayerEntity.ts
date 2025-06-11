@@ -16,9 +16,12 @@ export class PlayerEntity extends Entity {
   isLocalPlayer: boolean = false; // Add this for compatibility
   private controller: any = null; // Reference to controlling PlayerController
   
-  constructor(id: number = Entity.nextId++, networkId: string = '', isLocal: boolean = false) {
+  constructor(id: number, networkId: string = '', isLocal: boolean = false) {
     super();
+    const currentIndex = Entity.all.indexOf(this);
+    Entity.all.splice(currentIndex, 1);
     this.id = id;
+    Entity.all.push(this);
     this.networkPlayerId = networkId;
     this.isLocalPlayer = isLocal;
     this.modelId = globalThis.modelNames?.indexOf('player') ?? -1;
@@ -122,13 +125,9 @@ export class PlayerEntity extends Entity {
     let entityId: number;
     
     if (isLocal) {
-      entityId = 1; // Local player always gets ID 1
+      entityId = 1;
     } else {
-      // Generate unique ID for remote players
-      const existingRemotePlayers = Entity.all.filter(e => 
-        e instanceof PlayerEntity && e.isNetworkEntity
-      ).length;
-      entityId = 10000 + existingRemotePlayers;
+      entityId = Entity.nextId++;
     }
     
     const entity = new PlayerEntity(entityId, networkId, isLocal);

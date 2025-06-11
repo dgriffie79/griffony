@@ -2,6 +2,29 @@
 import type { mat4, quat, vec3 } from 'gl-matrix';
 import type { Entity } from '../Entity';
 
+// ID Types for type safety
+export type PeerId = string & { __brand: 'PeerId' };
+export type NetworkId = number & { __brand: 'NetworkId' };
+export type EntityId = number & { __brand: 'EntityId' };
+export type PlayerNumber = number & { __brand: 'PlayerNumber' };
+
+// Helper functions to create typed IDs
+export function createPeerId(id: string): PeerId {
+  return id as PeerId;
+}
+
+export function createNetworkId(id: number): NetworkId {
+  return id as NetworkId;
+}
+
+export function createEntityId(id: number): EntityId {
+  return id as EntityId;
+}
+
+export function createPlayerNumber(num: number): PlayerNumber {
+  return num as PlayerNumber;
+}
+
 // Global types
 export interface GameSettings {
   version: number;

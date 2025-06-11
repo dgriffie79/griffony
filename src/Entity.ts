@@ -127,12 +127,6 @@ export class Entity {
   }
   // Network synchronization methods
   applyNetworkUpdate(state: NetworkState, isAuthoritative: boolean = false): void {
-    // CRITICAL: Never apply network updates to local players
-    // This is a safety check at the Entity level
-    if ((this as any).isLocalPlayer === true) {
-      console.warn('ENTITY', `Attempted to apply network update to local player entity (ID: ${this.id}) - BLOCKED`);
-      return;
-    }
     
     this.lastNetworkUpdate = Date.now();
     

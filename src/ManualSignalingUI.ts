@@ -77,33 +77,50 @@ export class ManualSignalingUI {
   // Start the host signaling flow
   public async showHostFlow(): Promise<void> {
     this.isHost = true;
-    this.connectionEstablished = false;    this.createContainer();
+    this.connectionEstablished = false;
+    this.createContainer();
+    
+    // Show Step 1 immediately with loading spinner
+    this.steps = [
+      {
+        type: 'offer',
+        title: 'Step 1: Share Your Offer',
+        instruction: 'Copy this offer and send it to the player who wants to join:',
+        data: ''
+      },
+      {
+        type: 'answer',
+        title: 'Step 2: Enter Their Answer',
+        instruction: 'Paste the answer you received from the other player:',
+        isInput: true
+      }
+    ];
+    
+    this.currentStep = 0;
+    this.showCurrentStepWithSpinner();
     
     try {
       // Create the game (this sets up multiplayer manager as host)
       const gameId = await this.mpManager.createGame();
+      console.log('Game created, generating offer...');
       
-      // Generate offer through Net
-      const offer = await this.net.createOffer();
+      // Generate offer through Net with timeout
+      const offerPromise = this.net.createOffer();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Offer generation timed out after 10 seconds')), 10000)
+      );
       
-      this.steps = [
-        {
-          type: 'offer',
-          title: 'Step 1: Share Your Offer',
-          instruction: 'Copy this offer and send it to the player who wants to join:',
-          data: offer
-        },
-        {
-          type: 'answer',
-          title: 'Step 2: Enter Their Answer',
-          instruction: 'Paste the answer you received from the other player:',
-          isInput: true
-        }
-      ];
+      const offer = await Promise.race([offerPromise, timeoutPromise]) as string;
+      console.log('Offer generated successfully');
       
-      this.currentStep = 0;
+      // Update the step with the actual offer data
+      this.steps[0].data = offer;
       this.showCurrentStep();
-        } catch (error) {
+      
+      console.log('showHostFlow completed. Container still exists?', !!this.container);
+      console.log('Container still in DOM?', !!document.getElementById('manualSignalingUI'));
+    } catch (error) {
+      console.error('Failed to create host game:', error);
       this.showError('Failed to create offer: ' + error);
     }
   }
@@ -140,6 +157,48 @@ export class ManualSignalingUI {
   }
 
   private showCurrentStep(): void {
+    console.log('showCurrentStep called:', { container: !!this.container, currentStep: this.currentStep, stepsLength: this.steps.length });
+    
+    if (!this.container || this.currentStep >= this.steps.length) {
+      console.warn('showCurrentStep early return:', { container: !!this.container, currentStep: this.currentStep, stepsLength: this.steps.length });
+      return;
+    }
+    
+    const step = this.steps[this.currentStep];
+    console.log('Showing step:', step);
+    
+    // Determine the appropriate status message
+    let statusMessage = '🔄 Waiting for connection...';
+    if (this.isHost && this.currentStep === 0) {
+      statusMessage = '📋 Share this offer with the other player';
+    } else if (this.isHost && this.currentStep === 1) {
+      statusMessage = '🔄 Waiting for connection...';
+    } else if (!this.isHost && this.currentStep === 0) {
+      statusMessage = '📝 Paste the host\'s offer below';
+    } else if (!this.isHost && this.currentStep === 1) {
+      statusMessage = '📋 Share this answer with the host';
+    }
+    
+    this.container.innerHTML = `
+      <div class="signaling-step">
+        <h2>${step.title}</h2>
+        <p>${step.instruction}</p>
+        <div class="connection-status">${statusMessage}</div>
+        ${step.isInput ? 
+          `<textarea id="signalingInput" placeholder="Paste data here..." rows="10"></textarea>
+           <button id="processInput">Next</button>` :
+          `<textarea id="signalingOutput" readonly rows="10">${step.data || ''}</textarea>
+           <button id="copyData">Copy to Clipboard</button>
+           ${this.currentStep < this.steps.length - 1 ? '<button id="nextStep">Next</button>' : ''}`
+        }
+        <button id="closeSignaling">Cancel</button>
+      </div>
+    `;
+    
+    this.setupEventListeners();
+  }
+  
+  private showCurrentStepWithSpinner(): void {
     if (!this.container || this.currentStep >= this.steps.length) return;
     
     const step = this.steps[this.currentStep];
@@ -148,14 +207,9 @@ export class ManualSignalingUI {
       <div class="signaling-step">
         <h2>${step.title}</h2>
         <p>${step.instruction}</p>
-        <div class="connection-status">🔄 Waiting for connection...</div>
-        ${step.isInput ? 
-          `<textarea id="signalingInput" placeholder="Paste data here..." rows="10"></textarea>
-           <button id="processInput">Next</button>` :
-          `<textarea id="signalingOutput" readonly rows="10">${step.data || ''}</textarea>
-           <button id="copyData">Copy to Clipboard</button>
-           ${this.currentStep < this.steps.length - 1 ? '<button id="nextStep">Next</button>' : ''}`
-        }
+        <div class="connection-status">🔄 Generating offer...</div>
+        <textarea id="signalingOutput" readonly rows="10" placeholder="Generating offer, please wait..."></textarea>
+        <button id="copyData" disabled>Copy to Clipboard</button>
         <button id="closeSignaling">Cancel</button>
       </div>
     `;
@@ -309,6 +363,9 @@ export class ManualSignalingUI {
     this.addStyles();
     
     document.body.appendChild(this.container);
+    console.log('ManualSignalingUI container created and added to DOM:', this.container);
+    console.log('Container in DOM?', document.getElementById('manualSignalingUI'));
+    console.log('Container styles:', window.getComputedStyle(this.container).display, window.getComputedStyle(this.container).visibility);
   }
 
   private addStyles(): void {
@@ -454,8 +511,10 @@ export class ManualSignalingUI {
   }
 
   close(): void {
+    console.log('ManualSignalingUI.close() called');
     this.stopConnectionCheck();
     if (this.container) {
+      console.log('Removing container from DOM');
       this.container.remove();
       this.container = null;
     }
