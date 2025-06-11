@@ -834,13 +834,18 @@ function processInput(elapsed: number): void {
 	quat.rotateZ(player.localRotation, player.localRotation, -dx * elapsed / 1000);
 	quat.rotateX(player.head.localRotation, player.head.localRotation, dy * elapsed / 1000);
 
-	// Clamp head rotation
-	const angle = quat.getAxisAngle(vec3.create(), player.head.localRotation);
-	if (angle > Math.PI / 2) {
-		if (dy > 0) {
-			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), Math.PI / 2);
-		} else {
-			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), -Math.PI / 2);
+	// Clamp head rotation - extract pitch angle properly
+	const tempAxis = vec3.create();
+	const angle = quat.getAxisAngle(tempAxis, player.head.localRotation);
+	
+	// Check if rotation is around X-axis (pitch) and clamp it
+	if (Math.abs(tempAxis[0]) > 0.9) { // X-axis rotation
+		const pitch = tempAxis[0] > 0 ? angle : -angle;
+		const maxPitch = Math.PI / 2 - 0.01; // Slightly less than 90 degrees to prevent gimbal lock
+		
+		if (Math.abs(pitch) > maxPitch) {
+			const clampedPitch = Math.sign(pitch) * maxPitch;
+			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), clampedPitch);
 		}
 	}
 
