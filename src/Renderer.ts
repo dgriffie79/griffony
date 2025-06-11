@@ -2,7 +2,7 @@ import { mat4 } from 'gl-matrix';
 import type { Model } from './Model';
 import type { Tileset } from './Tileset';
 import type { Level } from './Level';
-import { greedyMesh, optimizedGreedyMesh } from './utils';
+import { optimizedGreedyMesh } from './utils';
 import { getConfig } from './Config';
 import { errorHandler, GPUError, ValidationError, ResourceLoadError, Result } from './ErrorHandler.js';
 import { gpuResourceManager, resourceManager, ResourceType, AutoCleanup, ManagedResource } from './ResourceManager.js';
@@ -966,20 +966,22 @@ export class Renderer {
       const useGreedy = (globalThis as any).useGreedyMesh || false;
       renderPass.setPipeline(useGreedy ? this.greedyModelPipeline : this.modelPipeline);
 
-      const player = globalThis.player;    // First render the player's first-person weapon view if it has a valid modelId
-      const fpWeaponModel = (player.fpWeapon && player.fpWeapon.modelId >= 0 && globalThis.models && globalThis.models[player.fpWeapon.modelId])
-        ? globalThis.models[player.fpWeapon.modelId]
+      const player = globalThis.player;
+      
+      // First render the player's first-person weapon view if it has a valid modelId
+      const fpWeaponEntity = player.fpWeapon; // This is now the fpWeaponEntity from WeaponComponent
+      const fpWeaponModel = (fpWeaponEntity && fpWeaponEntity.render?.modelId >= 0 && globalThis.models && globalThis.models[fpWeaponEntity.render.modelId])
+        ? globalThis.models[fpWeaponEntity.render.modelId]
         : null;
 
-      if (fpWeaponModel) {
-        const fpWeapon = player.fpWeapon;
+      if (fpWeaponModel && fpWeaponEntity) {
         // Scale for first-person view - use weapon-specific scale
         const baseScale = 1 / 24;
-        const weaponSpecificScale = fpWeapon.getWeaponScale();
+        const weaponSpecificScale = player.weapon?.weaponScale ?? 1.0;
         const weaponScale: [number, number, number] = [baseScale * weaponSpecificScale, baseScale * weaponSpecificScale, baseScale * weaponSpecificScale];
 
         const offsetMatrix = mat4.fromTranslation(mat4.create(), [-fpWeaponModel.volume.sizeX / 2, -fpWeaponModel.volume.sizeY / 2, 0]);
-        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeapon.worldRotation, fpWeapon.worldPosition, weaponScale);
+        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeaponEntity.worldRotation, fpWeaponEntity.worldPosition, weaponScale);
         mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
         const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
         this.drawModel(fpWeaponModel, modelViewProjectionMatrix, modelMatrix, renderPass);

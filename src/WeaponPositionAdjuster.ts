@@ -1,5 +1,5 @@
 import { quat, vec3 } from 'gl-matrix';
-import { WeaponPositionConfigs } from './FirstPersonWeapon';
+import { WeaponPositionConfigs } from './components/WeaponComponent';
 import { getConfig } from './Config';
 
 /**
@@ -232,8 +232,9 @@ export class WeaponPositionAdjuster {
    */
   private updatePlayer(): void {
     const player = globalThis.player;
-    if (player && player.fpWeapon) {
-      player.fpWeapon.applyWeaponPositionConfig(this.currentWeaponType);
+    if (player && player.weapon) {
+      // Access the applyWeaponPositionConfig method on the WeaponComponent
+      (player.weapon as any).applyWeaponPositionConfig(this.currentWeaponType);
     }
   }
     /**
@@ -255,7 +256,7 @@ export class WeaponPositionAdjuster {
   },`;
     
     console.log(formattedConfig);
-    console.log('\nCopy the above into the WeaponPositionConfigs object in FirstPersonWeapon.ts');
+    console.log('\nCopy the above into the WeaponPositionConfigs object in components/WeaponComponent.ts');
     
     // Also provide HTML element to make copying easier
     const copyHelper = document.createElement('textarea');

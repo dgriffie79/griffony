@@ -141,12 +141,22 @@ export class Level {
 
         // Enable basic physics for non-spawn entities
         if (!entity.spawn) {
-          // Enable collision for all entities except specific types
-          entity.collision = true;
+          // Ensure entity has physics component
+          if (!entity.physics) {
+            entity.addPhysics({
+              hasCollision: true,
+              hasGravity: object.type?.toLowerCase() !== 'static',
+              radius: 0.3,
+              height: 0.6
+            });
+          } else {
+            // Enable collision for all entities except specific types
+            entity.physics.hasCollision = true;
 
-          // Enable gravity for movable entities
-          if (object.type?.toLowerCase() !== 'static') {
-            entity.gravity = true;
+            // Enable gravity for movable entities
+            if (object.type?.toLowerCase() !== 'static') {
+              entity.physics.hasGravity = true;
+            }
           }
 
           // Initialize combat stats for entities
@@ -155,9 +165,9 @@ export class Level {
           }
           // Mark as network entity if multiplayer is active
           if ((globalThis as any).net && (globalThis as any).net.isConnectionActive()) {
-            entity.isNetworkEntity = true;
-            if ((globalThis as any).net.isHost()) {
-              entity.ownerId = (globalThis as any).net.getPeerId();
+            const ownerId = (globalThis as any).net.isHost() ? (globalThis as any).net.getPeerId() : '';
+            if (!entity.network) {
+              entity.addNetwork(ownerId);
             }
           }
         }

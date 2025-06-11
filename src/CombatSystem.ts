@@ -54,7 +54,7 @@ export class CombatSystem {
     
     // Update first person weapon model if this is the player
     if (entity instanceof PlayerEntity) {
-      entity.fpWeapon.updateWeaponModel(weapon);
+      entity.equipWeapon(weapon);
     }
 
     return weapon;
@@ -69,7 +69,7 @@ export class CombatSystem {
       
       // Update first person weapon if this is the player
       if (entity instanceof PlayerEntity) {
-        entity.fpWeapon.updateWeaponModel(null);
+        entity.equipWeapon(null);
       }
     }
   }
@@ -92,7 +92,7 @@ export class CombatSystem {
       
       // Start first-person weapon animation if attacker is the player
       if (attacker instanceof PlayerEntity) {
-        attacker.fpWeapon.startAttackAnimation();
+        attacker.startAttack();
       }
 
       // Dispatch attack event

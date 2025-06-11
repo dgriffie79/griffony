@@ -26,6 +26,9 @@ import { MultiplayerManager } from './MultiplayerManager.js';
 import { LocalPlayerController } from './PlayerController.js';
 import { gameResources } from './GameResources.js';
 
+// Make Entity class available globally for components
+(globalThis as any).Entity = Entity;
+
 // Global game state
 let lastTime = 0;
 let timeLabel: HTMLDivElement;
