@@ -414,24 +414,33 @@ export class Net {
   }
   // Message sending methods
   sendMessage(message: NetworkMessage): void {
-    // Broadcast to all connected peers
-    for (const [peerId, connection] of this.connections) {
-      if (connection.dataChannel && connection.dataChannel.readyState === 'open') {
-        this.sendMessageToPlayer(peerId, message);
-      }
+    // Check if we have any ready connections
+    const readyConnections = Array.from(this.connections.entries()).filter(
+      ([_, connection]) => connection.dataChannel?.readyState === 'open'
+    );
+    
+    // Broadcast to all ready peers (if any)
+    for (const [peerId, connection] of readyConnections) {
+      this.sendMessageToPlayer(peerId, message);
     }
+    
+    // Note: Local display of chat messages is handled in ChatUI before calling this method
   }
 
   sendMessageToPlayer(playerId: string, message: NetworkMessage): void {
     const connection = this.connections.get(playerId);
     if (!connection || !connection.dataChannel || connection.dataChannel.readyState !== 'open') {
       return;
-    }    try {
+    }
+    
+    try {
       const messageStr = JSON.stringify(message);
       connection.dataChannel.send(messageStr);
       this.messagesSent++;
     } catch (error) {
-      // Failed to send message
+      console.warn(`Failed to send message to ${playerId}:`, error);
+      // Mark connection as problematic if send fails
+      connection.dataChannel = undefined;
     }
   }
 

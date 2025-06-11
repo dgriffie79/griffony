@@ -21,6 +21,8 @@ export class MultiplayerManager {
 
   constructor(net: Net) {
     this.net = net;
+    // Generate a default player ID for single-player mode
+    this.playerId = this.generatePlayerId();
     this.setupNetworkHandlers();
   }
   private getMessageTypeName(type: number): string {
@@ -140,7 +142,6 @@ export class MultiplayerManager {
   private handleEntityUpdate(message: NetworkMessage): void {
     const { entities } = message.data;
     
-    console.log('Received entity update:', { entities });
     
     if (!entities || !Array.isArray(entities)) {
       console.warn('Received entity update without entities array');
@@ -148,7 +149,6 @@ export class MultiplayerManager {
     }
     
     for (const entityData of entities) {
-      console.log(`Processing entity update: ${entityData.entityType} - ${entityData.networkPlayerId || entityData.id}`);
       
       if (entityData.entityType === 'player') {
         // Handle player entity updates
@@ -451,7 +451,6 @@ export class MultiplayerManager {
         sequenceNumber: 0,
         data: { entities: updates }
       });
-        console.log(`Sent updates for ${updates.length} player entities`);
     }
   }
 
@@ -511,7 +510,6 @@ export class MultiplayerManager {
 
     // Don't update our local player from network
     if (playerId === this.playerId) {
-      console.log('Ignoring network update for local player');
       return;
     }
 
@@ -544,7 +542,6 @@ export class MultiplayerManager {
       entity.velocity = entityData.velocity;
     }
 
-    console.log(`Updated remote player entity: ${playerId} to position [${entityData.position?.join(', ')}]`);
   }
   /**
    * Send the local player's position/state to other clients
@@ -578,7 +575,6 @@ export class MultiplayerManager {
       data: { entities: [update] }    });
 
     this.lastEntityUpdate = now;
-    console.log(`Sent local player update: ${this.playerId} at position [${update.position.join(', ')}]`);
   }
   /**
    * Debug method to check entity synchronization status

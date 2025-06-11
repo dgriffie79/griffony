@@ -197,7 +197,7 @@ export class ChatUI {
       }
     };
 
-    // Add to local chat immediately    this.addMessage(chatMessage.data.playerName, message, Date.now());
+    this.addMessage(chatMessage.data.playerName, message, Date.now());
     
     // Send to network
     this.net.sendMessage(chatMessage);

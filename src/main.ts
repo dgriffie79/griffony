@@ -1075,13 +1075,21 @@ async function main(): Promise<void> {
 	gameResources.setLevel(level);
 	
 	// Create player after model names are available
-	// Get the proper player ID from MultiplayerManager if it exists
-	const mpManager = (globalThis as any).multiplayerManager;
-	const playerId = mpManager?.playerId || 'local_player';
+	// Use the MultiplayerManager to create the local player properly
+	multiplayerManager.initializeLocalPlayer();
+	const localPlayerEntity = multiplayerManager.getLocalPlayerEntity();
 	
-	player = new PlayerEntity(1, playerId, true);
-	globalThis.player = player; // Make player available globally
-	gameResources.setPlayer(player);
+	if (localPlayerEntity) {
+		player = localPlayerEntity;
+		globalThis.player = player; // Make player available globally
+		gameResources.setPlayer(player);
+	} else {
+		// Fallback: create player directly if MultiplayerManager fails
+		const playerId = multiplayerManager.playerId || 'local_player';
+		player = new PlayerEntity(1, playerId, true);
+		globalThis.player = player;
+		gameResources.setPlayer(player);
+	}
 
 	// Set camera to follow the local player's head now that player exists
 	camera.entity = player.head;
