@@ -1,6 +1,6 @@
 import { vec3, quat } from 'gl-matrix';
 import { InputManager } from './InputManager.js';
-import { PlayerEntity } from './PlayerEntity.js';
+import { Entity } from './Entity.js';
 import { Camera } from './Camera.js';
 
 /**
@@ -8,7 +8,7 @@ import { Camera } from './Camera.js';
  */
 export abstract class PlayerController {
   protected playerId: string;
-  protected playerEntity: PlayerEntity | null = null;
+  protected playerEntity: Entity | null = null;
   
   constructor(playerId: string) {
     this.playerId = playerId;
@@ -16,12 +16,12 @@ export abstract class PlayerController {
   
   abstract update(deltaTime: number): void;
   
-  setPlayerEntity(entity: PlayerEntity): void {
+  setPlayerEntity(entity: Entity): void {
     this.playerEntity = entity;
-    entity.setController(this);
+    entity.player?.setController(this);
   }
   
-  getPlayerEntity(): PlayerEntity | null {
+  getPlayerEntity(): Entity | null {
     return this.playerEntity;
   }
   
@@ -51,7 +51,7 @@ export class LocalPlayerController extends PlayerController {
     const input = this.inputManager.update(deltaTime);
     
     // Apply input to player entity
-    this.playerEntity.processInput(input);
+    this.playerEntity.player?.processInput(input);
     
     // Update camera to follow this player
     this.updateCamera();
@@ -61,7 +61,7 @@ export class LocalPlayerController extends PlayerController {
     if (!this.playerEntity) return;
     
     // Set camera to follow this player's head
-    this.camera.entity = this.playerEntity.getHead();
+    this.camera.entity = this.playerEntity.player?.getHead();
   }
   
   getCamera(): Camera {

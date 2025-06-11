@@ -2,7 +2,7 @@ import { Net } from './Net.js';
 import { NetworkMessage, MessageType, FullGameStateMessage, PeerId, NetworkId, createPeerId, createNetworkId } from './types/index.js';
 import { Entity } from './Entity.js';
 import { PlayerController, LocalPlayerController, RemotePlayerController } from './PlayerController.js';
-import { PlayerEntity } from './PlayerEntity.js';
+import { createPlayer } from './EntityFactory.js';
 
 export class MultiplayerManager {
   public isHost: boolean = false;
@@ -247,7 +247,7 @@ export class MultiplayerManager {
   }
   /**
    * Create the local player controller and entity
-   */  createLocalPlayer(playerId: string): { controller: LocalPlayerController, entity: PlayerEntity } {
+   */  createLocalPlayer(playerId: string): { controller: LocalPlayerController, entity: Entity } {
     if (this.localController) {
       console.warn(`Local player already exists`);
       return {
@@ -257,8 +257,8 @@ export class MultiplayerManager {
     }
     
     // Create local controller
-    this.localController = new LocalPlayerController(playerId);    this.controllers.set(playerId, this.localController);    // Create local player entity
-    const entity = PlayerEntity.createPlayerEntity(playerId, true);
+    this.localController = new LocalPlayerController(playerId);    this.controllers.set(playerId, this.localController);    // Create local player entity using factory
+    const entity = createPlayer(true, playerId);
     
     // Entity is automatically added to Entity.all by createPlayerEntity
     
@@ -271,7 +271,7 @@ export class MultiplayerManager {
   }
     /**
    * Create a remote player controller and entity
-   */  createRemotePlayer(playerId: string, playerData?: any): { controller: RemotePlayerController, entity: PlayerEntity } {
+   */  createRemotePlayer(playerId: string, playerData?: any): { controller: RemotePlayerController, entity: Entity } {
     if (this.controllers.has(playerId)) {
       console.warn(`Remote player ${playerId} already exists`);
       const existing = this.controllers.get(playerId)!;
@@ -284,8 +284,8 @@ export class MultiplayerManager {
     // Create remote controller
     const controller = new RemotePlayerController(playerId);
     this.controllers.set(playerId, controller);
-      // Create remote player entity
-    const entity = PlayerEntity.createPlayerEntity(playerId, false);
+      // Create remote player entity using factory
+    const entity = createPlayer(false, playerId);
     
     // Entity is automatically added to Entity.all by createPlayerEntity
     
@@ -333,7 +333,7 @@ export class MultiplayerManager {
   /**
    * Get the local player entity
    */
-  getLocalPlayerEntity(): PlayerEntity | null {
+  getLocalPlayerEntity(): Entity | null {
     return this.localController?.getPlayerEntity() || null;
   }
   
@@ -431,8 +431,8 @@ export class MultiplayerManager {
       position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]],
       rotation: [entity.localRotation[0], entity.localRotation[1], entity.localRotation[2], entity.localRotation[3]],
       velocity: entity.velocity,
-      entityType: entity instanceof PlayerEntity ? 'player' : 'entity',
-      networkPlayerId: entity instanceof PlayerEntity ? entity.networkPlayerId : undefined
+      entityType: entity.player ? 'player' : 'entity',
+      networkPlayerId: entity.player?.networkPlayerId
     }));
 
     // Get all player controllers (for additional player data if needed)
@@ -489,11 +489,11 @@ export class MultiplayerManager {
     
     const updates = Entity.all
       .filter(entity => {
-        if (entity instanceof PlayerEntity) {
-          const shouldInclude = entity.networkPlayerId !== clientNetworkId?.toString();
+        if (entity.player) {
+          const shouldInclude = entity.player.networkPlayerId !== clientNetworkId?.toString();
           // Only log exclusions (when we filter out the client's own player)
           if (!shouldInclude) {
-            console.log(`[${this.isHost ? 'HOST' : 'CLIENT'}] EXCLUDING player entity ${entity.networkPlayerId} for peer ${peerId}`);
+            console.log(`[${this.isHost ? 'HOST' : 'CLIENT'}] EXCLUDING player entity ${entity.player.networkPlayerId} for peer ${peerId}`);
           }
           return shouldInclude;
         }
@@ -509,10 +509,10 @@ export class MultiplayerManager {
           frame: entity.frame
         };
         
-        if (entity instanceof PlayerEntity) {
+        if (entity.player) {
           update.entityType = 'player';
-          update.networkPlayerId = entity.networkPlayerId;
-          update.playerName = entity.playerName;
+          update.networkPlayerId = entity.player.networkPlayerId;
+          update.playerName = entity.player.playerName;
         } else {
           update.entityType = 'entity';
         }
@@ -622,9 +622,7 @@ export class MultiplayerManager {
       }
       
       // Find entity by network ID
-      const entity = Entity.all.find(e => 
-        e instanceof PlayerEntity && e.networkPlayerId === networkId.toString()
-      ) as PlayerEntity;
+      const entity = Entity.findPlayerByNetworkId(networkId.toString());
       
       if (!entity) {
         console.warn(`Host: No entity found for network ID ${networkId} - ignoring update`);
@@ -643,9 +641,7 @@ export class MultiplayerManager {
       }
       
       // Find entity by network ID
-      const entity = Entity.all.find(e => 
-        e instanceof PlayerEntity && e.networkPlayerId === networkId
-      ) as PlayerEntity;
+      const entity = Entity.findPlayerByNetworkId(networkId);
       
       if (!entity) {
         console.warn(`Client: No entity found for network ID ${networkId} - ignoring update`);
@@ -657,7 +653,7 @@ export class MultiplayerManager {
     }
   }
   
-  private updateEntityFromEntityData(entity: PlayerEntity, entityData: any): void {
+  private updateEntityFromEntityData(entity: Entity, entityData: any): void {
     if (entityData.position) {
       entity.localPosition[0] = entityData.position[0];
       entity.localPosition[1] = entityData.position[1];
@@ -717,26 +713,25 @@ export class MultiplayerManager {
    */
   debugEntitySync(): any {
     const localEntity = this.getLocalPlayerEntity();
-    const allEntities = Entity.all.filter(e => e instanceof PlayerEntity);
+    const allEntities = Entity.findAllPlayerEntities();
     
     return {
       isHost: this.isHost,
       isConnected: this.net.isConnectionActive(),
       localPlayer: localEntity ? {
         id: localEntity.id,
-        networkId: localEntity.networkPlayerId,
+        networkId: localEntity.player?.networkPlayerId,
         position: [...localEntity.localPosition],
         rotation: [...localEntity.localRotation]
       } : null,
       allPlayerEntities: allEntities.map(e => {
-        const pe = e as PlayerEntity;
         return {
-          id: pe.id,
-          networkId: pe.networkPlayerId,
-          name: pe.playerName,
-          position: [...pe.localPosition],
-          rotation: [...pe.localRotation],
-          isNetwork: pe.isNetworkEntity
+          id: e.id,
+          networkId: e.player?.networkPlayerId,
+          name: e.player?.playerName,
+          position: [...e.localPosition],
+          rotation: [...e.localRotation],
+          isNetwork: e.network !== null
         };
       }),
       controllers: Array.from(this.controllers.entries()).map(([id, controller]) => ({
@@ -749,7 +744,7 @@ export class MultiplayerManager {
           id: entity.id.toString(),
           index,
           type: entity.constructor.name,
-          networkId: entity instanceof PlayerEntity ? entity.networkPlayerId : 'n/a',
+          networkId: entity.player?.networkPlayerId || 'n/a',
           position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]]
         }))
       }

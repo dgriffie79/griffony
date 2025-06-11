@@ -42,6 +42,9 @@ export function createPlayer(isLocal: boolean = true, networkId?: string): Entit
   });
   player.addHealth(100);
   
+  // Player component with identity and player-specific functionality
+  player.addPlayer(networkId || '', isLocal);
+  
   // Network component for remote players only
   if (!isLocal && networkId) {
     const networkComp = player.addNetwork(networkId);

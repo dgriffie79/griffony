@@ -969,7 +969,7 @@ export class Renderer {
       const player = globalThis.player;
       
       // First render the player's first-person weapon view if it has a valid modelId
-      const fpWeaponEntity = player.fpWeapon; // This is now the fpWeaponEntity from WeaponComponent
+      const fpWeaponEntity = player.weapon?.fpWeaponEntity; // This is now the fpWeaponEntity from WeaponComponent
       const fpWeaponModel = (fpWeaponEntity && fpWeaponEntity.render?.modelId >= 0 && globalThis.models && globalThis.models[fpWeaponEntity.render.modelId])
         ? globalThis.models[fpWeaponEntity.render.modelId]
         : null;
@@ -1012,7 +1012,7 @@ export class Renderer {
 
         if (model &&
           e !== player &&
-          e !== player.fpWeapon &&
+          e !== player.weapon?.fpWeaponEntity &&
           !isWeaponAttachedToPlayer) {
 
           const offsetMatrix = mat4.fromTranslation(mat4.create(), [-model.volume.sizeX / 2, -model.volume.sizeY / 2, 0]); const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.worldRotation, e.worldPosition, [renderingConfig.modelScale, renderingConfig.modelScale, renderingConfig.modelScale]);

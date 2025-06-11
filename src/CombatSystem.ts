@@ -1,6 +1,5 @@
 import { vec3 } from 'gl-matrix';
 import { Entity } from './Entity';
-import { PlayerEntity } from './PlayerEntity';
 import { Weapon, WeaponConfigs } from './Weapon';
 import type { CombatStats, AttackInfo, CombatEvent } from './types/index';
 import { getConfig } from './Config.js';
@@ -53,8 +52,8 @@ export class CombatSystem {
     this.weapons.set(entity.id, weapon);
     
     // Update first person weapon model if this is the player
-    if (entity instanceof PlayerEntity) {
-      entity.equipWeapon(weapon);
+    if (entity.player) {
+      entity.player.equipWeapon(weapon);
     }
 
     return weapon;
@@ -68,8 +67,8 @@ export class CombatSystem {
       this.weapons.delete(entity.id);
       
       // Update first person weapon if this is the player
-      if (entity instanceof PlayerEntity) {
-        entity.equipWeapon(null);
+      if (entity.player) {
+        entity.player.equipWeapon(null);
       }
     }
   }
@@ -91,8 +90,8 @@ export class CombatSystem {
       this.lastAttackTime.set(attacker.id, now);
       
       // Start first-person weapon animation if attacker is the player
-      if (attacker instanceof PlayerEntity) {
-        attacker.startAttack();
+      if (attacker.player) {
+        attacker.player.startAttack();
       }
 
       // Dispatch attack event

@@ -1,5 +1,5 @@
 import type { Model } from './Model.js';
-import type { PlayerEntity } from './PlayerEntity.js';
+import type { Entity } from './Entity.js';
 import type { Camera } from './Camera.js';
 import type { Renderer } from './Renderer.js';
 import type { Level } from './Level.js';
@@ -14,7 +14,7 @@ export class GameResources {
     // Core game objects
   private _models: Model[] = [];
   private _modelNames: string[] = [];
-  private _player: PlayerEntity | null = null;
+  private _player: Entity | null = null;
   private _camera: Camera | null = null;
   private _renderer: Renderer | null = null;
   private _level: Level | null = null;
@@ -71,11 +71,11 @@ export class GameResources {
   get modelsLoaded(): boolean {
     return this._modelsLoaded;
   }  // Core game objects
-  setPlayer(player: PlayerEntity): void {
+  setPlayer(player: Entity): void {
     this._player = player;
   }
 
-  get player(): PlayerEntity {
+  get player(): Entity {
     if (!this._player) {
       throw new Error('Player not initialized - call setPlayer() first');
     }

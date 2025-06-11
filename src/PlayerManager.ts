@@ -1,7 +1,7 @@
 import { PlayerController, LocalPlayerController, RemotePlayerController } from './PlayerController';
-import { PlayerEntity } from './PlayerEntity';
 import { Entity } from './Entity';
 import { Camera } from './Camera';
+import { createPlayer } from './EntityFactory';
 
 /**
  * Manages all player controllers and their associated entities
@@ -22,7 +22,7 @@ export class PlayerManager {
   
   /**
    * Create the local player controller and entity
-   */  createLocalPlayer(playerId: string): { controller: LocalPlayerController, entity: PlayerEntity } {
+   */  createLocalPlayer(playerId: string): { controller: LocalPlayerController, entity: Entity } {
     if (this.localController) {
       console.warn('Local player already exists');
       return {
@@ -33,8 +33,8 @@ export class PlayerManager {
     
     // Create local controller
     this.localController = new LocalPlayerController(playerId);
-    this.controllers.set(playerId, this.localController);    // Create local player entity
-    const entity = PlayerEntity.createPlayerEntity(playerId, true);
+    this.controllers.set(playerId, this.localController);    // Create local player entity using factory
+    const entity = createPlayer(true, playerId);
       // Connect controller to entity
     this.localController.setPlayerEntity(entity);
     
@@ -45,7 +45,7 @@ export class PlayerManager {
   
   /**
    * Create a remote player controller and entity
-   */  createRemotePlayer(playerId: string): { controller: RemotePlayerController, entity: PlayerEntity } {
+   */  createRemotePlayer(playerId: string): { controller: RemotePlayerController, entity: Entity } {
     if (this.controllers.has(playerId)) {
       console.warn(`Remote player ${playerId} already exists`);
       const existing = this.controllers.get(playerId)!;
@@ -57,9 +57,8 @@ export class PlayerManager {
     
     // Create remote controller
     const controller = new RemotePlayerController(playerId);
-    this.controllers.set(playerId, controller);
-      // Create remote player entity
-    const entity = PlayerEntity.createPlayerEntity(playerId, false);
+    this.controllers.set(playerId, controller);      // Create remote player entity using factory
+      const entity = createPlayer(false, playerId);
       // Connect controller to entity
     controller.setPlayerEntity(entity);
     
@@ -113,7 +112,7 @@ export class PlayerManager {
   /**
    * Get the local player entity
    */
-  getLocalPlayerEntity(): PlayerEntity | null {
+  getLocalPlayerEntity(): Entity | null {
     return this.localController?.getPlayerEntity() || null;
   }
   
@@ -153,10 +152,10 @@ export class PlayerManager {
   /**
    * Get all player entities (for serialization)
    */
-  getAllPlayerEntities(): PlayerEntity[] {
+  getAllPlayerEntities(): Entity[] {
     return Array.from(this.controllers.values())
       .map(c => c.getPlayerEntity())
-      .filter(e => e !== null) as PlayerEntity[];
+      .filter(e => e !== null) as Entity[];
   }
   
   /**
@@ -169,9 +168,9 @@ export class PlayerManager {
       remoteControllers: this.getRemoteControllers().map(c => c.getPlayerId()),
       playerEntities: this.getAllPlayerEntities().map(e => ({
         id: e.id,
-        networkId: e.networkPlayerId,
-        name: e.playerName,
-        isNetwork: e.isNetworkEntity      }))
+        networkId: e.player?.networkPlayerId,
+        name: e.player?.playerName,
+        isNetwork: e.network !== null      }))
     };
   }
 
@@ -185,14 +184,14 @@ export class PlayerManager {
     }
 
     // Find existing player entity
-    const entity = PlayerEntity.findByNetworkId(playerId);
+    const entity = Entity.findPlayerByNetworkId(playerId);
     if (!entity) {
       console.warn(`Cannot update unknown remote player entity: ${playerId}`);
       return;
     }
 
     // Only update if this is a remote entity (not local)
-    if (!entity.isNetworkEntity) {
+    if (!entity.network) {
       console.log(`Ignoring update for local player entity: ${playerId}`);
       return;
     }

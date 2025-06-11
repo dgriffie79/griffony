@@ -1,7 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import { Entity, PhysicsLayer } from './Entity.js';
 import { Camera } from './Camera.js';
-import { PlayerEntity } from './PlayerEntity.js';
+import { createPlayer } from './EntityFactory.js';
 import { Model } from './Model.js';
 import { Tileset } from './Tileset.js';
 import { Level } from './Level.js';
@@ -89,7 +89,7 @@ const models: Model[] = modelNames.map((model) => new Model(`/models/${model}.vo
 const tileset = new Tileset('/tilesets/dcss_tiles.tsj');
 const level = new Level('/maps/test.tmj');
 // Player will be created in main() after modelNames is initialized
-let player: PlayerEntity; // Declare but don't initialize yet
+let player: Entity; // Declare but don't initialize yet
 const renderer = new Renderer();
 const net = new Net();
 const camera = new Camera();
@@ -103,7 +103,7 @@ declare global {
 	var modelNames: string[];
 	var tileset: Tileset;
 	var level: Level;
-	var player: PlayerEntity;
+	var player: Entity;
 	var renderer: Renderer;
 	var net: Net;
 	var camera: Camera;
@@ -726,7 +726,7 @@ function onKeydown(event: KeyboardEvent): void {
 			(globalThis as any).godMode = godMode;
 			break;
 		} case settings.keybinds.respawn: {
-			player.respawn();
+			player.player?.respawn();
 			break;
 		} case settings.keybinds.toggleMesh: {
 			useGreedyMesh = !useGreedyMesh; settings.useGreedyMesh = useGreedyMesh;
@@ -757,7 +757,8 @@ function onKeydown(event: KeyboardEvent): void {
 				toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
 			} else {
 				toggleWeaponAdjuster();
-			} break;
+			}
+			break;
 		}
 	}
 }
@@ -834,27 +835,32 @@ function processInput(elapsed: number): void {
 	// Mouse rotation
 	const dx = mouseMoveX;
 	const dy = settings.invertMouse ? -mouseMoveY : mouseMoveY;
+	const playerHead = player.player?.getHead();
 
 	quat.rotateZ(player.localRotation, player.localRotation, -dx * elapsed / 1000);
-	quat.rotateX(player.head.localRotation, player.head.localRotation, dy * elapsed / 1000);
+	if (playerHead) {
+		quat.rotateX(playerHead.localRotation, playerHead.localRotation, dy * elapsed / 1000);
 
-	// Clamp head rotation - extract pitch angle properly
-	const tempAxis = vec3.create();
-	const angle = quat.getAxisAngle(tempAxis, player.head.localRotation);
-	
-	// Check if rotation is around X-axis (pitch) and clamp it
-	if (Math.abs(tempAxis[0]) > 0.9) { // X-axis rotation
-		const pitch = tempAxis[0] > 0 ? angle : -angle;
-		const maxPitch = Math.PI / 2 - 0.01; // Slightly less than 90 degrees to prevent gimbal lock
+		// Clamp head rotation - extract pitch angle properly
+		const tempAxis = vec3.create();
+		const angle = quat.getAxisAngle(tempAxis, playerHead.localRotation);
 		
-		if (Math.abs(pitch) > maxPitch) {
-			const clampedPitch = Math.sign(pitch) * maxPitch;
-			quat.setAxisAngle(player.head.localRotation, vec3.fromValues(1, 0, 0), clampedPitch);
+		// Check if rotation is around X-axis (pitch) and clamp it
+		if (Math.abs(tempAxis[0]) > 0.9) { // X-axis rotation
+			const pitch = tempAxis[0] > 0 ? angle : -angle;
+			const maxPitch = Math.PI / 2 - 0.01; // Slightly less than 90 degrees to prevent gimbal lock
+			
+			if (Math.abs(pitch) > maxPitch) {
+				const clampedPitch = Math.sign(pitch) * maxPitch;
+				quat.setAxisAngle(playerHead.localRotation, vec3.fromValues(1, 0, 0), clampedPitch);
+			}
 		}
 	}
 
 	player.dirty = true;
-	player.head.dirty = true;
+	if (playerHead) {
+		playerHead.dirty = true;
+	}
 
 	mouseMoveX = 0;
 	mouseMoveY = 0;
@@ -897,10 +903,11 @@ function saveGameState(): void {
 	if (!player) {
 		return;
 	}
+	const playerHead = player.player?.getHead();
 	const gameState: GameState = {
 		playerPos: Array.from(player.localPosition) as [number, number, number],
 		playerOrientation: Array.from(player.localRotation) as [number, number, number, number],
-		playerHeadRotation: Array.from(player.head.localRotation) as [number, number, number, number],
+		playerHeadRotation: playerHead ? Array.from(playerHead.localRotation) as [number, number, number, number] : [0, 0, 0, 1],
 		showingMenu,
 		godMode
 	};
@@ -1121,13 +1128,13 @@ async function main(): Promise<void> {
 	} else {
 		// Fallback: create player directly if MultiplayerManager fails
 		const playerId = multiplayerManager.playerId || 'local_player';
-		player = new PlayerEntity(1, playerId, true);
+		player = createPlayer(true, playerId);
 		globalThis.player = player;
 		gameResources.setPlayer(player);
 	}
 
 	// Set camera to follow the local player's head now that player exists
-	camera.entity = player.head;
+	camera.entity = player.player?.getHead();
 
 	// Load saved game state now that player exists
 	const savedState = localStorage.getItem('gameState');
@@ -1136,7 +1143,10 @@ async function main(): Promise<void> {
 			const state: GameState = JSON.parse(savedState);
 			player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2]);
 			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);
-			player.head.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
+			const playerHead = player.player?.getHead();
+			if (playerHead) {
+				playerHead.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
+			}
 			godMode = state.godMode;
 			// Make sure godMode is synchronized with global scope
 			(globalThis as any).godMode = godMode;

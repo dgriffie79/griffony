@@ -7,6 +7,7 @@ import { PhysicsComponent } from './components/PhysicsComponent';
 import { NetworkComponent } from './components/NetworkComponent';
 import { HealthComponent } from './components/HealthComponent';
 import { WeaponComponent } from './components/WeaponComponent';
+import { PlayerComponent } from './components/PlayerComponent';
 
 // Re-export component types and enums for backward compatibility
 export { PhysicsLayer } from './components/PhysicsComponent';
@@ -43,6 +44,7 @@ export class Entity {
   network: NetworkComponent | null = null;
   health: HealthComponent | null = null;
   weapon: WeaponComponent | null = null;
+  player: PlayerComponent | null = null;
 
   // Legacy properties for backward compatibility during transition
   // These will be removed once all systems are updated
@@ -142,9 +144,17 @@ export class Entity {
   }
 
   /**
+   * Add a player component to this entity
+   */
+  addPlayer(networkId: string = '', isLocal: boolean = false): PlayerComponent {
+    this.player = new PlayerComponent(this, networkId, isLocal);
+    return this.player;
+  }
+
+  /**
    * Remove a component from this entity
    */
-  removeComponent(componentType: 'render' | 'physics' | 'network' | 'health' | 'weapon'): void {
+  removeComponent(componentType: 'render' | 'physics' | 'network' | 'health' | 'weapon' | 'player'): void {
     const component = this[componentType];
     if (component) {
       component.destroy();
@@ -195,6 +205,7 @@ export class Entity {
     this.network?.update(deltaTime);
     this.health?.update(deltaTime);
     this.weapon?.update(deltaTime);
+    this.player?.update(deltaTime);
   }
 
   /**
@@ -236,11 +247,10 @@ export class Entity {
   }
 
   /**
-   * Check if this entity is a player (has specific components)
+   * Check if this entity is a player (has PlayerComponent)
    */
   isPlayer(): boolean {
-    // Duck typing - if it walks like a player and talks like a player...
-    return 'head' in this; // PlayerEntity has a head property
+    return this.player !== null;
   }
 
   // Legacy network methods for backward compatibility
@@ -472,12 +482,19 @@ export class Entity {
         console.warn('Error destroying weapon component:', error);
       }
       
+      try {
+        entity.player?.destroy();
+      } catch (error) {
+        console.warn('Error destroying player component:', error);
+      }
+      
       // Clear component references
       entity.render = null;
       entity.physics = null;
       entity.network = null;
       entity.health = null;
       entity.weapon = null;
+      entity.player = null;
     }
     
     Entity.all.length = 0;
@@ -519,7 +536,7 @@ export class Entity {
   /**
    * Find all entities with a specific component
    */
-  static findWithComponent(componentType: 'render' | 'physics' | 'network' | 'health' | 'weapon'): Entity[] {
+  static findWithComponent(componentType: 'render' | 'physics' | 'network' | 'health' | 'weapon' | 'player'): Entity[] {
     return Entity.all.filter(entity => entity[componentType] !== null);
   }
 
@@ -542,5 +559,40 @@ export class Entity {
    */
   static findNetworkEntities(): Entity[] {
     return Entity.all.filter(entity => entity.network !== null);
+  }
+
+  /**
+   * Find all player entities
+   */
+  static findAllPlayerEntities(): Entity[] {
+    return Entity.all.filter(entity => entity.player !== null);
+  }
+
+  /**
+   * Find the local player entity
+   */
+  static findLocalPlayerEntity(): Entity | undefined {
+    return Entity.all.find(entity => 
+      entity.player !== null && entity.player.isLocal()
+    );
+  }
+
+  /**
+   * Find a player entity by network ID
+   */
+  static findPlayerByNetworkId(networkId: string): Entity | undefined {
+    return Entity.all.find(entity => 
+      entity.player !== null && 
+      entity.player.networkPlayerId === networkId
+    );
+  }
+
+  /**
+   * Find all remote player entities
+   */
+  static findRemotePlayerEntities(): Entity[] {
+    return Entity.all.filter(entity => 
+      entity.player !== null && entity.player.isRemote()
+    );
   }
 }
