@@ -90,7 +90,7 @@ export class Model {
     // Extract palette from the data
     this.extractPalette(dataView, numVoxels);
 
-    // Register with renderer if available
+    // Register with renderer if available (after all data is processed)
     const renderer = (globalThis as any).renderer;
     if (renderer) {
       renderer.registerModel(this);

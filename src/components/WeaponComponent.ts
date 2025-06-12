@@ -55,7 +55,7 @@ export class WeaponComponent extends Component {
   weaponModel: Model | null = null;
   
   // First-person weapon display entity (child of player's head)
-  fpWeaponEntity: any | null = null;
+  fpWeaponEntity: import('../Entity').Entity | null = null;
   
   // Animation state
   isAttacking: boolean = false;
@@ -70,45 +70,65 @@ export class WeaponComponent extends Component {
   private fpAttackStartRotation = quat.create();
   private fpAttackEndRotation = quat.create();
 
-  constructor(entity: any) {
+  constructor(entity: import('../Entity').Entity) {
     super(entity);
-    // Defer weapon setup to avoid circular dependency issues
-    setTimeout(() => this.setupFirstPersonWeapon(), 0);
+    // First-person weapon setup will be called manually after player initialization
   }
 
   /**
    * Initialize the first-person weapon display
    */
-  private setupFirstPersonWeapon(): void {
-    // Only create FP weapon for local players with heads
-    if (!('head' in this.entity)) return;
+  public setupFirstPersonWeapon(): void {
+    console.log('=== FP Weapon Setup Debug ===');
+    console.log('Entity has player component:', !!this.entity.player);
+    console.log('Entity type:', this.entity.constructor.name);
     
-    const playerHead = (this.entity as any).head;
-    if (!playerHead) return;
+    // Only create FP weapon for entities with player components that have heads
+    if (!this.entity.player) {
+      console.log('❌ Entity does not have player component');
+      return;
+    }
+    
+    const playerHead = this.entity.player.head;
+    console.log('Player head exists:', !!playerHead);
+    if (!playerHead) {
+      console.log('❌ Player head is null');
+      return;
+    }
 
     // Create a child entity for the first-person weapon display
     // Use globalThis to avoid circular dependency
     const EntityClass = (globalThis as any).Entity;
+    console.log('Entity class available:', !!EntityClass);
     if (!EntityClass) {
-      console.warn('Entity class not available on globalThis yet');
+      console.warn('❌ Entity class not available on globalThis yet');
       return;
     }
     
-    this.fpWeaponEntity = new EntityClass();
-    this.fpWeaponEntity.parent = playerHead;
-    this.fpWeaponEntity.addRender(-1); // Start with no model
+    if (EntityClass && playerHead) {
+      this.fpWeaponEntity = new EntityClass();
+      console.log('✅ Created fpWeaponEntity:', !!this.fpWeaponEntity);
+      if (this.fpWeaponEntity) {
+        this.fpWeaponEntity.parent = playerHead;
+        this.fpWeaponEntity.addRender(-1); // Start with no model
+        console.log('✅ FP weapon entity configured with render component');
+      } else {
+        console.log('❌ Failed to create fpWeaponEntity');
+      }
+    }
     
     // Set initial position and rotation
     this.applyWeaponPositionConfig('DEFAULT');
-    
-    // Add as child to player's head
-    playerHead.children.push(this.fpWeaponEntity);
-    
-    // Remove from Entity.all since this is managed by the WeaponComponent
-    // and shouldn't be cleaned up by the global entity cleanup
-    const entityIndex = EntityClass.all.indexOf(this.fpWeaponEntity);
-    if (entityIndex !== -1) {
-      EntityClass.all.splice(entityIndex, 1);
+      // Add as child to player's head
+    if (this.fpWeaponEntity) {
+      playerHead.children.push(this.fpWeaponEntity);
+      
+      // Remove from Entity.all since this is managed by the WeaponComponent
+      // and shouldn't be cleaned up by the global entity cleanup
+      const entityIndex = EntityClass.all.indexOf(this.fpWeaponEntity);
+      if (entityIndex !== -1) {
+        EntityClass.all.splice(entityIndex, 1);
+      }
     }
   }
 

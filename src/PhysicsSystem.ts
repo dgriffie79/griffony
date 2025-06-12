@@ -97,13 +97,16 @@ export class PhysicsSystem {
         }
         // Position entity slightly above floor to prevent penetration
         if (floorZ >= 0) {
-          entity.localPosition[2] = floorZ + entity.radius + 0.001;
+          const radius = entity.physics?.radius || 0.5;
+          entity.localPosition[2] = floorZ + radius + 0.001;
         }
         entity.dirty = true;
         // Update worldPosition
         entity.updateTransforms(null);
         // Zero vertical velocity after snapping
-        entity.vel[2] = 0;
+        if (entity.physics) {
+          entity.physics.velocity[2] = 0;
+        }
       }
     }
     // Final transforms pass to apply snapped positions
@@ -168,7 +171,7 @@ export class PhysicsSystem {
     this.applyVelocity(entity, dt);
 
     // Handle collisions
-    if (entity.collision) {
+    if (entity.physics?.hasCollision) {
       const physicsConfig = this.config.getPhysicsConfig();
 
       // Entity-entity collisions
@@ -190,7 +193,7 @@ export class PhysicsSystem {
     const physicsConfig = this.config.getPhysicsConfig();
     // Skip gravity for godMode players - 'head' property identifies a player since we can't use instanceof
     const isPlayer = 'head' in entity;
-    if (entity.gravity && !(isPlayer && (globalThis as any).godMode)) {
+    if (entity.physics?.hasGravity && !(isPlayer && (globalThis as any).godMode)) {
       // CRITICAL: Only apply gravity when level is fully loaded to prevent race condition      // During level loading, isEntityOnGround returns false, causing entities to accumulate downward velocity
       if (!this.level || !this.level.isFullyLoaded) {
         if (this.debugEnabled && isPlayer) {
@@ -199,12 +202,12 @@ export class PhysicsSystem {
         return; // Skip gravity application until terrain collision data is ready
       }
 
-      const onGround = this.isEntityOnGround(entity); if (!onGround) {
-        const oldVel = entity.vel[2];
-        entity.vel[2] -= physicsConfig.gravity * dt;
-      } else if (entity.vel[2] < 0) {
+      const onGround = this.isEntityOnGround(entity);      if (!onGround && entity.physics) {
+        const oldVel = entity.physics.velocity[2];
+        entity.physics.velocity[2] -= physicsConfig.gravity * dt;
+      } else if (entity.physics && entity.physics.velocity[2] < 0) {
         // Stop falling when on ground
-        entity.vel[2] = 0;
+        entity.physics.velocity[2] = 0;
       }
     }
   }
@@ -213,10 +216,13 @@ export class PhysicsSystem {
    */
   private applyFriction(entity: Entity, dt: number): void {
     const physicsConfig = this.config.getPhysicsConfig();
-    // Skip if no velocity
-    const speed = vec3.length(entity.vel);
+    
+    // Skip if no physics component or velocity
+    if (!entity.physics) return;
+    
+    const speed = vec3.length(entity.physics.velocity);
     if (speed <= 0.001) {
-      vec3.zero(entity.vel);
+      vec3.zero(entity.physics.velocity);
       return;
     }
 
@@ -232,14 +238,14 @@ export class PhysicsSystem {
     // Apply resistance (with limits to avoid oscillation)
     if (resistanceStrength >= 1) {
       // Full stop if resistance would reverse direction
-      vec3.zero(entity.vel);
+      vec3.zero(entity.physics.velocity);
     } else {
       // Apply percentage-based velocity reduction
-      vec3.scale(entity.vel, entity.vel, 1 - resistanceStrength);
+      vec3.scale(entity.physics.velocity, entity.physics.velocity, 1 - resistanceStrength);
 
       // Zero out very small velocities to avoid jittering
-      if (vec3.length(entity.vel) < 0.01) {
-        vec3.zero(entity.vel);
+      if (vec3.length(entity.physics.velocity) < 0.01) {
+        vec3.zero(entity.physics.velocity);
       }
     }
   }
@@ -248,10 +254,13 @@ export class PhysicsSystem {
    */
   private constrainVelocity(entity: Entity): void {
     const physicsConfig = this.config.getPhysicsConfig();
-    const speed = vec3.length(entity.vel);
+    
+    if (!entity.physics) return;
+    
+    const speed = vec3.length(entity.physics.velocity);
     if (speed > physicsConfig.maxVelocity) {
-      vec3.normalize(entity.vel, entity.vel);
-      vec3.scale(entity.vel, entity.vel, physicsConfig.maxVelocity);
+      vec3.normalize(entity.physics.velocity, entity.physics.velocity);
+      vec3.scale(entity.physics.velocity, entity.physics.velocity, physicsConfig.maxVelocity);
     }
   }
 
@@ -259,9 +268,11 @@ export class PhysicsSystem {
    * Apply velocity to position
    */
   private applyVelocity(entity: Entity, dt: number): void {
-    const speed = vec3.length(entity.vel);
+    if (!entity.physics) return;
+    
+    const speed = vec3.length(entity.physics.velocity);
     if (speed > 0) {
-      vec3.scaleAndAdd(entity.localPosition, entity.localPosition, entity.vel, dt);
+      vec3.scaleAndAdd(entity.localPosition, entity.localPosition, entity.physics.velocity, dt);
       entity.dirty = true;
     }
   }  /**
@@ -280,7 +291,7 @@ export class PhysicsSystem {
         entity === otherEntity ||
         otherEntity.parent === entity ||
         entity.parent === otherEntity ||
-        !otherEntity.collision ||
+        !otherEntity.physics?.hasCollision ||
         otherEntity.spawn ||
         !entity.canCollideWith(otherEntity) ||
         // Skip collision if other entity is a player in godMode
@@ -304,7 +315,7 @@ export class PhysicsSystem {
 
       // Use distance-squared comparison to avoid expensive sqrt operation
       const distanceSquared = vec3.squaredLength(displacement);
-      const minDistance = entity.radius + otherEntity.radius;
+      const minDistance = (entity.physics?.radius || 0) + (otherEntity.physics?.radius || 0);
       const minDistanceSquared = minDistance * minDistance;
 
       // Check for collision using squared distance
@@ -336,7 +347,7 @@ export class PhysicsSystem {
     const normal = vec3.normalize(vec3.create(), displacement);
 
     // Resolve positions - if one entity is larger, it pushes the smaller one more
-    if (entity.radius >= otherEntity.radius) {
+    if ((entity.physics?.radius || 0) >= (otherEntity.physics?.radius || 0)) {
       // Push the other entity away
       vec3.scaleAndAdd(otherEntity.localPosition, otherEntity.localPosition, normal, penetration);
       otherEntity.dirty = true;
@@ -351,10 +362,10 @@ export class PhysicsSystem {
     let impulse = 0;    // Apply bounce effect if configured
     if (physicsConfig.collisionBounce > 0) {
       // Only apply bounce if entities have velocity
-      if (entity.vel && otherEntity.vel) {
+      if (entity.physics?.velocity && otherEntity.physics?.velocity) {
         // Calculate relative velocity along normal
-        const v1 = vec3.dot(entity.vel, normal);
-        const v2 = vec3.dot(otherEntity.vel, normal);
+        const v1 = vec3.dot(entity.physics.velocity, normal);
+        const v2 = vec3.dot(otherEntity.physics.velocity, normal);
         relativeVelocity = v1 - v2;
 
         // Skip bounce if objects are already moving away from each other
@@ -365,14 +376,14 @@ export class PhysicsSystem {
         impulse = (1 + bounce) * relativeVelocity / 2; // Simplified for equal mass
 
         // Apply impulse in opposite directions
-        vec3.scaleAndAdd(entity.vel, entity.vel, normal, -impulse);
-        vec3.scaleAndAdd(otherEntity.vel, otherEntity.vel, normal, impulse);
+        vec3.scaleAndAdd(entity.physics.velocity, entity.physics.velocity, normal, -impulse);
+        vec3.scaleAndAdd(otherEntity.physics.velocity, otherEntity.physics.velocity, normal, impulse);
       }
     }
 
     // Dispatch collision events for both entities
     const collisionPosition = vec3.create();
-    vec3.scaleAndAdd(collisionPosition, entity.worldPosition, normal, -entity.radius);
+    vec3.scaleAndAdd(collisionPosition, entity.worldPosition, normal, -(entity.physics?.radius || 0));
 
     // Event for first entity
     this.dispatchCollisionEvent({
@@ -381,7 +392,7 @@ export class PhysicsSystem {
       otherEntity: otherEntity,
       position: vec3.clone(collisionPosition),
       normal: vec3.clone(normal).map(v => -v) as vec3, // Flip normal for first entity
-      velocity: vec3.clone(entity.vel),
+      velocity: vec3.clone(entity.physics?.velocity || vec3.create()),
       force: Math.abs(relativeVelocity)
     });
 
@@ -392,7 +403,7 @@ export class PhysicsSystem {
       otherEntity: entity,
       position: vec3.clone(collisionPosition),
       normal: vec3.clone(normal),
-      velocity: vec3.clone(otherEntity.vel),
+      velocity: vec3.clone(otherEntity.physics?.velocity || vec3.create()),
       force: Math.abs(relativeVelocity)
     });
   }  /**
@@ -437,8 +448,10 @@ export class PhysicsSystem {
    * @param entity The entity to check for X-axis collisions
    */
   private handleXAxisTerrainCollisions(entity: Entity): void {
-    const r = entity.radius;
-    const h = entity.height;
+    if (!entity.physics) return;
+    
+    const r = entity.physics.radius;
+    const h = entity.physics.height;
     const pos = entity.localPosition;
 
     // X-axis collision (left)
@@ -457,8 +470,10 @@ export class PhysicsSystem {
    * @param entity The entity to check for Y-axis collisions
    */
   private handleYAxisTerrainCollisions(entity: Entity): void {
-    const r = entity.radius;
-    const h = entity.height;
+    if (!entity.physics) return;
+    
+    const r = entity.physics.radius;
+    const h = entity.physics.height;
     const pos = entity.localPosition;
 
     // Y-axis collision (back)
@@ -477,13 +492,15 @@ export class PhysicsSystem {
    * @param entity The entity to check for Z-axis collisions
    */
   private handleZAxisTerrainCollisions(entity: Entity): void {
-    const h = entity.height;
+    if (!entity.physics) return;
+    
+    const h = entity.physics.height;
     const pos = entity.localPosition;
 
     // Z-axis collision (bottom/floor)
     if (this.level!.volume.getVoxelFloor(pos[0], pos[1], pos[2])) {
-      const oldVelocity = vec3.clone(entity.vel);
-      const impactForce = Math.abs(entity.vel[2]);
+      const oldVelocity = vec3.clone(entity.physics.velocity);
+      const impactForce = Math.abs(entity.physics.velocity[2]);
       const collisionPoint = vec3.fromValues(pos[0], pos[1], Math.floor(pos[2]));
 
       pos[2] = Math.ceil(pos[2]);
@@ -529,21 +546,23 @@ export class PhysicsSystem {
    * @param direction The collision direction for determining velocity direction
    */
   private applyCollisionBounce(entity: Entity, axis: number, direction: string): void {
+    if (!entity.physics) return;
+    
     const physicsConfig = this.config.getPhysicsConfig();
-    const currentVelocity = entity.vel[axis];
+    const currentVelocity = entity.physics.velocity[axis];
 
     // Determine if we should apply bounce based on movement direction
     const shouldBounce = physicsConfig.collisionBounce > 0 && this.shouldApplyBounceForDirection(currentVelocity, direction);
 
     if (shouldBounce) {
-      entity.vel[axis] = -currentVelocity * physicsConfig.collisionBounce;
+      entity.physics.velocity[axis] = -currentVelocity * physicsConfig.collisionBounce;
 
       // Stop very small bounces (for Z-axis specifically)
-      if (axis === 2 && Math.abs(entity.vel[axis]) < 0.1) {
-        entity.vel[axis] = 0;
+      if (axis === 2 && Math.abs(entity.physics.velocity[axis]) < 0.1) {
+        entity.physics.velocity[axis] = 0;
       }
     } else {
-      entity.vel[axis] = 0;
+      entity.physics.velocity[axis] = 0;
     }
   }
 
@@ -582,8 +601,10 @@ export class PhysicsSystem {
    */
   jump(entity: Entity): boolean {
     const physicsConfig = this.config.getPhysicsConfig();
-    if (entity.gravity && this.isEntityOnGround(entity)) {
-      entity.vel[2] += physicsConfig.jumpForce;
+    if (entity.physics?.hasGravity && this.isEntityOnGround(entity)) {
+      if (entity.physics) {
+        entity.physics.velocity[2] += physicsConfig.jumpForce;
+      }
       return true;
     }
     return false;
@@ -593,7 +614,8 @@ export class PhysicsSystem {
    * Apply movement input to entity velocity
    */
   applyMovement(entity: Entity, direction: vec3, speed: number): void {
-    vec3.scaleAndAdd(entity.vel, entity.vel, direction, speed);
+    if (!entity.physics) return;
+    vec3.scaleAndAdd(entity.physics.velocity, entity.physics.velocity, direction, speed);
   }
   /**
    * Enable or disable physics debugging
@@ -615,16 +637,16 @@ export class PhysicsSystem {
    * Get total count of entities using physics
    */
   getPhysicsEntityCount(): number {
-    return Entity.all.filter(e => e.gravity || e.collision).length;
+    return Entity.all.filter(e => e.physics?.hasGravity || e.physics?.hasCollision).length;
   }
 
   /**
    * Get a debug status report of the physics system
    */
   getDebugStatus(): string {
-    const physicsEntities = Entity.all.filter(e => e.gravity || e.collision);
-    const collisionEntities = Entity.all.filter(e => e.collision);
-    const gravityEntities = Entity.all.filter(e => e.gravity);
+    const physicsEntities = Entity.all.filter(e => e.physics?.hasGravity || e.physics?.hasCollision);
+    const collisionEntities = Entity.all.filter(e => e.physics?.hasCollision);
+    const gravityEntities = Entity.all.filter(e => e.physics?.hasGravity);
 
     return `Physics: ${physicsEntities.length} entities | ` +
       `Collision: ${collisionEntities.length} | ` +
@@ -656,28 +678,39 @@ export class PhysicsSystem {
     layer?: PhysicsLayer,
     collidesWith?: PhysicsLayer
   }): void {
-    if (options.hasGravity !== undefined) {
-      entity.gravity = options.hasGravity;
-    }
+    if (!entity.physics) {
+      entity.addPhysics({
+        hasGravity: options.hasGravity || false,
+        hasCollision: options.hasCollision || false,
+        radius: options.radius || 0.5,
+        height: options.height || 1.0,
+        layer: options.layer || PhysicsLayer.Default,
+        collidesWith: options.collidesWith || PhysicsLayer.All
+      });
+    } else {
+      if (options.hasGravity !== undefined) {
+        entity.physics.hasGravity = options.hasGravity;
+      }
 
-    if (options.hasCollision !== undefined) {
-      entity.collision = options.hasCollision;
-    }
+      if (options.hasCollision !== undefined) {
+        entity.physics.hasCollision = options.hasCollision;
+      }
 
-    if (options.radius !== undefined) {
-      entity.radius = options.radius;
-    }
+      if (options.radius !== undefined) {
+        entity.physics.radius = options.radius;
+      }
 
-    if (options.height !== undefined) {
-      entity.height = options.height;
-    }
+      if (options.height !== undefined) {
+        entity.physics.height = options.height;
+      }
 
-    if (options.layer !== undefined) {
-      entity.physicsLayer = options.layer;
-    }
+      if (options.layer !== undefined) {
+        entity.physics.layer = options.layer;
+      }
 
-    if (options.collidesWith !== undefined) {
-      entity.collidesWith = options.collidesWith;
+      if (options.collidesWith !== undefined) {
+        entity.physics.collidesWith = options.collidesWith;
+      }
     }
 
     entity.dirty = true;
@@ -687,7 +720,8 @@ export class PhysicsSystem {
    * Set the velocity of an entity directly
    */
   setVelocity(entity: Entity, x: number, y: number, z: number): void {
-    vec3.set(entity.vel, x, y, z);
+    if (!entity.physics) return;
+    vec3.set(entity.physics.velocity, x, y, z);
     this.constrainVelocity(entity);
   }
 
@@ -695,7 +729,8 @@ export class PhysicsSystem {
    * Add velocity to an entity (useful for impulses, explosions, etc.)
    */
   addVelocity(entity: Entity, x: number, y: number, z: number): void {
-    vec3.add(entity.vel, entity.vel, vec3.fromValues(x, y, z));
+    if (!entity.physics) return;
+    vec3.add(entity.physics.velocity, entity.physics.velocity, vec3.fromValues(x, y, z));
     this.constrainVelocity(entity);
   }
 
@@ -725,8 +760,8 @@ export class PhysicsSystem {
     const entities = this.findEntitiesInRadius(origin, radius);
 
     for (const entity of entities) {
-      // Skip entities without velocity
-      if (!('vel' in entity)) continue;
+      // Skip entities without physics
+      if (!entity.physics) continue;
 
       // Calculate direction away from origin
       const direction = vec3.sub(vec3.create(), entity.worldPosition, origin);
@@ -753,7 +788,7 @@ export class PhysicsSystem {
       }
 
       // Apply force as velocity change
-      vec3.scaleAndAdd(entity.vel, entity.vel, direction, strength);
+      vec3.scaleAndAdd(entity.physics.velocity, entity.physics.velocity, direction, strength);
 
       // Ensure velocity is within limits
       this.constrainVelocity(entity);
@@ -878,7 +913,7 @@ export class PhysicsSystem {
       const entitiesAlongRay = this.getEntitiesAlongRay(origin, direction, maxDistance);
 
       for (const entity of entitiesAlongRay) {
-        if (!entity.collision || entity.parent || entity === ignoreEntity) continue;
+        if (!entity.physics?.hasCollision || entity.parent || entity === ignoreEntity) continue;
         if ('head' in entity && (globalThis as any).godMode) continue;
 
         const hit = this.raycastEntity(entity, origin, direction, maxDistance);
@@ -889,7 +924,7 @@ export class PhysicsSystem {
     } else {
       // Fallback to checking all entities
       for (const entity of Entity.all) {
-        if (!entity.collision || entity.parent || entity === ignoreEntity) continue;
+        if (!entity.physics?.hasCollision || entity.parent || entity === ignoreEntity) continue;
         if ('head' in entity && (globalThis as any).godMode) continue;
 
         const hit = this.raycastEntity(entity, origin, direction, maxDistance);
@@ -965,9 +1000,9 @@ export class PhysicsSystem {
     const distance = vec3.distance(projectionPoint, entity.worldPosition);
 
     // If distance is less than entity radius, we have a hit
-    if (distance <= entity.radius && projection < maxDistance) {
+    if (distance <= (entity.physics?.radius || 0.5) && projection < maxDistance) {
       // Calculate intersection point
-      const distanceToIntersection = projection - Math.sqrt(entity.radius * entity.radius - distance * distance);
+      const distanceToIntersection = projection - Math.sqrt((entity.physics?.radius || 0.5) * (entity.physics?.radius || 0.5) - distance * distance);
 
       // Skip if too far
       if (distanceToIntersection > maxDistance) {
@@ -1138,7 +1173,7 @@ export class PhysicsSystem {
     // This allows godMode players to pass through terrain and entities
     // 'head' property identifies a player since we can't use instanceof
     const isPlayer = 'head' in entity;
-    if (!entity.collision || (isPlayer && (globalThis as any).godMode)) {
+    if (!entity.physics?.hasCollision || (isPlayer && (globalThis as any).godMode)) {
       vec3.add(entity.localPosition, entity.localPosition, displacement);
       entity.dirty = true;
       return displacement;
@@ -1173,7 +1208,7 @@ export class PhysicsSystem {
 
     // Add entities to grid cells based on their position
     for (const entity of Entity.all) {
-      if (!entity.collision || entity.parent) continue;
+      if (!entity.physics?.hasCollision || entity.parent) continue;
 
       const cellX = Math.floor(entity.worldPosition[0] / this.gridCellSize);
       const cellY = Math.floor(entity.worldPosition[1] / this.gridCellSize);
@@ -1190,7 +1225,7 @@ export class PhysicsSystem {
 
       // For large entities, only add to immediately adjacent cells
       // Optimized: reduce from 27 cells to 7 cells for large entities
-      if (entity.radius > this.gridCellSize / 2) {
+      if ((entity.physics?.radius || 0.5) > this.gridCellSize / 2) {
         const adjacentCells = [
           this.spatialHash(cellX + 1, cellY, cellZ),
           this.spatialHash(cellX - 1, cellY, cellZ),
@@ -1224,7 +1259,7 @@ export class PhysicsSystem {
    */
   private getPotentialCollisionCandidates(entity: Entity): Entity[] {
     if (!this.useGridOptimization) {
-      return Entity.all.filter(e => e !== entity && !e.parent && e.collision);
+      return Entity.all.filter(e => e !== entity && !e.parent && e.physics?.hasCollision);
     }
 
     // Get cell coordinates for this entity
@@ -1242,7 +1277,7 @@ export class PhysicsSystem {
           const cellEntities = this.spatialGrid.get(hashKey) || [];
 
           for (const other of cellEntities) {
-            if (other !== entity && other.collision && !other.parent) {
+            if (other !== entity && other.physics?.hasCollision && !other.parent) {
               candidates.add(other);
             }
           }
@@ -1341,7 +1376,7 @@ export class PhysicsSystem {
   limitActiveEntities(playerEntity?: Entity): void {
     const physicsConfig = this.config.getPhysicsConfig();
     const maxEntities = physicsConfig.maxEntities || 100;
-    const physicsEntities = Entity.all.filter(e => (e.gravity || e.collision) && !e.parent);
+    const physicsEntities = Entity.all.filter(e => (e.physics?.hasGravity || e.physics?.hasCollision) && !e.parent);
 
     if (physicsEntities.length <= maxEntities) {
       return; // No need to limit
@@ -1359,9 +1394,13 @@ export class PhysicsSystem {
     // Temporarily disable physics for entities beyond the limit
     for (let i = maxEntities; i < physicsEntities.length; i++) {
       const entity = physicsEntities[i];
-      entity._tempGravity = entity.gravity;
-      entity._tempCollision = entity.collision; entity.gravity = false;
-      entity.collision = false;
+      if (entity.physics) {
+        // Store original values and disable physics
+        (entity as any)._tempGravity = entity.physics.hasGravity;
+        (entity as any)._tempCollision = entity.physics.hasCollision;
+        entity.physics.hasGravity = false;
+        entity.physics.hasCollision = false;
+      }
     }
     if (this.debugEnabled) {
       console.log(`Limited active physics entities to ${maxEntities}/${physicsEntities.length}`);
@@ -1373,14 +1412,18 @@ export class PhysicsSystem {
    */
   resetEntityLimits(): void {
     for (const entity of Entity.all) {
-      if ('_tempGravity' in entity && entity._tempGravity !== undefined) {
-        entity.gravity = entity._tempGravity;
-        delete entity._tempGravity;
+      if ('_tempGravity' in entity && (entity as any)._tempGravity !== undefined) {
+        if (entity.physics) {
+          entity.physics.hasGravity = (entity as any)._tempGravity;
+        }
+        delete (entity as any)._tempGravity;
       }
 
-      if ('_tempCollision' in entity && entity._tempCollision !== undefined) {
-        entity.collision = entity._tempCollision;
-        delete entity._tempCollision;
+      if ('_tempCollision' in entity && (entity as any)._tempCollision !== undefined) {
+        if (entity.physics) {
+          entity.physics.hasCollision = (entity as any)._tempCollision;
+        }
+        delete (entity as any)._tempCollision;
       }
     }
   }

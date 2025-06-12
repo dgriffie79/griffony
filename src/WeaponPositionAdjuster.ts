@@ -234,7 +234,9 @@ export class WeaponPositionAdjuster {
     const player = globalThis.player;
     if (player && player.weapon) {
       // Access the applyWeaponPositionConfig method on the WeaponComponent
-      (player.weapon as any).applyWeaponPositionConfig(this.currentWeaponType);
+      if (player.weapon && 'applyWeaponPositionConfig' in player.weapon) {
+        (player.weapon as any).applyWeaponPositionConfig(this.currentWeaponType);
+      }
     }
   }
     /**

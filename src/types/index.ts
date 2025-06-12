@@ -84,7 +84,7 @@ export interface LayerData {
   objects?: ObjectData[];
 }
 
-export interface ObjectData {
+export interface ObjectData extends Record<string, unknown> {
   type: string;
   x: number;
   y: number;
@@ -93,7 +93,7 @@ export interface ObjectData {
 
 export interface PropertyData {
   name: string;
-  value: any;
+  value: string | number | boolean | null;
 }
 
 // Volume options
@@ -180,7 +180,7 @@ export interface NetworkMessage {
   priority: MessagePriority;
   timestamp: number;
   sequenceNumber: number;
-  data: any;
+  data: Record<string, unknown>;
 }
 
 // Connection Management Messages
@@ -198,7 +198,7 @@ export interface PlayerJoinMessage extends NetworkMessage {
 export interface PlayerLeaveMessage extends NetworkMessage {
   type: typeof MessageType.PLAYER_LEAVE;
   data: {
-    playerId: string;
+    networkId: string;
     reason?: string;
   };
 }
@@ -206,7 +206,7 @@ export interface PlayerLeaveMessage extends NetworkMessage {
 export interface GameStateRequestMessage extends NetworkMessage {
   type: typeof MessageType.GAME_STATE_REQUEST;
   data: {
-    playerId: string;
+    networkId: string;
   };
 }
 
@@ -236,14 +236,18 @@ export interface FullGameStateMessage extends NetworkMessage {
 export interface EntityUpdateMessage extends NetworkMessage {
   type: typeof MessageType.ENTITY_UPDATE;
   data: {
-    entityId: string;
-    networkPlayerId?: string; // For remote player identification
-    position: vec3;
-    rotation: quat;
-    velocity?: vec3;
-    health?: number;
-    timestamp: number;
+    entities: EntityUpdateData[];
   };
+}
+
+export interface EntityUpdateData {
+  id: number;
+  position: [number, number, number];
+  rotation: [number, number, number, number];
+  velocity?: [number, number, number];
+  modelId?: number;
+  frame?: number;
+  entityType: 'player' | 'entity';
 }
 
 export interface EntityCreateMessage extends NetworkMessage {
@@ -254,7 +258,7 @@ export interface EntityCreateMessage extends NetworkMessage {
     position: vec3;
     rotation: quat;
     ownerId?: string;
-    properties?: Record<string, any>;
+    properties?: Record<string, unknown>;
   };
 }
 
@@ -274,20 +278,48 @@ export interface EntityStateBatchMessage extends NetworkMessage {
   };
 }
 
-// Player Input & Actions
+// Player Input & Actions  
+export interface PlayerInput {
+  keys: {
+    forward: boolean;
+    backward: boolean;
+    left: boolean;
+    right: boolean;
+    jump: boolean;
+    crouch: boolean;
+    up: boolean;
+    down: boolean;
+  };
+  mouse: {
+    deltaX: number;
+    deltaY: number;
+  };
+}
+
+export interface PlayerUpdateData {
+  input?: PlayerInput;
+  timestamp: number;
+  position?: vec3;
+  rotation?: quat;
+  velocity?: vec3;
+  sequenceNumber?: number;
+  playerName?: string;
+}
+
 export interface PlayerInputMessage extends NetworkMessage {
   type: typeof MessageType.PLAYER_INPUT;
   data: {
-    playerId: string;
+    networkId: string;
     inputSequence: number;
-    timestamp: number;
-    keys: {
+    timestamp: number;    keys: {
       forward: boolean;
       backward: boolean;
       left: boolean;
       right: boolean;
       jump: boolean;
       crouch: boolean;
+      up: boolean;
+      down: boolean;
     };
     mouse: {
       deltaX: number;
@@ -299,7 +331,7 @@ export interface PlayerInputMessage extends NetworkMessage {
 export interface PlayerActionMessage extends NetworkMessage {
   type: typeof MessageType.PLAYER_ACTION;
   data: {
-    playerId: string;
+    networkId: string;
     action: 'attack' | 'block' | 'interact' | 'reload' | 'aim';
     timestamp: number;
     position?: vec3;
@@ -348,7 +380,7 @@ export interface CombatDamageMessage extends NetworkMessage {
 export interface WeaponSwitchMessage extends NetworkMessage {
   type: typeof MessageType.WEAPON_SWITCH;
   data: {
-    playerId: string;
+    networkId: string;
     weaponId: string;
     timestamp: number;
   };
@@ -357,7 +389,7 @@ export interface WeaponSwitchMessage extends NetworkMessage {
 export interface WeaponSwingMessage extends NetworkMessage {
   type: typeof MessageType.WEAPON_SWING;
   data: {
-    playerId: string;
+    networkId: string;
     weaponId: string;
     startPosition: vec3;
     endPosition: vec3;
@@ -430,7 +462,35 @@ export interface EntitySnapshot {
   gravity?: boolean;
   collision?: boolean;
   spawn?: boolean;
-  properties?: Record<string, any>;
+  properties?: Record<string, unknown>;
+  networkId?: string;
+  // Component data
+  render?: {
+    modelId?: number;
+    frame?: number;
+    visible?: boolean;
+    scale?: vec3;
+    animationFrame?: number;
+  };
+  physics?: {
+    hasGravity?: boolean;
+    hasCollision?: boolean;
+    layer?: number;
+    velocity?: vec3;
+    radius?: number;
+    height?: number;
+  };
+  network?: {
+    ownerId?: string;
+    isAuthoritative?: boolean;
+  };
+  maxHealth?: number;
+  currentHealth?: number;
+  isDead?: boolean;  player?: {
+    playerName?: string;
+    peerId?: string | null;
+    head?: EntitySnapshot;
+  };
 }
 
 export interface TerrainModification {
@@ -491,7 +551,7 @@ export enum WeaponType {
 // Combat Events
 export interface CombatEvent {
   type: 'attack' | 'hit' | 'death' | 'heal';
-  source?: Entity;
+  source?: Entity | null;
   target?: Entity;
   damage?: number;
   position?: vec3;
@@ -510,3 +570,26 @@ export interface CollisionEvent {
 }
 
 export type CollisionCallback = (event: CollisionEvent) => void;
+
+// Game Manager Types
+export interface GameStateData {
+  entities: EntitySnapshot[];
+  gameTime: number;
+  hostId: string;
+  peerMappings?: Array<{ peerId: string; networkId: string }>;
+}
+
+export interface GameDebugInfo {
+  gameMode: 'single-player' | 'multiplayer';
+  isHost: boolean;
+  gameId: string;
+  isConnected: boolean;
+  entityCount: number;
+  localPlayerNetworkId: string | null;
+  playerEntities: Array<{
+    id: number;
+    name?: string;
+    isLocal?: boolean;
+    networkId?: string;
+  }>;
+}

@@ -2,6 +2,7 @@ import { vec3, quat, mat4 } from 'gl-matrix';
 import { Entity } from './Entity';
 import type { WeaponData, WeaponSwing, WeaponType } from './types/index';
 import { getConfig } from './Config';
+import { gameResources } from './GameResources';
 
 export class Weapon extends Entity {
   weaponData: WeaponData;
@@ -14,6 +15,7 @@ export class Weapon extends Entity {
     hasHit: false,
     targetPosition: vec3.create()
   };
+  modelId: number | undefined; // Added modelId property
 
   // Weapon attachment offsets
   private restPosition: vec3 = vec3.fromValues(0.3, 0.1, -0.2);
@@ -23,7 +25,7 @@ export class Weapon extends Entity {
   constructor(weaponData: WeaponData) {
     super();
     this.weaponData = weaponData;
-    this.modelId = globalThis.modelNames?.indexOf(weaponData.modelName) ?? -1;
+    this.modelId = gameResources.getModelId(weaponData.modelName);
 
     // Initialize swing rotations
     quat.fromEuler(this.swingStartRotation, -30, 45, 10);  // Ready position
@@ -128,7 +130,7 @@ export class Weapon extends Entity {
     if (!this.wielder || this.swing.hasHit) return;
 
     const attackOrigin = vec3.clone(this.wielder.worldPosition);
-    attackOrigin[2] += this.wielder.height * 0.7; // Attack from chest height
+    attackOrigin[2] += (this.wielder.physics?.height || 0) * 0.7; // Attack from chest height
 
     const attackDirection = vec3.create();
     vec3.subtract(attackDirection, this.swing.targetPosition, attackOrigin);
@@ -184,8 +186,8 @@ export class Weapon extends Entity {
       // Apply knockback
       const knockback = vec3.create();
       vec3.scale(knockback, attackDirection, actualDamage * 0.5);
-      if ('vel' in target && target.vel) {
-        vec3.add(target.vel as vec3, target.vel as vec3, knockback);
+      if (target.physics && target.physics.velocity) {
+        vec3.add(target.physics.velocity, target.physics.velocity, knockback);
       }
     }
 
@@ -196,7 +198,7 @@ export class Weapon extends Entity {
     // Override in subclasses or add to combat system
   }
 
-  private dispatchCombatEvent(event: any): void {
+  private dispatchCombatEvent(event: import('./types/index').CombatEvent): void {
     // For now, just log. Later can be extended for UI feedback, sound effects, etc.
   }
 

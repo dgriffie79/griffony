@@ -1,5 +1,5 @@
 import { vec3 } from 'gl-matrix';
-import type { LevelData } from './types/index.js';
+import type { LevelData, LayerData, ObjectData } from './types/index.js';
 import { Volume } from './Volume.js';
 import { Entity } from './Entity.js';
 import { errorHandler, ResourceLoadError, ValidationError, Result } from './ErrorHandler.js';
@@ -39,11 +39,6 @@ export class Level {
       // Process level data
       await this.processLevelData(data);
 
-      // Register with renderer if available
-      const renderer = (globalThis as any).renderer;
-      if (renderer) {
-        renderer.registerLevel(this);
-      }
       this.isFullyLoaded = true;
 
     }, 'Level.load');
@@ -101,7 +96,7 @@ export class Level {
       }
     }
   }
-  private processTileLayer(layer: any, sizeX: number, sizeY: number): void {
+  private processTileLayer(layer: LayerData, sizeX: number, sizeY: number): void {
     const layerIndex = ['Floor', 'Walls', 'Ceiling'].indexOf(layer.name);
     if (layerIndex === -1) {
       return;
@@ -121,7 +116,7 @@ export class Level {
       const z = layerIndex;
       this.volume.setVoxel(x, y, z, layer.data[i]);
     }
-  }  private processObjectLayer(layer: any, sizeY: number): void {
+  }  private processObjectLayer(layer: LayerData, sizeY: number): void {
     if (!layer.objects) {
       return;
     }    for (const object of layer.objects) {
@@ -132,7 +127,7 @@ export class Level {
       }
     }
   }
-  private processLevelObject(object: any, sizeY: number): void {
+  private processLevelObject(object: ObjectData, sizeY: number): void {
     for (let i = 0; i < 1; i++) {
       const entity = Entity.deserialize(object);
       if (entity) {
@@ -160,12 +155,12 @@ export class Level {
           }
 
           // Initialize combat stats for entities
-          if ((globalThis as any).combatSystem) {
-            (globalThis as any).combatSystem.initializeCombatStats(entity);
+          if (globalThis.combatSystem) {
+            globalThis.combatSystem.initializeCombatStats(entity);
           }
           // Mark as network entity if multiplayer is active
-          if ((globalThis as any).net && (globalThis as any).net.isConnectionActive()) {
-            const ownerId = (globalThis as any).net.isHost() ? (globalThis as any).net.getPeerId() : '';
+          if (globalThis.net && globalThis.net.isConnectionActive()) {
+            const ownerId = globalThis.net.getIsHost() ? globalThis.net.getPeerId() : '';
             if (!entity.network) {
               entity.addNetwork(ownerId);
             }

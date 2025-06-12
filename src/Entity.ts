@@ -1,5 +1,7 @@
 import { mat4, quat, vec3 } from 'gl-matrix';
 import type { Level } from './Level';
+import type { EntitySnapshot } from './types/index';
+import type { NetworkState } from './components/NetworkComponent';
 
 // Import component types and classes
 import { RenderComponent } from './components/RenderComponent';
@@ -24,6 +26,7 @@ export class Entity {
   static nextId: number = 1;
 
   id: number;
+  networkId: string = '';
   parent: Entity | null = null;
   children: Entity[] = [];
 
@@ -45,58 +48,8 @@ export class Entity {
   health: HealthComponent | null = null;
   weapon: WeaponComponent | null = null;
   player: PlayerComponent | null = null;
-
-  // Legacy properties for backward compatibility during transition
-  // These will be removed once all systems are updated
+  // Legacy spawn property - used by deserialize method for spawn points
   spawn: boolean = false;
-
-  // Legacy getters/setters for smooth transition
-  get modelId(): number { return this.render?.modelId ?? -1; }
-  set modelId(value: number) { if (this.render) this.render.modelId = value; }
-  
-  get frame(): number { return this.render?.frame ?? 0; }
-  set frame(value: number) { if (this.render) this.render.frame = value; }
-  
-  get animationFrame(): number { return this.render?.animationFrame ?? 0; }
-  set animationFrame(value: number) { if (this.render) this.render.animationFrame = value; }
-  
-  get velocity(): vec3 { return this.physics?.velocity ?? vec3.create(); }
-  set velocity(value: vec3) { if (this.physics) vec3.copy(this.physics.velocity, value); }
-  
-  get vel(): vec3 { return this.velocity; } // Alias
-  set vel(value: vec3) { this.velocity = value; }
-  
-  get gravity(): boolean { return this.physics?.hasGravity ?? false; }
-  set gravity(value: boolean) { if (this.physics) this.physics.hasGravity = value; }
-  
-  get collision(): boolean { return this.physics?.hasCollision ?? false; }
-  set collision(value: boolean) { if (this.physics) this.physics.hasCollision = value; }
-  
-  get radius(): number { return this.physics?.radius ?? 0; }
-  set radius(value: number) { if (this.physics) this.physics.radius = value; }
-  
-  get height(): number { return this.physics?.height ?? 0; }
-  set height(value: number) { if (this.physics) this.physics.height = value; }
-  
-  get physicsLayer(): number { return this.physics?.layer ?? 0; }
-  set physicsLayer(value: number) { if (this.physics) this.physics.layer = value; }
-  
-  get collidesWith(): number { return this.physics?.collidesWith ?? 0; }
-  set collidesWith(value: number) { if (this.physics) this.physics.collidesWith = value; }
-  
-  get isNetworkEntity(): boolean { return this.network !== null; }
-  set isNetworkEntity(value: boolean) { 
-    // Can't easily create/destroy network component here, handled elsewhere
-  }
-  
-  get ownerId(): string { return this.network?.ownerId ?? ''; }
-  set ownerId(value: string) { if (this.network) this.network.ownerId = value; }
-  
-  get _tempGravity(): boolean | undefined { return this.physics?._tempGravity; }
-  set _tempGravity(value: boolean | undefined) { if (this.physics) this.physics._tempGravity = value; }
-  
-  get _tempCollision(): boolean | undefined { return this.physics?._tempCollision; }
-  set _tempCollision(value: boolean | undefined) { if (this.physics) this.physics._tempCollision = value; }
 
   constructor() {
     this.id = Entity.nextId++;
@@ -114,7 +67,7 @@ export class Entity {
   /**
    * Add a physics component to this entity
    */
-  addPhysics(config: any = {}): PhysicsComponent {
+  addPhysics(config: Partial<import('./components/PhysicsComponent').PhysicsConfig> = {}): PhysicsComponent {
     this.physics = new PhysicsComponent(this, config);
     return this.physics;
   }
@@ -142,12 +95,14 @@ export class Entity {
     this.weapon = new WeaponComponent(this);
     return this.weapon;
   }
-
   /**
    * Add a player component to this entity
    */
-  addPlayer(networkId: string = '', isLocal: boolean = false): PlayerComponent {
-    this.player = new PlayerComponent(this, isLocal);
+  addPlayer(networkId: string = '', peerId?: string): PlayerComponent {
+    this.player = new PlayerComponent(this, peerId);
+    if (networkId) {
+      this.networkId = networkId;
+    }
     return this.player;
   }
 
@@ -207,12 +162,16 @@ export class Entity {
     this.weapon?.update(deltaTime);
     this.player?.update(deltaTime);
   }
-
   /**
    * Check if entity is on the ground (legacy compatibility)
    */
   onGround(terrain: Level): boolean {
     if (!this.physics) return false;
+    
+    // Always return false for god mode players so they can fly
+    if (this.isPlayer() && this.player?.isInGodMode()) {
+      return false;
+    }
     
     const r = 0.85 * this.physics.radius;
     const x = this.worldPosition[0];
@@ -230,11 +189,10 @@ export class Entity {
 
   /**
    * Legacy compatibility method - check if entities can collide
-   */
-  canCollideWith(other: Entity): boolean {
+   */  canCollideWith(other: Entity): boolean {
     // Check if either entity is a player in godMode
-    if (((globalThis as any).godMode && this.isPlayer()) || 
-        ((globalThis as any).godMode && other.isPlayer())) {
+    if ((this.isPlayer() && this.player?.isInGodMode()) || 
+        (other.isPlayer() && other.player?.isInGodMode())) {
       return false;
     }
     
@@ -245,44 +203,11 @@ export class Entity {
     
     return false;
   }
-
   /**
    * Check if this entity is a player (has PlayerComponent)
    */
   isPlayer(): boolean {
     return this.player !== null;
-  }
-
-  // Legacy network methods for backward compatibility
-  applyNetworkUpdate(state: any, isAuthoritative: boolean = false): void {
-    if (this.network) {
-      this.network.applyNetworkUpdate(state, isAuthoritative);
-    }
-  }
-
-  updateNetworkInterpolation(deltaTime: number): void {
-    if (this.network) {
-      this.network.update(deltaTime);
-    }
-  }
-
-  saveStateForPrediction(inputSequence: number): void {
-    if (this.network) {
-      this.network.saveStateForPrediction(inputSequence);
-    }
-  }
-
-  reconcileWithServer(serverState: any, inputSequence: number): void {
-    if (this.network) {
-      this.network.reconcileWithServer(serverState, inputSequence);
-    }
-  }
-
-  getNetworkSnapshot(): any {
-    if (this.network) {
-      return this.network.getNetworkSnapshot();
-    }
-    return null;
   }
 
   // ========================================
@@ -292,9 +217,10 @@ export class Entity {
   /**
    * Serialize entity data for network transmission
    */
-  serialize(): any {
+  serialize(): EntitySnapshot {
     return {
       entityId: this.id.toString(),
+      networkId: this.networkId,
       entityType: this.constructor.name,
       position: Array.from(this.localPosition) as [number, number, number],
       rotation: Array.from(this.localRotation) as [number, number, number, number],
@@ -305,7 +231,7 @@ export class Entity {
         frame: this.render.frame,
         animationFrame: this.render.animationFrame,
         visible: this.render.visible
-      } : null,
+      } : undefined,
       physics: this.physics ? {
         velocity: Array.from(this.physics.velocity) as [number, number, number],
         hasGravity: this.physics.hasGravity,
@@ -313,21 +239,17 @@ export class Entity {
         layer: this.physics.layer,
         radius: this.physics.radius,
         height: this.physics.height
-      } : null,
+      } : undefined,
       network: this.network ? {
         ownerId: this.network.ownerId,
         isAuthoritative: this.network.isAuthoritative
-      } : null,
-      health: this.health ? {
-        currentHealth: this.health.currentHealth,
-        maxHealth: this.health.maxHealth,
-        isDead: this.health.isDead
-      } : null,
-      player: this.player ? {
+      } : undefined,      maxHealth: this.health?.maxHealth,
+      currentHealth: this.health?.currentHealth,
+      isDead: this.health?.isDead,      player: this.player ? {
         playerName: this.player.playerName,
-        isLocalPlayer: this.player.isLocalPlayer
-      } : null,
-      // Legacy properties
+        peerId: this.player.getPeerId()
+      } : undefined,
+      // Legacy spawn property (for Tiled map compatibility)
       spawn: this.spawn
     };
   }
@@ -335,11 +257,12 @@ export class Entity {
   /**
    * Create entity from serialized data
    */
-  static fromSnapshot(snapshot: any): Entity {
+  static fromSnapshot(snapshot: EntitySnapshot): Entity {
     const entity = new Entity();
     
     // Override the auto-assigned ID with the snapshot ID
     entity.id = parseInt(snapshot.entityId);
+    entity.networkId = snapshot.networkId || '';
     
     // Update the nextId to ensure no conflicts
     if (entity.id >= Entity.nextId) {
@@ -355,7 +278,7 @@ export class Entity {
     
     // Recreate components from snapshot data
     if (snapshot.render) {
-      const renderComp = entity.addRender(snapshot.render.modelId);
+      const renderComp = entity.addRender(snapshot.render.modelId ?? 0);
       renderComp.frame = snapshot.render.frame || 0;
       renderComp.animationFrame = snapshot.render.animationFrame || 0;
       renderComp.visible = snapshot.render.visible ?? true;
@@ -375,23 +298,24 @@ export class Entity {
     }
     
     if (snapshot.network) {
-      const networkComp = entity.addNetwork(snapshot.network.ownerId);
+      const networkComp = entity.addNetwork(snapshot.network.ownerId ?? '');
       networkComp.isAuthoritative = snapshot.network.isAuthoritative || false;
     }
     
-    if (snapshot.health) {
-      const healthComp = entity.addHealth(snapshot.health.maxHealth);
-      healthComp.currentHealth = snapshot.health.currentHealth;
-      healthComp.isDead = snapshot.health.isDead || false;
-    }
-    
-    if (snapshot.player) {
-      const playerComp = entity.addPlayer('', snapshot.player.isLocalPlayer);
-      playerComp.playerName = snapshot.player.playerName;
-      console.log(`🎮 ENTITY DESERIALIZE: Created player component - Name: ${snapshot.player.playerName}, Local: ${snapshot.player.isLocalPlayer}`);
-    }
-    
-    // Legacy properties
+    if (snapshot.maxHealth !== undefined) {
+      const healthComp = entity.addHealth(snapshot.maxHealth);
+      healthComp.currentHealth = snapshot.currentHealth ?? snapshot.maxHealth;
+      healthComp.isDead = snapshot.isDead ?? false;
+    }      if (snapshot.player) {
+      // Create player component with peerId from snapshot
+      // During network deserialization, all players start as remote
+      // The GameManager will later identify the local player and update accordingly
+      const peerId = snapshot.player.peerId || undefined;
+      const playerComp = entity.addPlayer('', peerId);
+      playerComp.playerName = snapshot.player.playerName ?? '';
+      console.log(`🎮 ENTITY DESERIALIZE: Created player component - Name: ${snapshot.player.playerName}, PeerID: ${peerId}, NetworkId: ${entity.networkId}`);
+    }    
+    // Legacy spawn property (for Tiled map compatibility)
     entity.spawn = snapshot.spawn || false;
     
     entity.dirty = true;
@@ -401,10 +325,10 @@ export class Entity {
   /**
    * Legacy deserialization from Tiled map data
    */
-  static deserialize(data: any): Entity | null {
+  static deserialize(data: Record<string, unknown>): Entity | null {
     let entity: Entity;
 
-    switch (data.type.toUpperCase()) {
+    switch (String(data.type).toUpperCase()) {
       case 'PLAYER':
         return null; // Players are handled separately
       case 'SPAWN':
@@ -418,18 +342,20 @@ export class Entity {
         break;
     }
 
-    entity.localPosition = vec3.fromValues(data.x / 32, data.y / 32, 1);
+    entity.localPosition = vec3.fromValues(Number(data.x) / 32, Number(data.y) / 32, 1);
 
     // Process Tiled properties
-    for (const property of data.properties ?? []) {
+    const properties = Array.isArray(data.properties) ? data.properties : [];
+    for (const property of properties) {
       switch (property.name) {
         case 'rotation':
-          quat.fromEuler(entity.localRotation, 0, 0, property.value);
+          quat.fromEuler(entity.localRotation, 0, 0, Number(property.value));
           break;
         case 'scale':
-          entity.localScale = vec3.fromValues(property.value, property.value, property.value);
+          const scaleValue = Number(property.value);
+          entity.localScale = vec3.fromValues(scaleValue, scaleValue, scaleValue);
           if (entity.physics) {
-            entity.physics.radius = property.value;
+            entity.physics.radius = scaleValue;
           }
           break;
         case 'model_id':
@@ -514,7 +440,7 @@ export class Entity {
   /**
    * Load entities from an array of snapshots
    */
-  static loadEntitiesFromSnapshots(snapshots: any[]): Entity[] {
+  static loadEntitiesFromSnapshots(snapshots: EntitySnapshot[]): Entity[] {
     const loadedEntities: Entity[] = [];
     
     for (const snapshot of snapshots) {
@@ -532,7 +458,7 @@ export class Entity {
   /**
    * Get all entities as serialized snapshots
    */
-  static getAllEntitiesAsSnapshots(): any[] {
+  static getAllEntitiesAsSnapshots(): EntitySnapshot[] {
     return Entity.all.map(entity => entity.serialize());
   }
 

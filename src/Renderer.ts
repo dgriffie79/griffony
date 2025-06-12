@@ -2,10 +2,40 @@ import { mat4 } from 'gl-matrix';
 import type { Model } from './Model';
 import type { Tileset } from './Tileset';
 import type { Level } from './Level';
+import type { Entity } from './Entity';
 import { optimizedGreedyMesh } from './utils';
 import { getConfig } from './Config';
 import { errorHandler, GPUError, ValidationError, ResourceLoadError, Result } from './ErrorHandler.js';
 import { gpuResourceManager, resourceManager, ResourceType, AutoCleanup, ManagedResource } from './ResourceManager.js';
+
+// Resource type for storing model resources
+interface ModelResources {
+  texture: ManagedResource<GPUTexture>;
+  originalBuffer: ManagedResource<GPUBuffer>;
+  greedyBuffer: ManagedResource<GPUBuffer>;
+  bindGroup: GPUBindGroup | null;
+  greedyBindGroup: GPUBindGroup | null;
+  originalFaceCount: number;
+  greedyFaceCount: number;
+  paletteIndex?: number;
+  rasterBuffer?: ManagedResource<GPUBuffer>;
+}
+
+// Resource type for storing level resources  
+interface LevelResources {
+  texture: ManagedResource<GPUTexture>;
+  managedTexture?: ManagedResource<GPUTexture>;
+  rasterBuffer?: ManagedResource<GPUBuffer>;
+  originalBuffer?: ManagedResource<GPUBuffer>;
+  greedyBuffer?: ManagedResource<GPUBuffer>;
+  bindGroup?: GPUBindGroup | null;
+  greedyBindGroup?: GPUBindGroup | null;
+}
+
+// Resource type for storing tileset resources
+interface TilesetResources {
+  managedTexture: ManagedResource<GPUTexture>;
+}
 
 export class Renderer {
   private config = getConfig();
@@ -36,7 +66,7 @@ export class Renderer {
   transferBuffer!: ArrayBuffer;
   floatView!: Float32Array; uintView!: Uint32Array;
   nextPaletteIndex: number = 0; tileSampler!: ManagedResource<GPUSampler>;
-  resourceMap = new Map<Model | Level | Tileset, any>();
+  resourceMap = new Map<Model | Level | Tileset, ModelResources | LevelResources | TilesetResources>();
   async init(): Promise<Result<void>> {
     return errorHandler.safeAsync(async () => {      await this.initializeWebGPU();
       await this.initializeResources();
@@ -62,7 +92,7 @@ export class Renderer {
     );
 
     // Make canvas globally available
-    (globalThis as any).canvas = managedCanvas.resource;
+    globalThis.canvas = managedCanvas.resource;
 
     return managedCanvas.resource;
   }
@@ -162,6 +192,9 @@ export class Renderer {
   }  private cleanup(): void {
     // Clear resource map
     this.resourceMap.clear();
+
+    // Reset palette index
+    this.nextPaletteIndex = 0;
 
     // Reset face counters
     this.renderedFacesCount = 0;
@@ -677,7 +710,7 @@ export class Renderer {
    * @param model The model to register
    */
   registerModel(model: Model): void {
-    const resources = this.resourceMap.get(model) || {};
+    const resources: Partial<ModelResources> = {};
 
     // Create GPU texture and upload voxel data
     this.createModelTexture(model, resources);
@@ -701,7 +734,7 @@ export class Renderer {
    * Create GPU texture for model voxels and upload voxel data
    * @param model The model containing voxel data
    * @param resources The resource container to store texture
-   */  private createModelTexture(model: Model, resources: any): void {
+   */  private createModelTexture(model: Model, resources: Partial<ModelResources>): void {
     const volume = model.volume;
     resources.texture = gpuResourceManager.createTexture({
       size: [volume.sizeX, volume.sizeY, volume.sizeZ],
@@ -729,7 +762,7 @@ export class Renderer {
    * @param model The model containing palette data
    * @param resources The resource container to store palette index
    */
-  private uploadModelPalette(model: Model, resources: any): void {
+  private uploadModelPalette(model: Model, resources: Partial<ModelResources>): void {
     const gpuConfig = this.config.getGPUConfig();
     this.device.queue.writeTexture(
       {
@@ -763,7 +796,8 @@ export class Renderer {
    * Create GPU buffers for mesh data and upload to GPU
    * @param meshData Object containing original and greedy mesh data
    * @param resources The resource container to store buffers
-   */  private createModelBuffers(meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }, resources: any): void {    // Create and upload original mesh buffer
+   */  private createModelBuffers(meshData: { originalFaces: Uint8Array | Uint32Array, greedyFaces: Uint8Array | Uint32Array }, resources: Partial<ModelResources>): void {
+    // Create and upload original mesh buffer
     resources.originalBuffer = gpuResourceManager.createBuffer({
       size: meshData.originalFaces.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
@@ -780,6 +814,10 @@ export class Renderer {
     });
     resources.greedyBuffer.markPermanent(); // Prevent automatic cleanup
     this.device.queue.writeBuffer(resources.greedyBuffer.resource, 0, meshData.greedyFaces);
+
+    // Calculate face counts
+    resources.originalFaceCount = meshData.originalFaces.byteLength / 4; // 4 bytes per face
+    resources.greedyFaceCount = meshData.greedyFaces.byteLength / 32; // 32 bytes per face
   }
 
   /**
@@ -787,13 +825,28 @@ export class Renderer {
    * @param model The model being registered
    * @param resources The resource container with buffers
    */
-  private configureModelResources(model: Model, resources: any): void {
-    // Set the active buffer based on current setting
-    const useGreedy = (globalThis as any).useGreedyMesh || false;
-    resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
+  private configureModelResources(model: Model, resources: Partial<ModelResources>): void {
+    // Ensure we have all required properties for a complete ModelResources object
+    // Note: bind groups are created lazily, so we don't check for them here
+    if (!resources.texture || !resources.originalBuffer || !resources.greedyBuffer || 
+        resources.originalFaceCount === undefined || resources.greedyFaceCount === undefined) {
+      console.error('Incomplete ModelResources object for model:', model.url);
+      return;
+    }
 
-    // Store resources in the resource map
-    this.resourceMap.set(model, resources);
+    const completeResources: ModelResources = {
+      texture: resources.texture,
+      originalBuffer: resources.originalBuffer,
+      greedyBuffer: resources.greedyBuffer,
+      bindGroup: null, // Will be created lazily
+      greedyBindGroup: null, // Will be created lazily
+      originalFaceCount: resources.originalFaceCount,
+      greedyFaceCount: resources.greedyFaceCount,
+      paletteIndex: resources.paletteIndex
+    };
+
+    // Store complete resources in the resource map
+    this.resourceMap.set(model, completeResources);
   }
 
   /**
@@ -853,9 +906,11 @@ export class Renderer {
 
     // Store the managed texture for disposal tracking
     this.resourceMap.set(tileset, { managedTexture: texture });
-  } registerLevel(level: Level): void {
+  }
+  
+  registerLevel(level: Level): void {
     const volume = level.volume;
-    const resources = this.resourceMap.get(level) || {};
+    const resources: Partial<LevelResources> = {};
     resources.texture = gpuResourceManager.createTexture({
       size: [volume.sizeX, volume.sizeY, volume.sizeZ],
       dimension: '3d',
@@ -900,11 +955,20 @@ export class Renderer {
     this.device.queue.writeBuffer(resources.greedyBuffer.resource, 0, greedyFaces);
 
     // Set the active buffer based on current setting
-    const useGreedy = (globalThis as any).useGreedyMesh || false;
+    const useGreedy = globalThis.useGreedyMesh || false;
     resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
     const bufferEndTime = performance.now();
 
-    this.resourceMap.set(level, resources);
+    // Ensure we have all required properties for a complete LevelResources object
+    if (resources.texture && resources.originalBuffer && resources.greedyBuffer && resources.rasterBuffer) {
+      const completeResources: LevelResources = {
+        texture: resources.texture,
+        originalBuffer: resources.originalBuffer,
+        greedyBuffer: resources.greedyBuffer,
+        rasterBuffer: resources.rasterBuffer
+      };
+      this.resourceMap.set(level, completeResources);
+    }
   } createDepthTexture(): void {
     // Dispose of existing depth texture if it exists
     if (this.depthTexture) {
@@ -969,28 +1033,31 @@ export class Renderer {
       const player = globalThis.player;
       
       // First render the player's first-person weapon view if it has a valid modelId
-      const fpWeaponEntity = player.weapon?.fpWeaponEntity; // This is now the fpWeaponEntity from WeaponComponent
-      const fpWeaponModel = (fpWeaponEntity && fpWeaponEntity.render?.modelId >= 0 && globalThis.models && globalThis.models[fpWeaponEntity.render.modelId])
-        ? globalThis.models[fpWeaponEntity.render.modelId]
-        : null;
+      if (player) {
+        const fpWeaponEntity = player.weapon?.fpWeaponEntity; // This is now the fpWeaponEntity from WeaponComponent
+        const fpWeaponModelId = fpWeaponEntity?.render?.modelId;
+        const fpWeaponModel = (fpWeaponEntity && fpWeaponModelId !== undefined && fpWeaponModelId >= 0 && globalThis.models && globalThis.models[fpWeaponModelId])
+          ? globalThis.models[fpWeaponModelId]
+          : null;
 
-      if (fpWeaponModel && fpWeaponEntity) {
-        // Scale for first-person view - use weapon-specific scale
-        const baseScale = 1 / 24;
-        const weaponSpecificScale = player.weapon?.weaponScale ?? 1.0;
-        const weaponScale: [number, number, number] = [baseScale * weaponSpecificScale, baseScale * weaponSpecificScale, baseScale * weaponSpecificScale];
+        if (fpWeaponModel && fpWeaponEntity && fpWeaponEntity.render) {
+          // Scale for first-person view - use weapon-specific scale
+          const baseScale = 1 / 24;
+          const weaponSpecificScale = player.weapon?.weaponScale ?? 1.0;
+          const weaponScale: [number, number, number] = [baseScale * weaponSpecificScale, baseScale * weaponSpecificScale, baseScale * weaponSpecificScale];
 
-        const offsetMatrix = mat4.fromTranslation(mat4.create(), [-fpWeaponModel.volume.sizeX / 2, -fpWeaponModel.volume.sizeY / 2, 0]);
-        const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeaponEntity.worldRotation, fpWeaponEntity.worldPosition, weaponScale);
-        mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
-        const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
-        this.drawModel(fpWeaponModel, modelViewProjectionMatrix, modelMatrix, renderPass);
+          const offsetMatrix = mat4.fromTranslation(mat4.create(), [-fpWeaponModel.volume.sizeX / 2, -fpWeaponModel.volume.sizeY / 2, 0]);
+          const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), fpWeaponEntity.worldRotation, fpWeaponEntity.worldPosition, weaponScale);
+          mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
+          const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
+          this.drawModel(fpWeaponModel, modelViewProjectionMatrix, modelMatrix, renderPass);
+        }
       }// Then render all other entities except:
       // - The player (first-person view)
       // - The first-person weapon (already rendered above)
       // - Any weapon attached to the player (would be inside the player model)
       for (const e of globalThis.Entity.all) {      // Helper function to check if an entity is a child of another entity (directly or indirectly)
-        const isChildOf = (entity: any, potentialParent: any): boolean => {
+        const isChildOf = (entity: Entity, potentialParent: Entity): boolean => {
           let current = entity.parent;
           while (current) {
             if (current === potentialParent) return true;
@@ -1002,7 +1069,7 @@ export class Renderer {
         // - That are the player itself
         // - That are the first-person weapon
         // - That are any entity parented to the player (like third-person weapons)
-        const isWeaponAttachedToPlayer = e.parent === player || isChildOf(e, player);      // Get model from modelId - direct array access
+        const isWeaponAttachedToPlayer = player && (e.parent === player || isChildOf(e, player));      // Get model from modelId - direct array access
         const model = (e.modelId >= 0 && globalThis.models && globalThis.models[e.modelId])
           ? globalThis.models[e.modelId]
           : null;      // Debug: Log entity rendering attempt
@@ -1012,7 +1079,7 @@ export class Renderer {
 
         if (model &&
           e !== player &&
-          e !== player.weapon?.fpWeaponEntity &&
+          e !== player?.weapon?.fpWeaponEntity &&
           !isWeaponAttachedToPlayer) {
 
           const offsetMatrix = mat4.fromTranslation(mat4.create(), [-model.volume.sizeX / 2, -model.volume.sizeY / 2, 0]); const modelMatrix = mat4.fromRotationTranslationScale(mat4.create(), e.worldRotation, e.worldPosition, [renderingConfig.modelScale, renderingConfig.modelScale, renderingConfig.modelScale]);
@@ -1073,13 +1140,19 @@ export class Renderer {
       this.recreateQueryResources();
       throw error;  // Re-throw to let caller handle if needed
     }
-  } drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+  }
+  
+  drawLevel(level: Level, modelViewProjectionMatrix: mat4, renderPass: GPURenderPassEncoder): void {
     const gpuConfig = this.config.getGPUConfig();
-    const resources = this.resourceMap.get(level);
+    const resources = this.resourceMap.get(level) as LevelResources | undefined;
     // Validate that resources exist and are not disposed
     if (!resources || !resources.texture || resources.texture.disposed) {
-      console.warn('Level resources missing or disposed, skipping draw');
-      return;
+      // Try to re-register the level if it's missing resources
+      if (level.isFullyLoaded && !resources) {
+        this.registerLevel(level);
+        return; // Skip this frame, will work on next frame
+      }
+      return; // Skip drawing if resources are disposed
     }
 
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
@@ -1125,13 +1198,19 @@ export class Renderer {
 
     renderPass.draw(6, levelFaceCount, 0, 0);
     this.objectUniformsOffset += 256;
-  } drawModel(model: Model, modelViewProjectionMatrix: mat4, modelMatrix: mat4, renderPass: GPURenderPassEncoder): void {
+  }
+  
+  drawModel(model: Model, modelViewProjectionMatrix: mat4, modelMatrix: mat4, renderPass: GPURenderPassEncoder): void {
     const gpuConfig = this.config.getGPUConfig();
-    const resources = this.resourceMap.get(model);
+    const resources = this.resourceMap.get(model) as ModelResources | undefined;
     // Validate that resources exist and are not disposed
     if (!resources || !resources.texture || resources.texture.disposed) {
-      console.warn('Model resources missing or disposed, skipping draw');
-      return;
+      // Try to re-register the model if it's missing resources
+      if (model.volume && !resources) {
+        this.registerModel(model);
+        return; // Skip this frame, will work on next frame
+      }
+      return; // Skip drawing if resources are disposed
     }
 
     const floatView = new Float32Array(this.transferBuffer, this.objectUniformsOffset);
@@ -1139,7 +1218,7 @@ export class Renderer {
 
     floatView.set(modelMatrix, 0);
     floatView.set(modelViewProjectionMatrix, 16);
-    uintView[35] = resources.paletteIndex;
+    uintView[35] = resources.paletteIndex ?? 0;
 
     const useGreedy = (globalThis as any).useGreedyMesh || false;
     // Update the active buffer and bind group based on current setting
@@ -1219,7 +1298,7 @@ export class Renderer {
     if (globalThis.level) {
       // If the level has a rasterBuffer in the resourceMap, use that
       if (this.resourceMap.has(globalThis.level)) {
-        const resources = this.resourceMap.get(globalThis.level);
+        const resources = this.resourceMap.get(globalThis.level) as LevelResources | undefined;
         if (resources && resources.rasterBuffer) {
           const levelFaceCount = resources.rasterBuffer.resource.size / 16;
           totalFaces += levelFaceCount;
@@ -1247,12 +1326,15 @@ export class Renderer {
 
     // Update all models
     for (const [entity, resources] of this.resourceMap.entries()) {
-      if (resources.originalBuffer && resources.greedyBuffer) {
+      // Type guard to check if resources has model or level properties
+      if ('originalBuffer' in resources && 'greedyBuffer' in resources && resources.originalBuffer && resources.greedyBuffer) {
         resources.rasterBuffer = useGreedy ? resources.greedyBuffer : resources.originalBuffer;
 
-        // Clear bind groups to force recreation with new pipeline
-        resources.bindGroup = null;
-        resources.greedyBindGroup = null;
+        // Clear bind groups to force recreation with new pipeline if they exist
+        if ('bindGroup' in resources) {
+          (resources as ModelResources).bindGroup = undefined as any;
+          (resources as ModelResources).greedyBindGroup = undefined as any;
+        }
       }
     }
   }
@@ -1271,7 +1353,7 @@ export class Renderer {
    * @param model The model to dispose
    */
   public disposeModel(model: Model): void {
-    const resources = this.resourceMap.get(model);
+    const resources = this.resourceMap.get(model) as ModelResources | undefined;
     if (!resources) {
       return;
     }
@@ -1299,7 +1381,7 @@ export class Renderer {
    * @param level The level to dispose
    */
   public disposeLevel(level: Level): void {
-    const resources = this.resourceMap.get(level);
+    const resources = this.resourceMap.get(level) as LevelResources | undefined;
     if (!resources) {
       return;
     }
@@ -1328,7 +1410,7 @@ export class Renderer {
    * @param tileset The tileset to dispose
    */
   public disposeTileset(tileset: Tileset): void {
-    const resources = this.resourceMap.get(tileset);
+    const resources = this.resourceMap.get(tileset) as TilesetResources | undefined;
     if (!resources) {
       return;
     }
@@ -1355,11 +1437,11 @@ export class Renderer {
    */  private createBindGroupForResource(layout: GPUBindGroupLayout, texture: GPUTexture, label: string): GPUBindGroup {
     const gpuConfig = this.config.getGPUConfig();
     // Validate tileset texture before using it
-    let tilesetResources = this.resourceMap.get(globalThis.tileset);
+    let tilesetResources = this.resourceMap.get(globalThis.tileset) as TilesetResources | undefined;
     if (!tilesetResources?.managedTexture || tilesetResources.managedTexture.disposed) {
       console.warn('Tileset texture is disposed, re-registering tileset');
       this.registerTileset(globalThis.tileset);
-      tilesetResources = this.resourceMap.get(globalThis.tileset);
+      tilesetResources = this.resourceMap.get(globalThis.tileset) as TilesetResources | undefined;
     }// Mark tileset texture as used to prevent automatic cleanup
     if (tilesetResources?.managedTexture) {
       tilesetResources.managedTexture.markUsed();
@@ -1405,7 +1487,7 @@ export class Renderer {
    * @param resourceType Type of resource for labeling
    * @returns The appropriate bind group
    */
-  private getOrCreateBindGroup(resources: any, useGreedy: boolean, texture: GPUTexture, resourceType: string): GPUBindGroup {
+  private getOrCreateBindGroup(resources: Partial<ModelResources>, useGreedy: boolean, texture: GPUTexture, resourceType: string): GPUBindGroup {
     if (useGreedy) {
       if (!resources.greedyBindGroup) {
         resources.greedyBindGroup = this.createBindGroupForResource(

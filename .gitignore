@@ -3,6 +3,6 @@ griffony.tiled-session
 dist
 doc
 test
-
+tsc_output.txt
 
 .claude/settings.local.json

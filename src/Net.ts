@@ -343,7 +343,7 @@ export class Net {
         break;
 
       case MessageType.PONG:
-        const latency = Date.now() - message.data.originalTimestamp;
+        const latency = Date.now() - Number(message.data.originalTimestamp);
         const conn = this.connections.get(senderId);
         if (conn) {
           conn.latency = latency;
@@ -517,6 +517,10 @@ export class Net {
   }
 
   // Debug and statistics methods
+  getIsHost(): boolean {
+    return this.isHost;
+  }
+
   getStatistics() {
     return {
       peerId: this.peerId,

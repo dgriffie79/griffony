@@ -1,6 +1,7 @@
 import { vec3, quat } from 'gl-matrix';
 import { Entity } from './Entity';
 import { PhysicsLayer } from './components/PhysicsComponent';
+import { gameResources } from './GameResources';
 
 /**
  * Factory functions for creating common entity types
@@ -11,14 +12,14 @@ import { PhysicsLayer } from './components/PhysicsComponent';
  * Get model ID by name with error handling
  */
 function getModelId(modelName: string): number {
-  if (!globalThis.modelNames) {
+  if (!gameResources.isModelNameAvailable()) {
     console.warn('Model names not loaded yet');
     return -1;
   }
   
-  const modelId = globalThis.modelNames.indexOf(modelName);
+  const modelId = gameResources.getModelId(modelName);
   if (modelId === -1) {
-    console.warn(`Model "${modelName}" not found. Available models: ${globalThis.modelNames.join(', ')}`);
+    console.warn(`Model "${modelName}" not found. Available models: ${gameResources.modelNames.join(', ')}`);
   }
   
   return modelId;
@@ -27,7 +28,7 @@ function getModelId(modelName: string): number {
 /**
  * Create a player entity with standard player components
  */
-export function createPlayer(isLocal: boolean = true, networkId?: string): Entity {
+export function createPlayer(peerId?: string, networkId?: string): Entity {
   const player = new Entity();
   
   // Core components every player needs
@@ -42,18 +43,37 @@ export function createPlayer(isLocal: boolean = true, networkId?: string): Entit
   });
   player.addHealth(100);
   
-  // Player component with identity and player-specific functionality
-  player.addPlayer(networkId || '', isLocal);
+  // Weapon component for all players (must be before player component)
+  player.addWeapon();
+    // Player component with identity and player-specific functionality
+  player.addPlayer(networkId || '', peerId);
+  
+  // Set god mode to true by default for local players
+  if (player.player) {
+    const net = (globalThis as any).net;
+    const isLocal = !peerId || (net && net.getPeerId && peerId === net.getPeerId());
+    if (isLocal) {
+      player.player.setGodMode(true);
+    }
+  }
+  
+  // Now that both components are created, initialize the weapon
+  if (player.player) {
+    player.player.initializeWeapon();
+  }
   
   // Network component for remote players only
-  if (!isLocal && networkId) {
-    const networkComp = player.addNetwork(networkId);
-    networkComp.smoothingEnabled = true;
-    networkComp.maxInterpolationDistance = 5.0;
+  // Local players are determined by comparing peerId with Net.getPeerId()
+  if (peerId && networkId) {
+    const net = (globalThis as any).net;
+    const isLocal = net && net.getPeerId && peerId === net.getPeerId();
+    
+    if (!isLocal) {
+      const networkComp = player.addNetwork(networkId);
+      networkComp.smoothingEnabled = true;
+      networkComp.maxInterpolationDistance = 5.0;
+    }
   }
-
-  // Weapon component for all players
-  player.addWeapon();
   
   return player;
 }

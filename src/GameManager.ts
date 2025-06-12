@@ -1,7 +1,6 @@
 import { Net } from './Net.js';
-import { NetworkMessage, MessageType, FullGameStateMessage, PeerId, NetworkId, createPeerId, createNetworkId } from './types/index.js';
+import { NetworkMessage, MessageType, FullGameStateMessage, PeerId, NetworkId, createPeerId, createNetworkId, EntityUpdateData, GameStateData, GameDebugInfo } from './types/index.js';
 import { Entity } from './Entity.js';
-import { PlayerController, LocalPlayerController, RemotePlayerController } from './PlayerController.js';
 import { createPlayer } from './EntityFactory.js';
 
 /**
@@ -12,12 +11,9 @@ export class GameManager {
   // Game state
   private gameMode: 'single-player' | 'multiplayer' = 'single-player';
   private isHost: boolean = false;
-  private playerId: string = '';
   private gameId: string = '';
   
-  // Player management
-  private controllers: Map<string, PlayerController> = new Map();
-  private localController: LocalPlayerController | null = null;
+  // Player management - use globalThis.player directly
   
   // Multiplayer-specific state
   private peerToNetworkIdMap: Map<PeerId, NetworkId> = new Map();
@@ -32,8 +28,7 @@ export class GameManager {
     this.net = net;
     this.setupNetworkHandlers();
     
-    // Start with single-player game on initialization
-    this.createSinglePlayerGame();
+    // Single-player game will be created later after resources are loaded
   }
 
   // ========================================
@@ -43,53 +38,31 @@ export class GameManager {
   /**
    * Create initial single-player game when app launches
    */
-  private createSinglePlayerGame(): void {
+  public createSinglePlayerGame(): void {
     console.log('🎮 GAME MANAGER: Creating single-player game');
     
     this.gameMode = 'single-player';
     this.isHost = false;
-    this.playerId = this.generatePlayerId();
     this.gameId = '';
     
-    // Create local player for single-player
-    const { controller, entity } = this.createLocalPlayer(this.playerId);
+    // Create local player for single-player (network ID 1 for single-player)
+    globalThis.player = this.createLocalPlayer("1");
     
-    console.log(`✅ Single-player game created with player: ${this.playerId}`);
+    console.log(`✅ Single-player game created`);
   }
 
   /**
-   * Create a new multiplayer game as host
-   * This deletes the existing single-player game and creates a fresh multiplayer game
+   * Create a new multiplayer game as host (legacy method for ManualSignalingUI compatibility)
+   * The actual multiplayer transition now happens in the data channel callback
    */
   async createMultiplayerGame(): Promise<string> {
-    console.log('🏗️ GAME MANAGER: Creating multiplayer game as host');
-    
-    // Clean up single-player game
-    this.cleanupCurrentGame();
-    
-    // Set up multiplayer state
-    this.gameMode = 'multiplayer';
-    this.isHost = true;
-    this.gameId = this.generateGameId();
-    this.playerId = this.generatePlayerId();
-    this.nextNetworkId = 1;
-    
-    // Host gets the first network ID
-    const hostNetworkId = this.nextNetworkId++;
-    console.log(`🆔 HOST: Assigned network ID ${hostNetworkId} to host`);
-    
-    // Create new multiplayer local player with the assigned network ID
-    const { controller, entity } = this.createLocalPlayer(this.playerId, hostNetworkId.toString());
-    
-    console.log(`✅ Multiplayer game created - ID: ${this.gameId}, Host: ${this.playerId}`);
-    console.log(`🎮 HOST: Created player entity with ID: ${entity.id}, Network ID: ${hostNetworkId}`);
-    console.log(`📊 HOST: Total entities after creation: ${Entity.all.length}`);
+    console.log('🏗️ GAME MANAGER: Legacy createMultiplayerGame called - actual transition happens on data channel ready');
     
     try {
       const offer = await this.net.createOffer();
       console.log(`✅ WebRTC offer created`);
-      return this.gameId;
-    } catch (error: any) {
+      return 'PENDING'; // Game ID will be set when data channel becomes ready
+    } catch (error: unknown) {
       console.error('Failed to create multiplayer game:', error);
       // Fallback to single-player on error
       this.createSinglePlayerGame();
@@ -98,61 +71,86 @@ export class GameManager {
   }
 
   /**
-   * Join an existing multiplayer game as client
-   * This deletes the existing single-player game and prepares for multiplayer
+   * Join an existing multiplayer game as client (legacy method for ManualSignalingUI compatibility)
+   * The actual multiplayer transition now happens in the data channel callback
    */
   async joinMultiplayerGame(gameId: string): Promise<void> {
-    console.log(`🔗 GAME MANAGER: Preparing to join multiplayer game: ${gameId}`);
+    console.log(`🔗 GAME MANAGER: Legacy joinMultiplayerGame called - actual transition happens on data channel ready`);
+    console.log(`🎮 Keeping single-player game active until data channel established`);
     
-    // Note: We DON'T clean up the single-player game yet!
-    // We wait until the connection is established and we receive the full game state
-    
-    // Set multiplayer state but keep existing game running
-    this.gameMode = 'multiplayer';
-    this.isHost = false;
-    this.gameId = gameId;
-    this.playerId = this.generatePlayerId();
-    
-    console.log(`✅ Prepared to join game: ${gameId} as ${this.playerId}`);
-    console.log(`🎮 Keeping single-player game active until connection established`);
-    
-    // The actual game transition happens in handleGameState() when we receive the full game state
+    // The actual game transition happens in prepareForMultiplayerFromDataChannel() when data channel becomes ready
   }
-
   /**
    * Called when multiplayer connection is fully established and game state received
    * This replaces the single-player game with the multiplayer game state
    */
-  private transitionToMultiplayerGame(gameStateData: any): void {
+  private transitionToMultiplayerGame(gameStateData: GameStateData): void {
     console.log('🔄 GAME MANAGER: Transitioning from single-player to multiplayer');
     
-    // Now we can safely clean up the single-player game
+    // Clear the single-player game with proper component cleanup
     this.cleanupCurrentGame();
     
-    // Load the multiplayer game state
+    // Load the complete multiplayer game state from host
     this.loadGameState(gameStateData);
     
-    console.log('✅ Successfully transitioned to multiplayer game');
+    console.log('✅ Successfully transitioned to multiplayer game with complete state');
   }
-
   /**
-   * Clean up the current game (removes all entities and controllers)
+   * Clean up the current game (removes all entities and properly destroys components)
    */
   private cleanupCurrentGame(): void {
     console.log(`🗑️ GAME MANAGER: Cleaning up current ${this.gameMode} game`);
     
-    // Remove all entities
+    // Properly destroy all components before clearing array (fixes ghost entities)
     const entityCount = Entity.all.length;
-    Entity.clearAllEntities();
+    for (const entity of Entity.all) {
+      try {
+        entity.render?.destroy();
+      } catch (error) {
+        console.warn('Error destroying render component:', error);
+      }
+      
+      try {
+        entity.physics?.destroy();
+      } catch (error) {
+        console.warn('Error destroying physics component:', error);
+      }
+      
+      try {
+        entity.network?.destroy();
+      } catch (error) {
+        console.warn('Error destroying network component:', error);
+      }
+      
+      try {
+        entity.health?.destroy();
+      } catch (error) {
+        console.warn('Error destroying health component:', error);
+      }
+      
+      try {
+        entity.weapon?.destroy();
+      } catch (error) {
+        console.warn('Error destroying weapon component:', error);
+      }
+      
+      try {
+        entity.player?.destroy();
+      } catch (error) {
+        console.warn('Error destroying player component:', error);
+      }
+    }
     
-    // Clear all controllers
-    this.controllers.clear();
-    this.localController = null;
+    // Clear the entity array
+    Entity.all.length = 0;
+    
+    // Clear global player reference
+    globalThis.player = null;
     
     // Clear multiplayer state
     this.peerToNetworkIdMap.clear();
     
-    console.log(`✅ Cleaned up ${entityCount} entities and ${this.controllers.size} controllers`);
+    console.log(`✅ Cleaned up ${entityCount} entities with proper component destruction`);
   }
 
   // ========================================
@@ -190,36 +188,63 @@ export class GameManager {
     this.net.onDataChannelReady((peerIdString: string) => {
       console.log(`📡 DATA CHANNEL READY: ${peerIdString}`);
       
-      if (this.gameMode !== 'multiplayer') {
-        console.log('📡 Ignoring data channel ready - not in multiplayer mode');
+      // If we're in single-player mode, this means we need to transition to multiplayer
+      if (this.gameMode === 'single-player') {
+        console.log('📡 Data channel ready - transitioning from single-player to multiplayer');
+        
+        // We need to determine if we're host or client based on the Net connection state
+        // The ManualSignalingUI should have set this up already
+        const isHostFromNet = this.net.getIsHost();
+        
+        if (isHostFromNet) {
+          // We are the host - create multiplayer game
+          console.log('🏗️ HOST: Data channel ready, creating multiplayer game');
+          this.createMultiplayerGameFromDataChannel()
+            .then(() => {
+              // After creating multiplayer game, handle the peer
+              this.handleDataChannelReadyAsHost(peerIdString);
+            })
+            .catch((error) => {
+              console.error('❌ Failed to create multiplayer game from data channel:', error);
+            });
+        } else {
+          // We are the client - prepare for multiplayer
+          console.log('🔗 CLIENT: Data channel ready, preparing for multiplayer');
+          this.prepareForMultiplayerFromDataChannel()
+            .then(() => {
+              // After preparing for multiplayer, handle the peer
+              this.handleDataChannelReadyAsClient(peerIdString);
+            })
+            .catch((error) => {
+              console.error('❌ Failed to prepare for multiplayer from data channel:', error);
+            });
+        }
         return;
       }
       
+      // Already in multiplayer mode, handle normally
       const peerId = createPeerId(peerIdString);
       
       if (this.isHost) {
-        // HOST: Create network ID mapping and send game state
-        if (!this.peerToNetworkIdMap.has(peerId)) {
-          const networkId = createNetworkId(this.nextNetworkId++);
-          this.peerToNetworkIdMap.set(peerId, networkId);
-          console.log(`🆔 HOST: Created mapping: peer ${peerId} → network ID ${networkId}`);
-          
-          // Create remote player for this peer
-          this.createRemotePlayer(networkId.toString());
-        }
-        
-        console.log(`📤 HOST: Sending full game state to ${peerId}`);
-        this.sendFullGameStateToPlayer(peerId);
+        this.handleDataChannelReadyAsHost(peerIdString);
       } else {
-        // CLIENT: Wait for game state from host
-        console.log(`📥 CLIENT: Data channel ready, waiting for game state from host`);
+        this.handleDataChannelReadyAsClient(peerIdString);
       }
     });
 
-    this.net.onPlayerLeave((playerId: string) => {
+    this.net.onPlayerLeave((peerId: string) => {
       if (this.gameMode === 'multiplayer') {
-        console.log('Player disconnected:', playerId);
-        this.removePlayer(playerId);
+        console.log('Player disconnected:', peerId);
+        
+        // Convert peerId to networkId for player removal
+        const peerIdObj = createPeerId(peerId);
+        const networkId = this.peerToNetworkIdMap.get(peerIdObj);
+        
+        if (networkId) {
+          this.removePlayer(networkId.toString());
+        } else {
+          console.warn(`No network ID found for disconnected peer: ${peerId}`);
+        }
       }
     });
   }
@@ -252,36 +277,70 @@ export class GameManager {
     // Load entities from server snapshots
     const loadedEntities = Entity.loadEntitiesFromSnapshots(entities);
     console.log(`📦 Loaded ${loadedEntities.length} entities from host`);
-    
-    // Mark all entities as network entities
+      // Mark all entities as network entities
     for (const entity of loadedEntities) {
-      entity.isNetworkEntity = true;
-      entity.ownerId = hostId;
+      if (!entity.network) {
+        entity.addNetwork(hostId);
+      } else {
+        entity.network.ownerId = hostId;
+      }
+    }
+      // Create controllers for player entities
+    const playerEntities = loadedEntities.filter(e => e.player !== null);
+    
+    // Find our own network ID by looking for our peer ID in the mappings
+    const ourPeerId = createPeerId(this.net.getPeerId());
+    const ourNetworkId = this.peerToNetworkIdMap.get(ourPeerId);
+    
+    console.log(`🔍 CLIENT: Looking for our player entity - Our Peer ID: ${ourPeerId}, Our Network ID: ${ourNetworkId}`);
+    console.log(`🔍 CLIENT: Available player entities:`, playerEntities.map(e => ({
+      id: e.id,
+      networkId: e.networkId,
+      playerName: e.player?.playerName
+    })));
+      let foundOurPlayer = false;
+      // First, ensure ALL player entities are marked as remote    // Note: Player local/remote status is now determined automatically by peerId comparison
+    console.log(`🔧 CLIENT: Processing ${playerEntities.length} player entities from game state`);
+    
+    for (const entity of playerEntities) {
+      // Use the networkId from the entity (which is properly deserialized from the snapshot)
+      const networkId = entity.networkId;
+      
+      if (!networkId) {
+        console.warn(`⚠️ CLIENT: Player entity ${entity.id} has no networkId - skipping`);
+        continue;
+      }
+        // Check if this is our local player entity
+      if (ourNetworkId && networkId === ourNetworkId.toString()) {        // This is our local player entity
+        console.log(`🎮 CLIENT: Found our local player entity ID: ${entity.id}, Network ID: ${networkId}`);
+        
+        globalThis.player = entity;
+        foundOurPlayer = true;
+        
+        // Update game resources to follow the new local player
+        if (globalThis.gameResources) {
+          globalThis.gameResources.setPlayer(entity);
+        }
+      } else {
+        // This is a remote player entity
+        console.log(`🤖 CLIENT: Found remote player entity ID: ${entity.id}, Network ID: ${networkId}`);
+      }
     }
     
-    // Create controllers for player entities
-    const playerEntities = loadedEntities.filter(e => e.player !== null);
-    const networkIds = Array.from(this.peerToNetworkIdMap.values()).map(id => id.toString());
-    
-    for (let i = 0; i < Math.min(playerEntities.length, networkIds.length); i++) {
-      const entity = playerEntities[i];
-      const networkId = networkIds[i];
-      
-      if (!this.controllers.has(networkId)) {
-        const controller = new RemotePlayerController(networkId);
-        controller.setPlayerEntity(entity);
-        this.controllers.set(networkId, controller);
-        console.log(`🎮 CLIENT: Created remote controller for network ID ${networkId}`);
-      }
+    if (!foundOurPlayer) {
+      console.error(`❌ CLIENT: Could not find our player entity! Our Network ID: ${ourNetworkId}`);
+      console.error(`Available network IDs:`, playerEntities.map(e => e.networkId));
     }
     
     console.log(`✅ Multiplayer game state loaded with ${Entity.all.length} entities`);
   }
 
   private handlePlayerLeave(message: NetworkMessage): void {
-    const { playerId } = message.data;
-    console.log('Player left:', playerId);
-    this.removePlayer(playerId);
+    const networkId = message.data.networkId;
+    if (typeof networkId === 'string') {
+      console.log('Player left:', networkId);
+      this.removePlayer(networkId);
+    }
   }
 
   private handleEntityUpdate(message: NetworkMessage, senderId?: string): void {
@@ -300,102 +359,120 @@ export class GameManager {
       }
     }
   }
-
   private handlePlayerInput(message: NetworkMessage): void {
-    const { playerId, input, timestamp } = message.data;
+    const { networkId, inputSequence, timestamp, keys, mouse } = message.data;
     
-    const controller = this.controllers.get(playerId);
-    if (controller && controller instanceof RemotePlayerController) {
-      controller.applyNetworkUpdate({ input, timestamp });
+    if (typeof networkId !== 'string' || typeof timestamp !== 'number') {
+      console.warn('Invalid player input message format');
+      return;
+    }
+
+    // Find the player entity for this network ID
+    const playerEntity = Entity.findAllPlayerEntities().find(e => 
+      e.player && e.networkId === networkId
+    );
+    
+    if (playerEntity?.player) {
+      // Create PlayerInput object from the message data
+      const defaultKeys = { forward: false, backward: false, left: false, right: false, jump: false, crouch: false, up: false, down: false };
+      const defaultMouse = { deltaX: 0, deltaY: 0 };
+      
+      const playerInput: import('./types/index').PlayerInput = {
+        keys: keys ? { ...defaultKeys, ...keys } : defaultKeys,
+        mouse: mouse ? { ...defaultMouse, ...mouse } : defaultMouse
+      };
+
+      // Process input on server side (authoritative)
+      playerEntity.player.processInput({ 
+        input: playerInput, 
+        timestamp 
+      });
+
+      // If this is the host/server, send authoritative position update to all clients
+      if (this.isHost && this.net.isConnectionActive()) {
+        const positionUpdate: import('./types/index').EntityUpdateData = {
+          id: playerEntity.id,
+          position: [playerEntity.localPosition[0], playerEntity.localPosition[1], playerEntity.localPosition[2]],
+          rotation: [playerEntity.localRotation[0], playerEntity.localRotation[1], playerEntity.localRotation[2], playerEntity.localRotation[3]],
+          velocity: playerEntity.physics ? [playerEntity.physics.velocity[0], playerEntity.physics.velocity[1], playerEntity.physics.velocity[2]] : [0, 0, 0],
+          entityType: 'player'
+        };
+        // Send to all connected peers
+        this.net.sendMessage({
+          type: MessageType.ENTITY_UPDATE,
+          priority: 1,
+          timestamp: Date.now(),
+          sequenceNumber: typeof inputSequence === 'number' ? inputSequence : 0,
+          data: { entities: [positionUpdate] }
+        });
+      }
     }
   }
 
   // ========================================
   // PLAYER MANAGEMENT
   // ========================================
-
   /**
-   * Create the local player controller and entity
+   * Create the local player entity
    */
-  private createLocalPlayer(playerId: string, networkId?: string): { controller: LocalPlayerController, entity: Entity } {
-    if (this.localController) {
+  private createLocalPlayer(networkId: string): Entity {
+    if (globalThis.player) {
       console.warn(`Local player already exists`);
-      return {
-        controller: this.localController,
-        entity: this.localController.getPlayerEntity()!
-      };
+      return globalThis.player;
     }
     
-    // Create local controller
-    this.localController = new LocalPlayerController(playerId);
-    this.controllers.set(playerId, this.localController);
+    console.log(`🆔 Creating local player: mode=${this.gameMode}, isHost=${this.isHost}, networkId=${networkId}`);
     
-    // Determine network ID for local player
-    const finalNetworkId = networkId || (this.isHost ? (this.nextNetworkId++).toString() : playerId);
+    // Create local player entity using factory with local peer ID
+    const localPeerId = this.net.getPeerId();
+    const entity = createPlayer(localPeerId, networkId);
     
-    console.log(`🆔 Creating local player: mode=${this.gameMode}, isHost=${this.isHost}, playerId=${playerId}, networkId=${finalNetworkId}`);
+    console.log(`✅ Created local player with network ID: ${networkId} (Entity ID: ${entity.id})`);
     
-    // Create local player entity using factory
-    const entity = createPlayer(true, finalNetworkId);
-    
-    // Connect controller to entity
-    this.localController.setPlayerEntity(entity);
-    
-    console.log(`✅ Created local player: ${playerId} (Entity ID: ${entity.id})`);
-    
-    return { controller: this.localController, entity };
+    return entity;
   }
-
   /**
-   * Create a remote player controller and entity
+   * Create a remote player entity
    */
-  private createRemotePlayer(playerId: string): { controller: RemotePlayerController, entity: Entity } {
-    if (this.controllers.has(playerId)) {
-      console.warn(`Remote player ${playerId} already exists`);
-      const existing = this.controllers.get(playerId)!;
-      return {
-        controller: existing as RemotePlayerController,
-        entity: existing.getPlayerEntity()!
-      };
+  private createRemotePlayer(networkId: string): Entity {
+    // Check if remote player already exists
+    const existingPlayer = Entity.findAllPlayerEntities().find(e => 
+      e.networkId === networkId
+    );
+    
+    if (existingPlayer) {
+      console.warn(`Remote player ${networkId} already exists`);
+      return existingPlayer;
     }
     
-    // Create remote controller
-    const controller = new RemotePlayerController(playerId);
-    this.controllers.set(playerId, controller);
+    // Create remote player entity using factory with no peerId (remote player)
+    const entity = createPlayer(undefined, networkId);
     
-    // Create remote player entity using factory
-    const entity = createPlayer(false, playerId);
+    console.log(`✅ Created remote player with network ID: ${networkId} (Entity ID: ${entity.id})`);
     
-    // Connect controller to entity
-    controller.setPlayerEntity(entity);
-    
-    console.log(`✅ Created remote player: ${playerId} (Entity ID: ${entity.id})`);
-    
-    return { controller, entity };
+    return entity;
   }
 
   /**
    * Remove a player (usually when they disconnect)
    */
-  private removePlayer(playerId: string): void {
-    const controller = this.controllers.get(playerId);
-    if (!controller) return;
+  private removePlayer(networkId: string): void {
+    const entity = Entity.findAllPlayerEntities().find(e => 
+      e.networkId === networkId
+    );
     
-    const entity = controller.getPlayerEntity();
-    if (entity) {
-      const index = Entity.all.indexOf(entity);
-      if (index !== -1) {
-        Entity.all.splice(index, 1);
-      }
+    if (!entity) return;
+    
+    const index = Entity.all.indexOf(entity);
+    if (index !== -1) {
+      Entity.all.splice(index, 1);
     }
     
-    this.controllers.delete(playerId);
-    
-    if (controller === this.localController) {
-      this.localController = null;
+    if (entity === globalThis.player) {
+      globalThis.player = null;
     }
     
-    console.log(`Removed player: ${playerId}`);
+    console.log(`Removed player: ${networkId}`);
   }
 
   // ========================================
@@ -424,38 +501,43 @@ export class GameManager {
   }
 
   /**
-   * Get the local player controller
+   * Check if the network connection is active
    */
-  getLocalPlayer(): LocalPlayerController | null {
-    return this.localController;
+  isNetworkConnectionActive(): boolean {
+    return this.net.isConnectionActive();
+  }
+
+  /**
+   * Send a network message
+   */
+  sendNetworkMessage(message: NetworkMessage): void {
+    this.net.sendMessage(message);
   }
 
   /**
    * Get the local player entity
-   */
-  getLocalPlayerEntity(): Entity | null {
-    return this.localController?.getPlayerEntity() || null;
+   */  getLocalPlayerEntity(): Entity | null {
+    return globalThis.player;
   }
 
-  /**
-   * Get the current player ID
-   */
-  getPlayerId(): string {
-    return this.playerId;
+  getLocalPlayerNetworkId(): string | null {
+    const localEntity = this.getLocalPlayerEntity();
+    return localEntity?.networkId || null;
   }
+
+
 
   /**
    * Update all game systems
-   */
-  update(deltaTime: number): void {
-    // Update all player controllers
-    for (const controller of this.controllers.values()) {
-      controller.update(deltaTime);
-    }
-
+   */  update(deltaTime: number): void {
+    // Player components update themselves via Entity.update()
+    // No need to manually update controllers anymore
+    
     // Handle multiplayer networking
     if (this.gameMode === 'multiplayer') {
-      this.sendLocalPlayerUpdate();
+      // TODO: Remove this when proper input command architecture is working
+      // For now, we're disabling position updates for local players
+      // this.sendLocalPlayerUpdate();
       
       if (this.isHost) {
         this.sendEntityUpdates();
@@ -466,20 +548,18 @@ export class GameManager {
   /**
    * Get debug information about the current game state
    */
-  getDebugInfo(): any {
+  getDebugInfo(): GameDebugInfo {
     return {
       gameMode: this.gameMode,
       isHost: this.isHost,
       gameId: this.gameId,
-      playerId: this.playerId,
       isConnected: this.net.isConnectionActive(),
       entityCount: Entity.all.length,
-      controllerCount: this.controllers.size,
-      localController: this.localController?.getPlayerId() || null,
-      playerEntities: Entity.findAllPlayerEntities().map(e => ({
+      localPlayerNetworkId: globalThis.player?.networkId || null,      playerEntities: Entity.findAllPlayerEntities().map(e => ({
         id: e.id,
         name: e.player?.playerName,
-        isLocal: e.player?.isLocalPlayer
+        isLocal: e.player?.isLocal(),
+        networkId: e.networkId
       }))
     };
   }
@@ -500,6 +580,117 @@ export class GameManager {
   }
 
   // ========================================
+  // DATA CHANNEL TRANSITION METHODS
+  // ========================================
+  /**
+   * Create multiplayer game when data channel becomes ready (for host)
+   * Uses "invite to existing game" paradigm - preserves all existing entities
+   */
+  private async createMultiplayerGameFromDataChannel(): Promise<void> {
+    console.log('🏗️ HOST: Inviting to existing game from data channel');
+    
+    // DON'T clean up the existing game - preserve all entities!
+    // This is the key change: "invite to existing" instead of "create new"
+    
+    // Set up multiplayer state
+    this.gameMode = 'multiplayer';
+    this.isHost = true;
+    this.gameId = this.generateGameId();
+    this.nextNetworkId = 1;
+    
+    // Host gets the first network ID
+    const hostNetworkId = this.nextNetworkId++;
+    console.log(`🆔 HOST: Assigned network ID ${hostNetworkId} to host`);
+    
+    // Update existing local player with network ID instead of creating new one
+    if (globalThis.player) {
+      globalThis.player.networkId = hostNetworkId.toString();
+      // Add network component to existing entities
+      this.addNetworkComponentsToExistingEntities();
+    } else {
+      // Fallback: create new player if none exists
+      globalThis.player = this.createLocalPlayer(hostNetworkId.toString());
+    }
+    
+    console.log(`✅ Multiplayer game created from data channel - ID: ${this.gameId}`);
+    console.log(`🎮 HOST: Created player entity with ID: ${globalThis.player.id}, Network ID: ${hostNetworkId}`);
+    console.log(`📊 HOST: Total entities after creation: ${Entity.all.length}`);
+  }
+
+  /**
+   * Prepare for multiplayer when data channel becomes ready (for client)
+   */
+  private async prepareForMultiplayerFromDataChannel(): Promise<void> {
+    console.log('🔗 CLIENT: Preparing for multiplayer from data channel');
+    
+    // Note: We DON'T clean up the single-player game yet!
+    // We wait until the connection is established and we receive the full game state
+    
+    // Set multiplayer state but keep existing game running
+    this.gameMode = 'multiplayer';
+    this.isHost = false;
+    this.gameId = 'incoming_game'; // Will be updated when we receive game state
+    
+    console.log('✅ CLIENT: Prepared for multiplayer from data channel');
+    console.log('🎮 CLIENT: Keeping single-player game active until connection established');
+  }
+  /**
+   * Handle data channel ready as host (after multiplayer game is created)
+   */
+  private handleDataChannelReadyAsHost(peerIdString: string): void {
+    const peerId = createPeerId(peerIdString);
+    
+    // HOST: Create network ID mapping and send game state
+    if (!this.peerToNetworkIdMap.has(peerId)) {
+      const networkId = createNetworkId(this.nextNetworkId++);
+      this.peerToNetworkIdMap.set(peerId, networkId);
+      console.log(`🆔 HOST: Created mapping: peer ${peerId} → network ID ${networkId}`);
+      
+      // Create remote player for this peer at a spawn point
+      const remotePlayer = this.createRemotePlayer(networkId.toString());
+      
+      // Position the remote player at a spawn point
+      this.positionPlayerAtSpawn(remotePlayer);
+    }
+    
+    console.log(`📤 HOST: Sending full game state to ${peerId}`);
+    this.sendFullGameStateToPlayer(peerId);
+  }
+
+  /**
+   * Handle data channel ready as client (after preparing for multiplayer)
+   */
+  private handleDataChannelReadyAsClient(peerIdString: string): void {
+    // CLIENT: Wait for game state from host
+    console.log(`📥 CLIENT: Data channel ready, waiting for game state from host`);
+  }
+
+  /**
+   * Position a player entity at a spawn point
+   */
+  private positionPlayerAtSpawn(playerEntity: Entity): void {
+    // Find spawn points
+    const spawnPoints = Entity.all.filter(e => e.spawn);
+    
+    if (spawnPoints.length > 0) {
+      // Use a random spawn point
+      const spawnPoint = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+      playerEntity.localPosition[0] = spawnPoint.localPosition[0];
+      playerEntity.localPosition[1] = spawnPoint.localPosition[1];
+      playerEntity.localPosition[2] = spawnPoint.localPosition[2];
+      console.log(`🎯 Positioned player ${playerEntity.networkId} at spawn point (${spawnPoint.localPosition[0]}, ${spawnPoint.localPosition[1]}, ${spawnPoint.localPosition[2]})`);
+    } else {
+      // Fallback position if no spawn points
+      playerEntity.localPosition[0] = 0;
+      playerEntity.localPosition[1] = 0;
+      playerEntity.localPosition[2] = 2;
+      console.log(`🎯 Positioned player ${playerEntity.networkId} at fallback position (0, 0, 2)`);
+    }
+    
+    playerEntity.dirty = true;
+  }
+
+  // ========================================
   // PRIVATE HELPER METHODS
   // ========================================
 
@@ -507,14 +698,49 @@ export class GameManager {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
   }
 
-  private generatePlayerId(): string {
-    return Math.random().toString(36).substring(2, 15);
-  }
-
-  private loadGameState(gameStateData: any): void {
-    // This method handles loading the game state from multiplayer host
-    // Implementation depends on the specific game state format
-    console.log('Loading game state from host...');
+  private loadGameState(gameStateData: GameStateData): void {
+    console.log('📦 Loading complete game state from host...');
+    
+    const { entities } = gameStateData;
+    
+    // Load ALL entities from server snapshots
+    const loadedEntities = Entity.loadEntitiesFromSnapshots(entities);
+    console.log(`📦 Loaded ${loadedEntities.length} entities from host`);
+      // Mark all entities as network entities
+    for (const entity of loadedEntities) {
+      if (!entity.network) {
+        entity.addNetwork("host");
+      } else {
+        entity.network.ownerId = "host";
+      }
+    }
+    
+    // Find our local player entity and set up camera/resources
+    const ourPeerId = createPeerId(this.net.getPeerId());
+    const ourNetworkId = this.peerToNetworkIdMap.get(ourPeerId);
+    
+    if (ourNetworkId) {
+      const playerEntity = loadedEntities.find(e => 
+        e.player && e.networkId === ourNetworkId.toString()
+      );
+        if (playerEntity) {
+        globalThis.player = playerEntity;
+        
+        // Update game resources
+        if (globalThis.gameResources) {
+          globalThis.gameResources.setPlayer(playerEntity);
+        }
+        
+        console.log(`🎮 Set up local player entity ID: ${playerEntity.id}`);
+      }
+    }
+    
+    console.log(`✅ Game state loaded - Total entities: ${Entity.all.length}`);
+    console.log(`📊 Entity breakdown:`, {
+      players: Entity.all.filter(e => e.player).length,
+      spawns: Entity.all.filter(e => e.spawn).length,
+      others: Entity.all.filter(e => !e.player && !e.spawn).length
+    });
   }
 
   private sendLocalPlayerUpdate(): void {
@@ -526,13 +752,11 @@ export class GameManager {
     const localEntity = this.getLocalPlayerEntity();
     if (!localEntity || !this.net.isConnectionActive()) {
       return;
-    }
-
-    const update = {
+    }    const update: EntityUpdateData = {
       id: localEntity.id,
       position: [localEntity.localPosition[0], localEntity.localPosition[1], localEntity.localPosition[2]],
       rotation: [localEntity.localRotation[0], localEntity.localRotation[1], localEntity.localRotation[2], localEntity.localRotation[3]],
-      velocity: localEntity.velocity,
+      velocity: localEntity.physics ? [localEntity.physics.velocity[0], localEntity.physics.velocity[1], localEntity.physics.velocity[2]] : [0, 0, 0],
       entityType: 'player'
     };
 
@@ -558,32 +782,29 @@ export class GameManager {
 
   private sendEntityUpdatesToClient(peerIdString: string): void {
     const peerId = createPeerId(peerIdString);
-    const clientNetworkId = this.peerToNetworkIdMap.get(peerId);
-    
-    const updates = Entity.all
+    const clientNetworkId = this.peerToNetworkIdMap.get(peerId);    const updates = Entity.all
       .filter(entity => {
-        // Don't send player entity back to itself
-        if (entity.player) {
-          const entityController = Array.from(this.controllers.entries()).find(([_, controller]) => 
-            controller.getPlayerEntity() === entity
-          );
-          
-          if (entityController) {
-            const entityNetworkId = entityController[0];
-            return entityNetworkId !== clientNetworkId?.toString();
-          }
-        }
+        // Send all entities to clients, including their own player entity
+        // The client's player component will ignore updates if it's marked as local
         return true;
       })
-      .map(entity => ({
-        id: entity.id,
-        position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]],
-        rotation: [entity.localRotation[0], entity.localRotation[1], entity.localRotation[2], entity.localRotation[3]],
-        velocity: entity.velocity,
-        modelId: entity.modelId,
-        frame: entity.frame,
-        entityType: entity.player ? 'player' : 'entity'
-      }));
+      .map(entity => {
+        const update: EntityUpdateData = {
+          id: entity.id,          position: [entity.localPosition[0], entity.localPosition[1], entity.localPosition[2]],
+          rotation: [entity.localRotation[0], entity.localRotation[1], entity.localRotation[2], entity.localRotation[3]],
+          velocity: entity.physics ? [entity.physics.velocity[0], entity.physics.velocity[1], entity.physics.velocity[2]] : [0, 0, 0],
+          modelId: entity.render?.modelId ?? -1,
+          frame: entity.render?.frame ?? 0,
+          entityType: entity.player ? 'player' : 'entity'
+        };
+        
+        // Log player entity updates for debugging
+        if (entity.player) {
+          console.log(`📤 HOST: Sending player entity update - entityId: ${entity.id}, networkId: ${entity.networkId}`);
+        }
+        
+        return update;
+      });
 
     if (updates.length > 0) {
       this.net.sendMessageToPlayer(peerId, {
@@ -595,14 +816,21 @@ export class GameManager {
       });
     }
   }
-
   private sendFullGameStateToPlayer(peerId: PeerId): void {
     if (!this.isHost) {
       console.warn('Only host can send full game state');
       return;
     }
 
-    const entitySnapshots = Entity.all.map(entity => entity.serialize());
+    // Send ALL entities to joining clients (players, enemies, pickups, spawn points, level geometry)
+    const entitySnapshots = Entity.all.map(entity => {
+      const snapshot = entity.serialize();
+      // Include network ID in serialization to fix the limitation mentioned in summary
+      if (entity.networkId) {
+        snapshot.networkId = entity.networkId;
+      }
+      return snapshot;
+    });
     
     const peerMappings = Array.from(this.peerToNetworkIdMap.entries()).map(([pId, nId]) => ({
       peerId: pId.toString(),
@@ -617,16 +845,21 @@ export class GameManager {
       data: {
         entities: entitySnapshots,
         gameTime: Date.now(),
-        hostId: this.playerId,
+        hostId: "host",
         peerMappings: peerMappings
       }
     };
-
-    console.log(`📤 Sending full game state with ${entitySnapshots.length} entities to ${peerId}`);
+    
+    console.log(`📤 Sending COMPLETE game state with ${entitySnapshots.length} entities to ${peerId}`);
+    console.log(`📊 Entity breakdown:`, {
+      players: entitySnapshots.filter(e => e.player).length,
+      spawns: entitySnapshots.filter(e => e.spawn).length,
+      total: entitySnapshots.length
+    });
     this.net.sendMessageToPlayer(peerId, message);
   }
 
-  private updateRemotePlayerEntity(entityData: any, senderId?: string): void {
+  private updateRemotePlayerEntity(entityData: EntityUpdateData, senderId?: string): void {
     if (this.isHost) {
       // Host: Find player by sender peer ID
       if (!senderId) {
@@ -642,39 +875,53 @@ export class GameManager {
         return;
       }
       
-      // Find entity by network ID using our controller mapping
-      const entity = this.findPlayerEntityByNetworkId(networkId.toString());
+      // Find entity by network ID
+      const entity = Entity.findAllPlayerEntities().find(e => 
+        e.networkId === networkId.toString()
+      );
       
       if (!entity) {
         console.warn(`Host: No entity found for network ID ${networkId} - ignoring update`);
         return;
       }
-      
-      // Update the entity
-      this.updateEntityFromEntityData(entity, entityData);
+        // Update the entity through PlayerComponent for proper local/remote handling
+      if (entity.player) {
+        entity.player.applyNetworkUpdate({
+          position: entityData.position,
+          rotation: entityData.rotation,
+          velocity: entityData.velocity,
+          timestamp: Date.now()
+        });
+      } else {
+        this.updateEntityFromEntityData(entity, entityData);
+      }
       
     } else {
-      // Client: Update by network ID (from host)
-      const networkId = entityData.networkPlayerId;
-      if (!networkId) {
-        console.warn('Client received entity update without networkPlayerId');
-        return;
-      }
-      
-      // Find entity by network ID using our controller mapping
-      const entity = this.findPlayerEntityByNetworkId(networkId);
+      // Client: Find entity by entity ID (simpler approach since we have full game state)
+      const entity = Entity.findAllPlayerEntities().find(e => 
+        e.id === entityData.id
+      );
       
       if (!entity) {
-        console.warn(`Client: No entity found for network ID ${networkId} - ignoring update`);
+        console.warn(`Client: No player entity found for ID ${entityData.id} - ignoring update`);
         return;
       }
       
-      // Update the entity
-      this.updateEntityFromEntityData(entity, entityData);
+      // Update the entity through PlayerComponent for proper local/remote handling
+      if (entity.player) {
+        entity.player.applyNetworkUpdate({
+          position: entityData.position,
+          rotation: entityData.rotation,
+          velocity: entityData.velocity,
+          timestamp: Date.now()
+        });
+      } else {
+        this.updateEntityFromEntityData(entity, entityData);
+      }
     }
   }
 
-  private updateOrCreateNonPlayerEntity(entityData: any): void {
+  private updateOrCreateNonPlayerEntity(entityData: EntityUpdateData): void {
     let entity = Entity.all.find(e => e.id === entityData.id);
     
     if (entity) {
@@ -689,13 +936,14 @@ export class GameManager {
       if (entity.id >= Entity.nextId) {
         Entity.nextId = entity.id + 1;
       }
-      
-      entity.isNetworkEntity = true;
+        if (!entity.network) {
+        entity.addNetwork('');
+      }
       this.updateEntityFromNetworkData(entity, entityData);
     }
   }
 
-  private updateEntityFromNetworkData(entity: Entity, entityData: any): void {
+  private updateEntityFromNetworkData(entity: Entity, entityData: EntityUpdateData): void {
     if (entityData.position) {
       entity.localPosition[0] = entityData.position[0];
       entity.localPosition[1] = entityData.position[1];
@@ -706,22 +954,21 @@ export class GameManager {
       entity.localRotation[1] = entityData.rotation[1];
       entity.localRotation[2] = entityData.rotation[2];
       entity.localRotation[3] = entityData.rotation[3];
+    }    if (entityData.velocity && entity.physics) {
+      entity.physics.velocity[0] = entityData.velocity[0];
+      entity.physics.velocity[1] = entityData.velocity[1];
+      entity.physics.velocity[2] = entityData.velocity[2];
     }
-    if (entityData.velocity) {
-      entity.velocity[0] = entityData.velocity[0];
-      entity.velocity[1] = entityData.velocity[1];
-      entity.velocity[2] = entityData.velocity[2];
+    if (entityData.modelId !== undefined && entity.render) {
+      entity.render.modelId = entityData.modelId;
     }
-    if (entityData.modelId !== undefined) {
-      entity.modelId = entityData.modelId;
-    }
-    if (entityData.frame !== undefined) {
-      entity.frame = entityData.frame;
+    if (entityData.frame !== undefined && entity.render) {
+      entity.render.frame = entityData.frame;
     }
     entity.dirty = true;
   }
 
-  private updateEntityFromEntityData(entity: Entity, entityData: any): void {
+  private updateEntityFromEntityData(entity: Entity, entityData: EntityUpdateData): void {
     if (entityData.position) {
       entity.localPosition[0] = entityData.position[0];
       entity.localPosition[1] = entityData.position[1];
@@ -733,21 +980,15 @@ export class GameManager {
       entity.localRotation[1] = entityData.rotation[1];
       entity.localRotation[2] = entityData.rotation[2];
       entity.localRotation[3] = entityData.rotation[3];
-    }
-
-    if (entityData.velocity) {
-      entity.velocity[0] = entityData.velocity[0];
-      entity.velocity[1] = entityData.velocity[1];
-      entity.velocity[2] = entityData.velocity[2];
+    }    if (entityData.velocity && entity.physics) {
+      entity.physics.velocity[0] = entityData.velocity[0];
+      entity.physics.velocity[1] = entityData.velocity[1];
+      entity.physics.velocity[2] = entityData.velocity[2];
     }
     
     entity.dirty = true;
   }
 
-  private findPlayerEntityByNetworkId(networkId: string): Entity | null {
-    const controller = this.controllers.get(networkId);
-    return controller ? controller.getPlayerEntity() : null;
-  }
 
   // ========================================
   // LEGACY METHODS FOR BACKWARD COMPATIBILITY
@@ -774,4 +1015,116 @@ export class GameManager {
   async joinGame(gameId: string): Promise<void> {
     return this.joinMultiplayerGame(gameId);
   }
+
+  /**
+   * Add network components to existing entities when transitioning to multiplayer
+   */
+  private addNetworkComponentsToExistingEntities(): void {
+    console.log('🔗 Adding network components to existing entities');
+    
+    let networkEntityCount = 0;
+    for (const entity of Entity.all) {      // Add network component if entity doesn't have one
+      if (!entity.network) {
+        entity.addNetwork("host");
+        networkEntityCount++;
+      }
+        // Assign network IDs to entities that don't have them
+      if (!entity.networkId) {
+        entity.networkId = (this.nextNetworkId++).toString();
+      }
+        // Mark as network entity
+      if (!entity.network) {
+        entity.addNetwork("host");
+      } else {
+        entity.network.ownerId = "host";
+      }
+    }
+    
+    console.log(`✅ Added network components to ${networkEntityCount} entities`);
+  }
+
+  // ========================================
+  // INVITE TO EXISTING GAME API
+  // ========================================
+
+  /**
+   * Invite to existing game - preserves all existing entities and adds network components
+   * This is the new paradigm for multiplayer: invite to existing game rather than create new
+   */
+  async inviteToExistingGame(): Promise<void> {
+    console.log('🎮 GAME MANAGER: Inviting to existing game');
+    
+    if (this.gameMode === 'multiplayer') {
+      console.warn('Already in multiplayer mode');
+      return;
+    }
+    
+    // Preserve all existing entities
+    // Add network components to existing entities
+    this.addNetworkComponentsToExistingEntities();
+    
+    // Only update the local player with network ID
+    if (globalThis.player) {
+      globalThis.player.networkId = "1"; // Host gets ID 1
+    }
+    
+    // Set multiplayer mode
+    this.gameMode = 'multiplayer';
+    this.isHost = true;
+    this.gameId = this.generateGameId();
+    this.nextNetworkId = 2; // Next client gets ID 2
+    
+    console.log('✅ Successfully invited to existing game, preserving all entities');
+  }
+}
+
+// ========================================
+// DEBUG UTILITIES (from multiplayer-fixes-summary.md)
+// ========================================
+
+/**
+ * Force reload level (HOST ONLY) - debug utility from summary
+ */
+async function reloadLevel() {
+  if (globalThis.gameManager?.isMultiplayerHost()) {
+    await globalThis.level.load();
+    globalThis.physicsSystem.setLevel(globalThis.level);
+    console.log('✅ Level reloaded by host');
+  } else {
+    console.warn('⚠️ Only host can reload level');
+  }
+}
+
+/**
+ * Debug entity state - utility from summary
+ */
+function debugEntities() {
+  const Entity = globalThis.Entity;
+  if (!Entity) {
+    console.error('❌ Entity class not available');
+    return;
+  }
+  
+  const info = {
+    total: Entity.all.length,    players: Entity.all.filter((e: any) => e.player).map((e: any) => ({
+      id: e.id,
+      networkId: e.networkId,
+      local: e.player?.isLocal()
+    })),
+    spawns: Entity.all.filter((e: any) => e.spawn).length,
+    physics: Entity.all.filter((e: any) => e.physics).length,
+    render: Entity.all.filter((e: any) => e.render).length,
+    networkEntities: Entity.all.filter((e: any) => e.isNetworkEntity).length
+  };
+  
+  console.table(info);
+  console.log('Detailed player info:', info.players);
+  
+  return info;
+}
+
+// Make debug functions globally available
+if (typeof globalThis !== 'undefined') {
+  (globalThis as any).reloadLevel = reloadLevel;
+  (globalThis as any).debugEntities = debugEntities;
 }

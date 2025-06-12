@@ -1,0 +1,12 @@
+src/Weapon.ts(27,10): error TS2339: Property 'modelId' does not exist on type 'Weapon'.
+src/Weapon.ts(132,37): error TS2339: Property 'height' does not exist on type 'Entity'.
+src/components/PlayerComponent.ts(103,17): error TS2339: Property 'updateNetworkInterpolation' does not exist on type 'Entity'.
+src/components/PlayerComponent.ts(137,19): error TS2339: Property 'applyNetworkUpdate' does not exist on type 'Entity'.
+src/components/PlayerComponent.ts(189,19): error TS2339: Property 'vel' does not exist on type 'Entity'.
+src/components/PlayerComponent.ts(193,17): error TS2339: Property 'vel' does not exist on type 'Entity'.
+src/components/PlayerComponent.ts(194,17): error TS2339: Property 'vel' does not exist on type 'Entity'.
+src/main.ts(866,10): error TS2339: Property 'vel' does not exist on type 'Entity'.
+src/main.ts(870,9): error TS2339: Property 'vel' does not exist on type 'Entity'.
+src/main.ts(871,9): error TS2339: Property 'vel' does not exist on type 'Entity'.
+src/main.ts(904,29): error TS2339: Property 'height' does not exist on type 'Entity'.
+src/main.ts(1020,52): error TS2339: Property 'vel' does not exist on type 'Entity'.

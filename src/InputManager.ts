@@ -14,6 +14,8 @@ export interface InputState {
   right: boolean;
   jump: boolean;
   crouch: boolean;
+  up: boolean;
+  down: boolean;
   
   // Action keys
   attack: boolean;
@@ -98,6 +100,8 @@ export class InputManager {
     this.keyBindings.set('Space', 'jump');
     this.keyBindings.set('ShiftLeft', 'crouch');
     this.keyBindings.set('ControlLeft', 'crouch');
+    this.keyBindings.set('KeyE', 'up');
+    this.keyBindings.set('KeyQ', 'down');
     
     // Action keys - these will trigger action events instead of state changes
     // Attack and block are handled via mouse buttons and action events
@@ -279,14 +283,14 @@ export class InputManager {
   }
 
   // Network Integration
-  createNetworkInputMessage(playerId: string, input: BufferedInput): PlayerInputMessage {
+  createNetworkInputMessage(networkId: string, input: BufferedInput): PlayerInputMessage {
     return {
       type: MessageType.PLAYER_INPUT,
       priority: MessagePriority.HIGH,
       timestamp: input.timestamp,
       sequenceNumber: input.sequenceNumber,
       data: {
-        playerId,
+        networkId,
         inputSequence: input.sequenceNumber,
         timestamp: input.timestamp,
         keys: {
@@ -295,7 +299,9 @@ export class InputManager {
           left: input.inputState.left,
           right: input.inputState.right,
           jump: input.inputState.jump,
-          crouch: input.inputState.crouch
+          crouch: input.inputState.crouch,
+          up: input.inputState.up,
+          down: input.inputState.down
         },
         mouse: {
           deltaX: input.inputState.mouseDelta[0],
@@ -305,14 +311,14 @@ export class InputManager {
     };
   }
 
-  createNetworkActionMessage(playerId: string, action: string, position?: [number, number, number], direction?: [number, number, number]): PlayerActionMessage {
+  createNetworkActionMessage(networkId: string, action: string, position?: [number, number, number], direction?: [number, number, number]): PlayerActionMessage {
     return {
       type: MessageType.PLAYER_ACTION,
       priority: MessagePriority.HIGH,
       timestamp: Date.now(),
       sequenceNumber: ++this.inputSequence,
       data: {
-        playerId,
+        networkId,
         action: action as any,
         timestamp: Date.now(),
         position,
@@ -387,6 +393,8 @@ export class InputManager {
       right: false,
       jump: false,
       crouch: false,
+      up: false,
+      down: false,
       attack: false,
       block: false,
       interact: false,
@@ -409,6 +417,8 @@ export class InputManager {
       right: input.right,
       jump: input.jump,
       crouch: input.crouch,
+      up: input.up,
+      down: input.down,
       attack: input.attack,
       block: input.block,
       interact: input.interact,

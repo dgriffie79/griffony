@@ -5,7 +5,7 @@
 	},
 	"js/ts.implicitProjectConfig.checkJs": true,
 	"javascript.validate.enable": true,
-	"typescript.validate.enable": false,
+	"typescript.validate.enable": true,
 	"javascript.suggest.jsdoc.generateReturns": true,
 	"javascript.suggest.completeJSDocs": true,
 	"eslint.enable": false,

@@ -51,12 +51,6 @@ export class Tileset {
       
       // Process tileset
       await this.processTilesetData(data);
-      
-      // Register with renderer if available
-      const renderer = (globalThis as any).renderer;
-      if (renderer) {
-        renderer.registerTileset(this);
-      }
     }, 'Tileset.load');
   }
 

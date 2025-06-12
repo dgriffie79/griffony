@@ -1,6 +1,6 @@
 import { vec3 } from 'gl-matrix';
 import { Entity } from './Entity';
-import { PhysicsLayer } from './Entity';
+import { PhysicsLayer } from './components/PhysicsComponent';
 import { physicsSystem } from './PhysicsSystem';
 import type { CollisionEvent } from './types/index';
 
@@ -39,17 +39,17 @@ export class TriggerVolume extends Entity {
     this.shape = shape;
     this.size = vec3.clone(size);
     
-    // Set physics properties
-    this.collision = true;
-    this.physicsLayer = PhysicsLayer.Trigger;
-    this.collidesWith = PhysicsLayer.All;
+    // Add physics component for trigger functionality
+    this.addPhysics({
+      hasCollision: true,
+      layer: PhysicsLayer.Trigger,
+      collidesWith: PhysicsLayer.All,
+      radius: Math.max(this.size[0], this.size[1], this.size[2]),
+      height: this.size[2] * 2
+    });
     
     // Register with physics system
     physicsSystem.addCollisionListener(this, this.handleCollision.bind(this));
-    
-    // Set visible size for debugging
-    this.radius = Math.max(this.size[0], this.size[1], this.size[2]);
-    this.height = this.size[2] * 2;
   }
   
   /**
