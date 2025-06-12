@@ -1,4 +1,4 @@
-import { mat4, quat, vec3 } from 'gl-matrix';
+import { mat4, quat, vec3, vec2 } from 'gl-matrix';
 import { Entity, PhysicsLayer } from './Entity.js';
 import { Camera } from './Camera.js';
 import { createPlayer } from './EntityFactory.js';
@@ -13,6 +13,7 @@ import { getConfig } from './Config.js';
 import { WeaponConfigs } from './Weapon.js';
 import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
+import type { Weapon } from './Weapon.js';
 import { MessageType } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
@@ -23,11 +24,10 @@ import { ManualSignalingUI } from './ManualSignalingUI.js';
 import { ChatUI } from './ChatUI.js';
 import { InputManager } from './InputManager.js';
 import { GameManager } from './GameManager.js';
-import { LocalPlayerController } from './PlayerController.js';
 import { gameResources } from './GameResources.js';
 
 // Make Entity class available globally for components
-(globalThis as any).Entity = Entity;
+globalThis.Entity = Entity;
 
 // Global game state
 let lastTime = 0;
@@ -62,10 +62,6 @@ const key_states = new Set<string>();
 let mouseMoveX = 0;
 let mouseMoveY = 0;
 let showingMenu = false;
-let godMode = true;
-
-// Make godMode available to the physics system
-(globalThis as any).godMode = godMode;
 
 // Game objects
 const modelNames = [
@@ -89,7 +85,7 @@ const models: Model[] = modelNames.map((model) => new Model(`/models/${model}.vo
 const tileset = new Tileset('/tilesets/dcss_tiles.tsj');
 const level = new Level('/maps/test.tmj');
 // Player will be created in main() after modelNames is initialized
-let player: Entity; // Declare but don't initialize yet
+let player: Entity | null = null; // Declare but don't initialize yet
 const renderer = new Renderer();
 const net = new Net();
 const camera = new Camera();
@@ -103,7 +99,7 @@ declare global {
 	var modelNames: string[];
 	var tileset: Tileset;
 	var level: Level;
-	var player: Entity;
+	var player: Entity | null;
 	var renderer: Renderer;
 	var net: Net;
 	var camera: Camera;
@@ -111,8 +107,8 @@ declare global {
 	var chatUI: ChatUI;
 	var gameManager: GameManager;
 	var Entity: typeof Entity;
-	var greedyMesh: any; // Will be defined later in the file
-	var physicsSystem: any; // Use 'any' to avoid circular reference
+	var greedyMesh: typeof import('./utils').greedyMesh; // Will be defined later in the file
+	var physicsSystem: import('./PhysicsSystem').PhysicsSystem;
 	var useGreedyMesh: boolean;
 }
 
@@ -165,7 +161,7 @@ function triggerAttackFlash(): void {
 
 function playAttackSound(): void {
 	try {
-		const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+		const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 		const oscillator = audioContext.createOscillator();
 		const gainNode = audioContext.createGain();
 
@@ -189,7 +185,7 @@ function playAttackSound(): void {
 
 function playHitSound(): void {
 	try {
-		const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+		const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 		const oscillator = audioContext.createOscillator();
 		const gainNode = audioContext.createGain();
 
@@ -204,15 +200,16 @@ function playHitSound(): void {
 		gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
 		gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
 		oscillator.start(audioContext.currentTime);
-		oscillator.stop(audioContext.currentTime + audioConfig.hitSoundFrequency.duration);	} catch (e) {
+		oscillator.stop(audioContext.currentTime + audioConfig.hitSoundFrequency.duration);
+	} catch (e) {
 		// Fallback if Web Audio API fails
 	}
 }
 
 // Make functions available globally for combat system
-(globalThis as any).triggerAttackFlash = triggerAttackFlash;
-(globalThis as any).playAttackSound = playAttackSound;
-(globalThis as any).playHitSound = playHitSound;
+globalThis.triggerAttackFlash = triggerAttackFlash;
+globalThis.playAttackSound = playAttackSound;
+globalThis.playHitSound = playHitSound;
 
 /**
  * Safely load data from localStorage with error handling
@@ -484,7 +481,9 @@ function showManualSignalingUI(isHost: boolean): void {
 	const menu = document.getElementById('main-menu');
 	if (menu) {
 		menu.hidden = true;
-	}	// Create and show the manual signaling UI
+	}
+	
+	// Create and show the manual signaling UI
 	const signalingUI = new ManualSignalingUI(net, gameManager);
 	signalingUI.onComplete(() => {
 		showingMenu = false;
@@ -522,7 +521,9 @@ function setupGlobalEventListeners(): void {
 			mouseMoveX += event.movementX;
 			mouseMoveY += event.movementY;
 		}
-	});	// Menu toggle and pointer lock management
+	});
+	
+	// Menu toggle and pointer lock management
 	document.addEventListener('click', (event) => {
 		const target = event.target as HTMLElement;
 
@@ -549,7 +550,9 @@ function setupGlobalEventListeners(): void {
 		const chatUI = document.getElementById('chat-ui');
 		if (chatUI && chatUI.contains(target)) {
 			return;
-		}		// Don't request pointer lock if showing menu
+		}
+		
+		// Don't request pointer lock if showing menu
 		if (showingMenu) {
 			showingMenu = false;
 			const mainMenu = document.getElementById('main-menu');
@@ -711,7 +714,8 @@ function onKeydown(event: KeyboardEvent): void {
 				document.body.requestPointerLock();
 			}
 			break;
-		} case 'Escape': {
+		}
+		case 'Escape': {
 			if (showingMenu) {
 				showingMenu = false;
 				const mainMenu = document.getElementById('main-menu');
@@ -722,16 +726,20 @@ function onKeydown(event: KeyboardEvent): void {
 			}
 			break;
 		}		case settings.keybinds.godMode: {
-			godMode = !godMode;
-			// Synchronize with global scope for physics system
-			(globalThis as any).godMode = godMode;
+			// Toggle god mode for the local player
+			if (player?.player) {
+				player.player.toggleGodMode();
+			}
 			break;
-		} case settings.keybinds.respawn: {
-			player.player?.respawn();
+		}
+		case settings.keybinds.respawn: {
+			player?.player?.respawn();
 			break;
-		} case settings.keybinds.toggleMesh: {
-			useGreedyMesh = !useGreedyMesh; settings.useGreedyMesh = useGreedyMesh;
-			(globalThis as any).useGreedyMesh = useGreedyMesh;
+		}
+		case settings.keybinds.toggleMesh: {
+			useGreedyMesh = !useGreedyMesh;
+			settings.useGreedyMesh = useGreedyMesh;
+			globalThis.useGreedyMesh = useGreedyMesh;
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
 
 			// Update renderer to use new mesh type immediately
@@ -741,23 +749,31 @@ function onKeydown(event: KeyboardEvent): void {
 			MeshStats.getInstance().reset();
 
 			break;
-		} case settings.keybinds.switchWeapon: {
+		}
+		case settings.keybinds.switchWeapon: {
 			// Cycle through available weapons
-			const currentWeapon = combatSystem.getWeapon(player);
-			if (currentWeapon) {
-				const weaponTypes = Object.keys(WeaponConfigs) as Array<keyof typeof WeaponConfigs>;
-				const currentIndex = weaponTypes.findIndex(type =>
-					WeaponConfigs[type].id === currentWeapon.weaponData.id
-				); const nextIndex = (currentIndex + 1) % weaponTypes.length;
-				combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
+			if (player) {
+				const currentWeapon = combatSystem.getWeapon(player);
+				if (currentWeapon) {
+					const weaponTypes = Object.keys(WeaponConfigs) as Array<keyof typeof WeaponConfigs>;
+					const currentIndex = weaponTypes.findIndex(type =>
+						WeaponConfigs[type].id === currentWeapon.weaponData.id
+					);
+					const nextIndex = (currentIndex + 1) % weaponTypes.length;
+					combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
+				}
 			}
-			break;		} case settings.keybinds.adjustWeapon: {
+			break;
+		}
+		case settings.keybinds.adjustWeapon: {
 			// Toggle the weapon position adjuster with the current weapon model
-			const currentWeapon = combatSystem.getWeapon(player);
-			if (currentWeapon) {
-				toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
-			} else {
-				toggleWeaponAdjuster();
+			if (player) {
+				const currentWeapon = combatSystem.getWeapon(player);
+				if (currentWeapon) {
+					toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
+				} else {
+					toggleWeaponAdjuster();
+				}
 			}
 			break;
 		}
@@ -765,6 +781,72 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 function processInput(elapsed: number): void {
+	if (!player) return;
+	
+	// Check if we're in multiplayer mode and should send input commands
+	if (gameManager.getGameMode() === 'multiplayer') {
+		// Send input commands to server instead of applying movement directly
+		sendInputCommands(elapsed);
+	} else {
+		// Single player mode - apply movement directly
+		applySinglePlayerMovement(elapsed);
+	}
+}
+
+function sendInputCommands(elapsed: number): void {
+	if (!player || !gameManager.isNetworkConnectionActive()) return;
+	// Collect current input state
+	const inputState = {
+		forward: key_states.has(settings.keybinds.forward),
+		backward: key_states.has(settings.keybinds.backward),
+		left: key_states.has(settings.keybinds.left),
+		right: key_states.has(settings.keybinds.right),
+		jump: key_states.has(settings.keybinds.jump),
+		crouch: false, // Add crouch support if needed
+		up: key_states.has(settings.keybinds.up),
+		down: key_states.has(settings.keybinds.down),
+		attack: key_states.has(settings.keybinds.attack),
+		block: key_states.has(settings.keybinds.block),
+		interact: false, // Add interact support if needed
+		reload: false, // Add reload support if needed
+		aim: false, // Add aim support if needed
+		mouseDelta: [mouseMoveX, mouseMoveY] as vec2,
+		mouseButtons: {
+			left: key_states.has('MouseLeft'),
+			right: key_states.has('MouseRight'),
+			middle: key_states.has('MouseMiddle')
+		}
+	};
+
+	// Create buffered input
+	const bufferedInput = {
+		inputState,
+		timestamp: Date.now(),
+		sequenceNumber: Date.now(), // Use timestamp as sequence for now
+		deltaTime: elapsed
+	};
+	// Create and send network input message
+	const networkId = gameManager.getLocalPlayerNetworkId();
+	if (networkId && inputManager) {
+		const inputMessage = inputManager.createNetworkInputMessage(networkId, bufferedInput);
+		gameManager.sendNetworkMessage(inputMessage);
+	}
+
+	// Clear jump and attack states after sending (single press actions)
+	if (key_states.has(settings.keybinds.jump)) {
+		key_states.delete(settings.keybinds.jump);
+	}
+	if (key_states.has(settings.keybinds.attack)) {
+		key_states.delete(settings.keybinds.attack);
+	}
+
+	// Handle mouse rotation in multiplayer (still applied locally for smooth camera)
+	handleMouseRotation(elapsed);
+}
+
+function applySinglePlayerMovement(elapsed: number): void {
+	if (!player) return;
+	
 	const right = vec3.fromValues(1, 0, 0);
 	vec3.transformQuat(right, right, player.localRotation);
 
@@ -774,20 +856,27 @@ function processInput(elapsed: number): void {
 	const up = vec3.fromValues(0, 0, 1);
 	vec3.transformQuat(up, up, player.localRotation);
 	const speed = 10;
-
-	if (!godMode) {
+	if (!player.player?.isInGodMode()) {
 		// For non-god mode, movement is restricted to the horizontal plane
 		forward[2] = 0;
 		vec3.normalize(forward, forward);
 		right[2] = 0;
 		vec3.normalize(right, right);
 	} else {
-		player.vel[2] = 0; // Reset vertical velocity for god mode
+		if (player.physics?.velocity) {
+			player.physics.velocity[2] = 0; // Reset vertical velocity for god mode
+		} else {
+			console.error('Player physics component missing - cannot reset vertical velocity');
+		}
 	}
 
 	// Reset horizontal velocity for new input
-	player.vel[0] = 0;
-	player.vel[1] = 0;
+	if (player.physics?.velocity) {
+		player.physics.velocity[0] = 0;
+		player.physics.velocity[1] = 0;
+	} else {
+		console.error('Player physics component missing - cannot reset horizontal velocity');
+	}
 
 	// Apply movement input using the physics system
 	if (key_states.has(settings.keybinds.forward)) {
@@ -801,27 +890,30 @@ function processInput(elapsed: number): void {
 	}
 	if (key_states.has(settings.keybinds.right)) {
 		physicsSystem.applyMovement(player, right, speed);
-	}
-	if (godMode && key_states.has(settings.keybinds.up)) {
+	}	if (player.player?.isInGodMode() && key_states.has(settings.keybinds.up)) {
 		physicsSystem.applyMovement(player, up, speed);
 	}
-	if (godMode && key_states.has(settings.keybinds.down)) {
+	if (player.player?.isInGodMode() && key_states.has(settings.keybinds.down)) {
 		physicsSystem.applyMovement(player, up, -speed);
 	}
 	if (key_states.has(settings.keybinds.jump)) {
-		if (!godMode) {
+		if (!player.player?.isInGodMode()) {
 			physicsSystem.jump(player);
 		}
 		key_states.delete(settings.keybinds.jump);
 	}
 
-	// Combat inputs
+	// Combat inputs (for single player)
 	if (key_states.has(settings.keybinds.attack)) {
 		// Calculate attack target position (forward from player)
 		const attackRange = 3.0; // meters
 		const attackTarget = vec3.create();
 		vec3.scaleAndAdd(attackTarget, player.worldPosition, forward, attackRange);
-		attackTarget[2] += player.height * 0.7; // Attack at chest height
+		if (player.physics?.height) {
+			attackTarget[2] += player.physics.height * 0.7; // Attack at chest height
+		} else {
+			console.error('Player physics component missing - cannot calculate attack height');
+		}
 
 		combatSystem.tryAttack(player, attackTarget);
 		key_states.delete(settings.keybinds.attack); // Single attack per press
@@ -832,6 +924,13 @@ function processInput(elapsed: number): void {
 		// For now, just log that blocking is active
 		// console.log('Blocking...');
 	}
+
+	// Handle mouse rotation
+	handleMouseRotation(elapsed);
+}
+
+function handleMouseRotation(elapsed: number): void {
+	if (!player) return;
 
 	// Mouse rotation
 	const dx = mouseMoveX;
@@ -905,26 +1004,20 @@ function saveGameState(): void {
 		return;
 	}
 	const playerHead = player.player?.getHead();
-	const gameState: GameState = {
-		playerPos: Array.from(player.localPosition) as [number, number, number],
+	const gameState: GameState = {		playerPos: Array.from(player.localPosition) as [number, number, number],
 		playerOrientation: Array.from(player.localRotation) as [number, number, number, number],
 		playerHeadRotation: playerHead ? Array.from(playerHead.localRotation) as [number, number, number, number] : [0, 0, 0, 1],
 		showingMenu,
-		godMode
+		godMode: player.player?.isInGodMode() ?? false
 	};
 	safeSaveToStorage('gameState', gameState);
-
-	// Ensure globalThis.godMode is always in sync
-	if ((globalThis as any).godMode !== godMode) {
-		(globalThis as any).godMode = godMode;
-	}
 }
 
 /**
  * Update the UI display with game information
  */
 function updateGameUI(): void {
-	if (!timeLabel) return;
+	if (!timeLabel || !player) return;
 
 	// Get player combat stats
 	const playerStats = combatSystem.getCombatStats(player);
@@ -936,7 +1029,9 @@ function updateGameUI(): void {
 		`<span style="color: #888888;">Ready to attack</span>`;
 
 	// Get physics and movement info
-	const velocityInfo = `Speed: ${vec3.length(player.vel).toFixed(2)} m/s`;
+	const velocityInfo = player.physics?.velocity ? 
+		`Speed: ${vec3.length(player.physics.velocity).toFixed(2)} m/s` : 
+		'Speed: Physics component missing';
 	const groundedInfo = physicsSystem.isEntityOnGround(player) ?
 		'<span style="color: #4ECDC4;">On Ground</span>' :
 		'<span style="color: #FF6B6B;">Airborne</span>';
@@ -946,10 +1041,10 @@ function updateGameUI(): void {
 	const meshAlgorithm = useGreedyMesh ? "Greedy" : "Original";
 	const faceCount = meshStats.faces > 0 ? meshStats.faces : 1000;
 	const simpleMeshInfo = `Faces: ${faceCount.toLocaleString()} (${meshAlgorithm} mesh)`;
-
 	// Update main UI display
+	const isGodMode = player.player?.isInGodMode() ?? false;
 	timeLabel.innerHTML = `<span style="color: #FFD700;">cam_pos: ${camera.entity?.worldPosition[0].toFixed(2)}, ${camera.entity?.worldPosition[1].toFixed(2)}, ${camera.entity?.worldPosition[2].toFixed(2)}<br>
-		${godMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
+		${isGodMode ? '<span style="color: #FFD700;">{ God Mode }</span>' : ' { Peon Mode }'}<br>
 		<span style="color: #FF6B6B;">${healthInfo}</span><br>
 		<span style="color: #4ECDC4;">${weaponInfo}</span><br>
 		${attackInfo}</span><br>
@@ -963,7 +1058,7 @@ function updateGameUI(): void {
 /**
  * Update crosshair visual state
  */
-function updateCrosshairDisplay(currentWeapon: any): void {
+function updateCrosshairDisplay(currentWeapon: Weapon | null): void {
 	const crosshair = document.getElementById('crosshair');
 	if (!crosshair || !currentWeapon) return;
 
@@ -1117,41 +1212,46 @@ async function main(): Promise<void> {
 	gameResources.setTileset(tileset);
 	gameResources.setLevel(level);
 	
-	// Create player after model names are available
-	// Use the GameManager to create the local player properly
-	gameManager.initializeLocalPlayer();
+	// Now that model names are available, create the single-player game
+	gameManager.createSinglePlayerGame();
+	
+	// Get the local player from GameManager (now created with proper model resources)
 	const localPlayerEntity = gameManager.getLocalPlayerEntity();
 	
 	if (localPlayerEntity) {
 		player = localPlayerEntity;
 		globalThis.player = player; // Make player available globally
-		gameResources.setPlayer(player);
-	} else {
-		// Fallback: create player directly if GameManager fails
-		const playerId = gameManager.getPlayerId() || 'local_player';
-		player = createPlayer(true, playerId);
+		gameResources.setPlayer(player);	} else {
+		console.error('GameManager failed to create local player - this should not happen');
+		// Emergency fallback: create player directly
+		const playerId = 'local_player';
+		const localPeerId = net.getPeerId() || playerId;
+		player = createPlayer(localPeerId, playerId);
 		globalThis.player = player;
 		gameResources.setPlayer(player);
 	}
 
 	// Set camera to follow the local player's head now that player exists
-	camera.entity = player.player?.getHead();
+	if (player) {
+		camera.entity = player.player?.getHead() || null;
+	}
 
 	// Load saved game state now that player exists
 	const savedState = localStorage.getItem('gameState');
 	if (savedState) {
 		try {
 			const state: GameState = JSON.parse(savedState);
-			player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2]);
-			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);
+			player.localPosition = vec3.fromValues(state.playerPos[0], state.playerPos[1], state.playerPos[2]);			player.localRotation = quat.fromValues(state.playerOrientation[0], state.playerOrientation[1], state.playerOrientation[2], state.playerOrientation[3]);
 			const playerHead = player.player?.getHead();
 			if (playerHead) {
 				playerHead.localRotation = quat.fromValues(state.playerHeadRotation[0], state.playerHeadRotation[1], state.playerHeadRotation[2], state.playerHeadRotation[3]);
 			}
-			godMode = state.godMode;
-			// Make sure godMode is synchronized with global scope
-			(globalThis as any).godMode = godMode;
-			showingMenu = state.showingMenu;		} catch (error) {
+			// Restore player's god mode state
+			if (player.player) {
+				player.player.setGodMode(state.godMode);
+			}
+			showingMenu = state.showingMenu;
+		} catch (error) {
 		}
 	}
 
@@ -1164,10 +1264,11 @@ async function main(): Promise<void> {
 				settings = obj;
 				// Synchronize the useGreedyMesh variable with loaded settings
 				useGreedyMesh = settings.useGreedyMesh;
-				(globalThis as any).useGreedyMesh = useGreedyMesh;
+				globalThis.useGreedyMesh = useGreedyMesh;
 			} else {
 				localStorage.setItem('gameSettings', JSON.stringify(settings));
-			}		} catch (error) {
+			}
+		} catch (error) {
 			localStorage.setItem('gameSettings', JSON.stringify(settings));
 		}
 	} else {
@@ -1176,7 +1277,7 @@ async function main(): Promise<void> {
 	}
 	// Ensure useGreedyMesh is synchronized with global state
 	useGreedyMesh = settings.useGreedyMesh;
-	(globalThis as any).useGreedyMesh = useGreedyMesh;
+	globalThis.useGreedyMesh = useGreedyMesh;
 
 	// Load all game assets (level loading now has access to modelNames)
 	await Promise.all([
@@ -1189,13 +1290,19 @@ async function main(): Promise<void> {
 	globalThis.models = models;
 	gameResources.setModels(models); // Also set in GameResources for proper lookup
 
+	// Register tileset and level with renderer (models self-register during loading)
+	renderer.registerTileset(tileset);
+	renderer.registerLevel(level);
+
 	// NOW that globalThis.models is available, we can equip weapons
 	combatSystem.equipWeapon(player, 'IRON_SWORD'); // Start with iron sword
 
 	// Wait for GPU operations to complete before starting physics
 	// The greedy mesh algorithm takes longer, so we need to ensure all resources are uploaded
 	await new Promise(resolve => requestAnimationFrame(resolve));
-	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh	// Wait for level to be fully loaded and registered
+	await new Promise(resolve => requestAnimationFrame(resolve)); // Wait additional frame for greedy mesh
+	
+	// Wait for level to be fully loaded and registered
 	while (!level.isFullyLoaded) {
 		await new Promise(resolve => setTimeout(resolve, 10));
 	}
@@ -1214,15 +1321,7 @@ async function main(): Promise<void> {
 
 	// Enable physics debugging
 	physicsSystem.setDebug(true);
-	// Configure player physics properties
-	physicsSystem.configureEntity(player, {
-		hasGravity: true,
-		hasCollision: true,
-		radius: 0.25,
-		height: 0.5,
-		layer: PhysicsLayer.Player,
-		collidesWith: PhysicsLayer.All & ~PhysicsLayer.Trigger // Collide with everything except triggers
-	});
+	// Physics properties are now handled by the player's PhysicsComponent
 
 	// Initialize combat system
 	const combatConfig = getConfig().getCombatConfig();
@@ -1256,7 +1355,7 @@ async function main(): Promise<void> {
 		}
 	});
 	// Initialize multiplayer manager
-	(globalThis as any).gameManager = gameManager;
+	globalThis.gameManager = gameManager;
 	
 	// Add shutdown handler to stop game loop during page unload
 	window.addEventListener('beforeunload', () => {
