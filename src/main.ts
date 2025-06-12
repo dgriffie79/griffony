@@ -13,7 +13,7 @@ import { getConfig } from './Config.js';
 import { WeaponConfigs } from './Weapon.js';
 import { greedyMesh } from './utils.js';
 import type { GameSettings, GameState } from './types/index.js';
-import type { Weapon } from './Weapon.js';
+import type { WeaponData } from './types/index.js';
 import { MessageType } from './types/index.js';
 import { TriggerVolume, TriggerShape } from './TriggerVolume.js';
 import { WeaponPositionAdjuster, toggleWeaponAdjuster } from './WeaponPositionAdjuster.js';
@@ -757,7 +757,7 @@ function onKeydown(event: KeyboardEvent): void {
 				if (currentWeapon) {
 					const weaponTypes = Object.keys(WeaponConfigs) as Array<keyof typeof WeaponConfigs>;
 					const currentIndex = weaponTypes.findIndex(type =>
-						WeaponConfigs[type].id === currentWeapon.weaponData.id
+						WeaponConfigs[type].id === currentWeapon.id
 					);
 					const nextIndex = (currentIndex + 1) % weaponTypes.length;
 					combatSystem.equipWeapon(player, weaponTypes[nextIndex]);
@@ -770,7 +770,7 @@ function onKeydown(event: KeyboardEvent): void {
 			if (player) {
 				const currentWeapon = combatSystem.getWeapon(player);
 				if (currentWeapon) {
-					toggleWeaponAdjuster(currentWeapon.weaponData.modelName);
+					toggleWeaponAdjuster(currentWeapon.modelName);
 				} else {
 					toggleWeaponAdjuster();
 				}
@@ -1023,9 +1023,9 @@ function updateGameUI(): void {
 	const playerStats = combatSystem.getCombatStats(player);
 	const currentWeapon = combatSystem.getWeapon(player);
 	const healthInfo = playerStats ? `HP: ${Math.ceil(playerStats.health)}/${playerStats.maxHealth}` : '';
-	const weaponInfo = currentWeapon ? `Weapon: ${currentWeapon.weaponData.name}` : '';
-	const attackInfo = currentWeapon?.swing.isSwinging ?
-		`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING! (${Math.round(currentWeapon.swing.progress * 100)}%)</span>` :
+	const weaponInfo = currentWeapon ? `Weapon: ${currentWeapon.name}` : '';
+	const attackInfo = player.weapon?.isCurrentlyAttacking() ?
+		`<span style="color: #FF4444; font-weight: bold;">⚔️ ATTACKING!</span>` :
 		`<span style="color: #888888;">Ready to attack</span>`;
 
 	// Get physics and movement info
@@ -1058,11 +1058,11 @@ function updateGameUI(): void {
 /**
  * Update crosshair visual state
  */
-function updateCrosshairDisplay(currentWeapon: Weapon | null): void {
+function updateCrosshairDisplay(currentWeapon: WeaponData | null): void {
 	const crosshair = document.getElementById('crosshair');
-	if (!crosshair || !currentWeapon) return;
+	if (!crosshair || !currentWeapon || !player) return;
 
-	const color = currentWeapon.swing.isSwinging ? '#FF4444' : '#FFFFFF';
+	const color = player.weapon?.isCurrentlyAttacking() ? '#FF4444' : '#FFFFFF';
 	const lines = crosshair.getElementsByTagName('div');
 	for (let i = 0; i < lines.length; i++) {
 		(lines[i] as HTMLElement).style.background = color;

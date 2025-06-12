@@ -1,6 +1,6 @@
 import { vec3, quat } from 'gl-matrix';
 import { Component } from './Component';
-import type { Weapon } from '../Weapon';
+import type { WeaponData } from '../types/index';
 import type { PlayerUpdateData } from '../types/index';
 
 /**
@@ -362,7 +362,7 @@ export class PlayerComponent extends Component {
   /**
    * Equip a weapon (delegates to weapon component)
    */
-  equipWeapon(weapon: Weapon | null): void {
+  equipWeapon(weapon: WeaponData | null): void {
     if (this.entity.weapon) {
       this.entity.weapon.equipWeapon(weapon);
     }
@@ -371,7 +371,7 @@ export class PlayerComponent extends Component {
   /**
    * Get the currently equipped weapon
    */
-  getEquippedWeapon(): Weapon | null {
+  getEquippedWeapon(): WeaponData | null {
     return this.entity.weapon?.getEquippedWeapon() ?? null;
   }
 

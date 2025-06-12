@@ -1,13 +1,13 @@
 import { vec3 } from 'gl-matrix';
 import { Entity } from './Entity';
-import { Weapon, WeaponConfigs } from './Weapon';
-import type { CombatStats, AttackInfo, CombatEvent } from './types/index';
+import { WeaponConfigs } from './Weapon';
+import type { CombatStats, AttackInfo, CombatEvent, WeaponData } from './types/index';
 import { getConfig } from './Config.js';
 
 export class CombatSystem {
   private static instance: CombatSystem | null = null;
   private combatEntities = new Map<number, CombatStats>();
-  private weapons = new Map<number, Weapon>(); // entity id -> weapon
+  // Weapons are now managed by WeaponComponent, no need for centralized tracking
   private lastAttackTime = new Map<number, number>(); // entity id -> timestamp
 
   private constructor() { }
@@ -40,66 +40,48 @@ export class CombatSystem {
     return stats;
   }
 
-  // Equip a weapon to an entity
-  equipWeapon(entity: Entity, weaponConfigName: keyof typeof WeaponConfigs): Weapon {
-    const config = WeaponConfigs[weaponConfigName];
-    const weapon = new Weapon(config);
-
-    // Remove existing weapon if any
-    this.unequipWeapon(entity);
-
-    weapon.attachToEntity(entity);
-    this.weapons.set(entity.id, weapon);
-    
-    // Update first person weapon model if this is the player
-    if (entity.player) {
-      entity.player.equipWeapon(weapon);
+  // Equip a weapon to an entity using WeaponComponent
+  equipWeapon(entity: Entity, weaponConfigName: keyof typeof WeaponConfigs): boolean {
+    if (!entity.weapon) {
+      console.error('Entity does not have a weapon component');
+      return false;
     }
 
-    return weapon;
+    const weaponData = WeaponConfigs[weaponConfigName];
+    entity.weapon.equipWeapon(weaponData);
+    
+    return true;
   }
 
   // Remove weapon from entity
   unequipWeapon(entity: Entity): void {
-    const existingWeapon = this.weapons.get(entity.id);
-    if (existingWeapon) {
-      existingWeapon.detachFromEntity();
-      this.weapons.delete(entity.id);
-      
-      // Update first person weapon if this is the player
-      if (entity.player) {
-        entity.player.equipWeapon(null);
-      }
+    if (entity.weapon) {
+      entity.weapon.equipWeapon(null);
     }
   }
 
   // Attempt to attack with equipped weapon
   tryAttack(attacker: Entity, targetPosition?: vec3): boolean {
-    const weapon = this.weapons.get(attacker.id);
-    if (!weapon || !weapon.canAttack()) return false;
+    if (!attacker.weapon || !attacker.weapon.canAttack()) return false;
 
     const now = performance.now();
     const lastAttack = this.lastAttackTime.get(attacker.id) || 0;
-    const cooldown = weapon.getAttackCooldown();
+    const cooldown = attacker.weapon.getAttackCooldown();
 
     if (now - lastAttack < cooldown) return false;
 
-    // Start weapon swing
-    const success = weapon.startSwing(targetPosition);
+    // Start weapon attack (includes swing mechanics and animation)
+    const success = attacker.weapon.startAttack(targetPosition);
     if (success) {
       this.lastAttackTime.set(attacker.id, now);
       
-      // Start first-person weapon animation if attacker is the player
-      if (attacker.player) {
-        attacker.player.startAttack();
-      }
-
+      const weaponData = attacker.weapon.getEquippedWeapon();
       // Dispatch attack event
       this.dispatchCombatEvent({
         type: 'attack',
         source: attacker,
         position: targetPosition ? vec3.clone(targetPosition) : vec3.clone(attacker.worldPosition),
-        weaponId: weapon.weaponData.id
+        weaponId: weaponData?.id || 'unknown'
       });
     }
 
@@ -108,6 +90,46 @@ export class CombatSystem {
 
   // Apply damage to an entity
   damage(target: Entity, attackInfo: AttackInfo): boolean {
+    // Use health component if available, otherwise fall back to combat stats
+    if (target.health) {
+      const damageInfo = {
+        amount: attackInfo.damage,
+        source: attackInfo.source,
+        type: 'combat' as const
+      };
+      const success = target.health.takeDamage(damageInfo);
+      
+      // Apply knockback if target has physics
+      if (target.physics?.velocity && attackInfo.direction) {
+        const knockback = vec3.create();
+        vec3.scale(knockback, attackInfo.direction, attackInfo.damage * 0.3);
+        vec3.add(target.physics.velocity, target.physics.velocity, knockback);
+        target.dirty = true;
+      }
+      
+      // Dispatch appropriate events
+      if (target.health.isDead) {
+        this.dispatchCombatEvent({
+          type: 'death',
+          source: attackInfo.source,
+          target: target,
+          position: vec3.clone(target.worldPosition)
+        });
+      } else {
+        this.dispatchCombatEvent({
+          type: 'hit',
+          source: attackInfo.source,
+          target: target,
+          damage: attackInfo.damage,
+          position: vec3.clone(target.worldPosition),
+          weaponId: attackInfo.weaponId
+        });
+      }
+      
+      return success;
+    }
+    
+    // Legacy combat stats fallback
     const stats = this.combatEntities.get(target.id);
     if (!stats || stats.isDead) return false;
 
@@ -115,11 +137,11 @@ export class CombatSystem {
     stats.health = Math.max(0, stats.health - actualDamage);
     stats.lastDamageTime = performance.now();
 
-    // Apply knockback if target has velocity
-    if ('vel' in target && target.vel && attackInfo.direction) {
+    // Apply knockback if target has physics
+    if (target.physics?.velocity && attackInfo.direction) {
       const knockback = vec3.create();
       vec3.scale(knockback, attackInfo.direction, actualDamage * 0.3);
-      vec3.add(target.vel as vec3, target.vel as vec3, knockback);
+      vec3.add(target.physics.velocity, target.physics.velocity, knockback);
       target.dirty = true;
     }
 
@@ -172,8 +194,8 @@ export class CombatSystem {
   getCombatStats(entity: Entity): CombatStats | null {
     return this.combatEntities.get(entity.id) || null;
   }  // Get equipped weapon for an entity
-  getWeapon(entity: Entity): Weapon | null {
-    return this.weapons.get(entity.id) || null;
+  getWeapon(entity: Entity): WeaponData | null {
+    return entity.weapon?.getEquippedWeapon() || null;
   }
 
   // Update combat system (called from main loop)
