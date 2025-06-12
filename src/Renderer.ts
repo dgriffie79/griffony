@@ -2,7 +2,7 @@ import { mat4 } from 'gl-matrix';
 import type { Model } from './Model';
 import type { Tileset } from './Tileset';
 import type { Level } from './Level';
-import type { Entity } from './Entity';
+import { Entity } from './Entity';
 import { optimizedGreedyMesh } from './utils';
 import { getConfig } from './Config';
 import { errorHandler, GPUError, ValidationError, ResourceLoadError, Result } from './ErrorHandler.js';
@@ -1056,7 +1056,11 @@ export class Renderer {
       // - The player (first-person view)
       // - The first-person weapon (already rendered above)
       // - Any weapon attached to the player (would be inside the player model)
-      for (const e of globalThis.Entity.all) {      // Helper function to check if an entity is a child of another entity (directly or indirectly)
+      for (const e of Entity.all) {      // Helper function to check if an entity is a child of another entity (directly or indirectly)
+        // Skip entities without render component or not visible
+        const renderComp = e.render;
+        if (!renderComp || !renderComp.visible) continue;
+
         const isChildOf = (entity: Entity, potentialParent: Entity): boolean => {
           let current = entity.parent;
           while (current) {
@@ -1069,9 +1073,10 @@ export class Renderer {
         // - That are the player itself
         // - That are the first-person weapon
         // - That are any entity parented to the player (like third-person weapons)
-        const isWeaponAttachedToPlayer = player && (e.parent === player || isChildOf(e, player));      // Get model from modelId - direct array access
-        const model = (e.modelId >= 0 && globalThis.models && globalThis.models[e.modelId])
-          ? globalThis.models[e.modelId]
+        const isWeaponAttachedToPlayer = player && (e.parent === player || isChildOf(e, player));      // Get model from render component
+        const modelId = renderComp.modelId;
+        const model = (modelId >= 0 && globalThis.models && globalThis.models[modelId])
+          ? globalThis.models[modelId]
           : null;      // Debug: Log entity rendering attempt
 
         // Get rendering configuration
@@ -1086,26 +1091,27 @@ export class Renderer {
           mat4.multiply(modelMatrix, modelMatrix, offsetMatrix);
           const modelViewProjectionMatrix = mat4.multiply(mat4.create(), viewProjectionMatrix, modelMatrix);
           this.drawModel(model, modelViewProjectionMatrix, modelMatrix, renderPass);
-        }      // Update animation frames - using modelId instead of model references
-        e.animationFrame++;
-        if (e.animationFrame > renderingConfig.maxAnimationFrame) {
+        }      // Update animation frames
+        renderComp.animationFrame++;
+        if (renderComp.animationFrame > renderingConfig.maxAnimationFrame) {
+          // Cycle through model variants
           if (globalThis.modelNames) {
             const fattaId = globalThis.modelNames.indexOf('fatta');
             const fattbId = globalThis.modelNames.indexOf('fattb');
             const fattcId = globalThis.modelNames.indexOf('fattc');
             const fattdId = globalThis.modelNames.indexOf('fattd');
 
-            if (e.modelId === fattaId) {
-              e.modelId = fattbId;
-            } else if (e.modelId === fattbId) {
-              e.modelId = fattcId;
-            } else if (e.modelId === fattcId) {
-              e.modelId = fattdId;
-            } else if (e.modelId === fattdId) {
-              e.modelId = fattaId;
+            if (renderComp.modelId === fattaId) {
+              renderComp.modelId = fattbId;
+            } else if (renderComp.modelId === fattbId) {
+              renderComp.modelId = fattcId;
+            } else if (renderComp.modelId === fattcId) {
+              renderComp.modelId = fattdId;
+            } else if (renderComp.modelId === fattdId) {
+              renderComp.modelId = fattaId;
             }
           }
-          e.animationFrame = 0;
+          renderComp.animationFrame = 0;
         }
       } this.device.queue.writeBuffer(this.objectUniforms.resource, 0, this.transferBuffer, 0, this.objectUniformsOffset); renderPass.end();
       // Resolve query set (resources are permanent, but validate for edge cases like device loss)
