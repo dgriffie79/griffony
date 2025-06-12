@@ -168,14 +168,17 @@ export class GameManager {
         case MessageType.PLAYER_LEAVE:
           this.handlePlayerLeave(message);
           break;
+        case MessageType.PLAYER_INPUT:
+          // Only the host handles player input messages
+          if (this.isHost) {
+            this.handlePlayerInput(message);
+          }
+          break;
         case MessageType.ENTITY_UPDATE:
           this.handleEntityUpdate(message, senderId);
           break;
         case MessageType.FULL_GAME_STATE:
           this.handleGameState(message);
-          break;
-        case MessageType.PLAYER_INPUT:
-          this.handlePlayerInput(message);
           break;
         case MessageType.CHAT:
           // Chat messages are handled by Net.handleIncomingMessage
@@ -651,6 +654,11 @@ export class GameManager {
       
       // Position the remote player at a spawn point
       this.positionPlayerAtSpawn(remotePlayer);
+      
+      // Update local player component peerId to current peer ID
+      if (globalThis.player?.player) {
+        globalThis.player.player.setPeerId(this.net.getPeerId());
+      }
     }
     
     console.log(`📤 HOST: Sending full game state to ${peerId}`);
@@ -732,6 +740,10 @@ export class GameManager {
         }
         
         console.log(`🎮 Set up local player entity ID: ${playerEntity.id}`);
+        // Ensure camera follows the new local player's head
+        if ((globalThis as any).camera && playerEntity.player) {
+          (globalThis as any).camera.entity = playerEntity.player.getHead();
+        }
       }
     }
     

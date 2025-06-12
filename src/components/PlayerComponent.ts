@@ -438,7 +438,7 @@ export class PlayerComponent extends Component {
     };
   }
   /**
-   * Check if this is the local player by comparing with Net's peer ID
+   * Check if this is the local player (controlled by this client)
    */
   isLocal(): boolean {
     if (!this.peerId) return false;
@@ -447,7 +447,10 @@ export class PlayerComponent extends Component {
     const net = (globalThis as any).net;
     if (!net || !net.getPeerId) return false;
     
-    return this.peerId === net.getPeerId();
+    // A null peerId indicates the local player when created without a peerId
+    const netInstance = (globalThis as any).net;
+    const localId = netInstance?.getPeerId?.() ?? null;
+    return this.peerId === null || this.peerId === localId;
   }
   
   /**

@@ -1073,13 +1073,22 @@ function updateCrosshairDisplay(currentWeapon: WeaponData | null): void {
  * Process game input with performance monitoring
  */
 function processGameInput(elapsed: number): number {
-	if (!level.isFullyLoaded) return 0;
+   if (!level.isFullyLoaded) return 0;
 
-	const inputStartTime = performance.now();
-	processInput(elapsed);
-	const inputTime = performance.now() - inputStartTime;
+   const inputStartTime = performance.now();
+   // In multiplayer, send inputs to server and apply movement locally only for local player
+   if (gameManager.getGameMode() === 'multiplayer') {
+     sendInputCommands(elapsed);
+     // Apply client-side prediction only for local player
+     if (player?.player?.isLocal()) {
+       applySinglePlayerMovement(elapsed);
+     }
+   } else {
+     processInput(elapsed);
+   }
+   const inputTime = performance.now() - inputStartTime;
 
-	return inputTime;
+   return inputTime;
 }
 
 /**
@@ -1166,8 +1175,10 @@ function updateNetworking(): number {
  * Main game loop - coordinates all game systems and updates
  */
 function loop(): void {
-	// Check if game should continue running
-	if (!gameRunning) {
+   // Ensure closure player reference matches globalThis.player each frame
+   player = globalThis.player;
+    // Check if game should continue running
+    if (!gameRunning) {
 		return;
 	}
 	
