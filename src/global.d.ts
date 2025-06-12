@@ -21,7 +21,6 @@ declare global {
   var physicsSystem: PhysicsSystem;
   var gameResources: GameResources;
   var gameManager: import('./GameManager').GameManager;
-  var godMode: boolean;
   var useGreedyMesh: boolean;
   var greedyMesh: typeof import('./utils').greedyMesh;
   var triggerAttackFlash: () => void;

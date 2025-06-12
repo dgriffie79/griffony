@@ -81,8 +81,9 @@ export class PhysicsSystem {
     }
     // Snap only player entity to exact floor height at load time
     for (const entity of Entity.all) {
-      const isPlayer = 'head' in entity;
-      if (isPlayer && !(globalThis as any).godMode) {
+      // Skip snapping for godMode players
+      const isGodMode = entity.player?.isInGodMode() ?? false;
+      if ('head' in entity && !isGodMode) {
         // Compute integer column X,Y
         const x = Math.floor(entity.localPosition[0]);
         const y = Math.floor(entity.localPosition[1]);
@@ -191,12 +192,12 @@ export class PhysicsSystem {
    */
   private applyGravity(entity: Entity, dt: number): void {
     const physicsConfig = this.config.getPhysicsConfig();
-    // Skip gravity for godMode players - 'head' property identifies a player since we can't use instanceof
-    const isPlayer = 'head' in entity;
-    if (entity.physics?.hasGravity && !(isPlayer && (globalThis as any).godMode)) {
+    // Determine if this entity is a player in god mode (skip gravity)
+    const isGodMode = entity.player?.isInGodMode() ?? false;
+    if (entity.physics?.hasGravity && !isGodMode) {
       // CRITICAL: Only apply gravity when level is fully loaded to prevent race condition      // During level loading, isEntityOnGround returns false, causing entities to accumulate downward velocity
       if (!this.level || !this.level.isFullyLoaded) {
-        if (this.debugEnabled && isPlayer) {
+        if (this.debugEnabled && 'head' in entity) {
           console.log('🛡️ Gravity skipped - level not fully loaded (preventing race condition)');
         }
         return; // Skip gravity application until terrain collision data is ready
@@ -279,9 +280,8 @@ export class PhysicsSystem {
    * Handle entity-entity collisions with optimized distance calculations and caching
    */
   private handleEntityCollisions(entity: Entity): void {
-    // Skip entity collision for players in godMode - 'head' property identifies a player
-    const isPlayer = 'head' in entity;
-    if (isPlayer && (globalThis as any).godMode) return;
+    // Skip entity collision for players in godMode
+    if (entity.player?.isInGodMode()) return;
 
     const potentialColliders = this.getPotentialCollisionCandidates(entity);
 
@@ -295,7 +295,7 @@ export class PhysicsSystem {
         otherEntity.spawn ||
         !entity.canCollideWith(otherEntity) ||
         // Skip collision if other entity is a player in godMode
-        ('head' in otherEntity && (globalThis as any).godMode)
+        (otherEntity.player?.isInGodMode())
       ) {
         continue;
       }
@@ -434,9 +434,8 @@ export class PhysicsSystem {
       return false;
     }
 
-    // Skip terrain collision for players in godMode - 'head' property identifies a player
-    const isPlayer = 'head' in entity;
-    if (isPlayer && (globalThis as any).godMode) {
+    // Skip terrain collision for players in godMode
+    if (entity.player?.isInGodMode()) {
       return false;
     }
 
@@ -589,9 +588,8 @@ export class PhysicsSystem {
    * Check if an entity is on the ground
    */
   isEntityOnGround(entity: Entity): boolean {
-    // Always return false for godMode players so they can fly - 'head' property identifies a player
-    const isPlayer = 'head' in entity;
-    if (isPlayer && (globalThis as any).godMode) {
+    // Always return false for godMode players so they can fly
+    if (entity.player?.isInGodMode()) {
       return false;
     }
     return this.level && this.level.isFullyLoaded ? entity.onGround(this.level) : false;
