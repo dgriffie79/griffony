@@ -77,7 +77,6 @@ export class LocalPlayerController extends PlayerController {
     }
     
     globalCamera.entity = playerHead;
-    console.log(`LocalPlayerController: Updated camera to follow player head (Entity ID: ${this.playerEntity.id})`);
   }
   
   getCamera(): Camera | null {
